@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Build / dist
+build/
+dist/
+*.spec
+
+# Logs
+*.log
+logs/
+
+# OS file lock
+.fuse_hidden*
+
+# Runtime cache
+.cache/
