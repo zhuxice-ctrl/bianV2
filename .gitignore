@@ -40,3 +40,20 @@ logs/
 
 # Runtime cache
 .cache/
+
+
+# Research platform additions
+.env.*
+!.env.example
+build/
+dist/
+.cache/
+logs/
+var/
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite-journal
+*.safetensors
+*.pt
+*.pth
