@@ -36,10 +36,23 @@ packages = ["src/bian_quant"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["models: requires optional model dependencies or weights", "network: requires network access"]
+addopts = "-p no:cov"
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["docs", "dashboard", "artifacts"]
+exclude = [
+  "backtest",
+  "strategies",
+  "dashboard",
+  "data_collector.py",
+  "run_backtest.py",
+  "screenshot.py",
+  "scripts/verify_log_view.py",
+  "scripts/verify_log_view.js",
+  "docs",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
