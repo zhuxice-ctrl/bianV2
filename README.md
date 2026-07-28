@@ -2,18 +2,6 @@
 
 > 基于价格行为学 (Price Action) 的加密货币量化交易系统，覆盖 BTC / ETH / BNB 三个标的，含真实数据采集、策略开发、回测引擎与 Web 操作面板。
 
-## Research platform development
-
-The reproducible research platform is being built alongside the frozen PA baseline. The PA system remains Baseline-0; new data, factors, models and backtests must use the common contracts under `src/bian_quant`.
-
-```bash
-uv sync --extra dev
-uv run bian-quant init
-bash scripts/check.sh
-```
-
-See `docs/superpowers/specs/2026-07-29-quant-research-platform-design.md` for approved scope.
-
 ## 项目结构
 
 ```
