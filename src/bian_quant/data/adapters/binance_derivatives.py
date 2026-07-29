@@ -1,3 +1,7 @@
+"""Binance USD-M futures derivatives (funding rate and metrics/OI) adapters."""
+
+from __future__ import annotations
+
 import csv
 import io
 import zipfile
@@ -6,9 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from bian_quant.data.adapters.binance_archive import download_verified
-from bian_quant.data.contracts import RawArtifactManifest
+from bian_quant.data.adapters.raw import AcquisitionObjectResult, RawSourceIdentity
 
 FUNDING_BASE = "https://data.binance.vision/data/futures/um/monthly/fundingRate"
+DAILY_FUNDING_BASE = "https://data.binance.vision/data/futures/um/daily/fundingRate"
 METRICS_BASE = "https://data.binance.vision/data/futures/um/daily/metrics"
 
 OI_PUBLICATION_DELAY = timedelta(minutes=5)
@@ -30,6 +35,12 @@ EXPECTED_METRICS_COLUMNS = {
 def funding_url(asset: str, year: int, month: int) -> str:
     filename = f"{asset}-fundingRate-{year:04d}-{month:02d}.zip"
     return f"{FUNDING_BASE}/{asset}/{filename}"
+
+
+def daily_funding_url(asset: str, day) -> str:
+    stamp = day.strftime("%Y-%m-%d") if isinstance(day, datetime) else day.isoformat()
+    filename = f"{asset}-fundingRate-{stamp}.zip"
+    return f"{DAILY_FUNDING_BASE}/{asset}/{filename}"
 
 
 def metrics_url(asset: str, date: datetime) -> str:
@@ -79,11 +90,15 @@ def parse_funding(payload: bytes, *, asset: str) -> list[dict[str, Any]]:
     return result
 
 
-def parse_metrics(payload: bytes) -> list[dict[str, Any]]:
+def parse_metrics(
+    payload: bytes, *, publication_delay: timedelta = OI_PUBLICATION_DELAY
+) -> list[dict[str, Any]]:
     rows = _read_zip_csv(payload)
     if not rows:
         raise ValueError("DERIVATIVES_EMPTY: metrics archive contains no rows")
     _require_exact_schema(set(rows[0]), EXPECTED_METRICS_COLUMNS, "metrics")
+    delay_minutes = int(publication_delay.total_seconds() // 60)
+    assumption_label = f"BINANCE_METRICS_DELAY_{delay_minutes}M"
     result = []
     for row in rows:
         event_time = datetime.strptime(row["create_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
@@ -91,8 +106,8 @@ def parse_metrics(payload: bytes) -> list[dict[str, Any]]:
             {
                 "asset": row["symbol"],
                 "event_time": event_time,
-                "available_time": event_time + OI_PUBLICATION_DELAY,
-                "availability_assumption": OI_PUBLICATION_ASSUMPTION,
+                "available_time": event_time + publication_delay,
+                "availability_assumption": assumption_label,
                 "sum_open_interest": float(row["sum_open_interest"]),
                 "sum_open_interest_value": float(row["sum_open_interest_value"]),
                 "top_trader_account_long_short_ratio": float(
@@ -110,9 +125,22 @@ def parse_metrics(payload: bytes) -> list[dict[str, Any]]:
     return result
 
 
-def download_funding(path: Path, *, asset: str, year: int, month: int) -> RawArtifactManifest:
-    return download_verified(path, url=funding_url(asset, year, month))
+def download_funding(
+    path: Path, *, asset: str, year: int, month: int
+) -> AcquisitionObjectResult:
+    identity = RawSourceIdentity(
+        asset=asset, dataset="funding", interval="native", source_period=f"{year:04d}-{month:02d}"
+    )
+    return download_verified(path, url=funding_url(asset, year, month), identity=identity)
 
 
-def download_metrics(path: Path, *, asset: str, date: datetime) -> RawArtifactManifest:
-    return download_verified(path, url=metrics_url(asset, date))
+def download_metrics(
+    path: Path, *, asset: str, date: datetime
+) -> AcquisitionObjectResult:
+    identity = RawSourceIdentity(
+        asset=asset,
+        dataset="metrics_oi",
+        interval="native",
+        source_period=date.strftime("%Y-%m-%d"),
+    )
+    return download_verified(path, url=metrics_url(asset, date), identity=identity)

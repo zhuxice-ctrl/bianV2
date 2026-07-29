@@ -1,10 +1,43 @@
+"""Raw artifact storage with immutable manifests and resumable acquisition."""
+
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
+from pydantic import BaseModel, ConfigDict
+
 from bian_quant.data.contracts import RawArtifactManifest
+
+
+class RawSourceIdentity(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    asset: str
+    dataset: Literal["ohlcv", "funding", "metrics_oi"]
+    interval: str | None = None
+    source_period: str
+
+
+class RawSourceManifest(RawArtifactManifest):
+    asset: str
+    dataset: Literal["ohlcv", "funding", "metrics_oi"]
+    interval: str | None = None
+    source_period: str
+
+
+class AcquisitionObjectStatus:
+    DOWNLOADED = "downloaded"
+    SKIPPED = "skipped"
+
+
+class AcquisitionObjectResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    status: str
+    path: Path
+    manifest: RawSourceManifest
 
 
 def save_raw_bytes(path: Path, payload: bytes) -> None:
@@ -23,6 +56,49 @@ def save_raw_artifact(
     with manifest_path.open("xb") as stream:
         stream.write(manifest.model_dump_json(indent=2).encode("utf-8"))
     return manifest
+
+
+def save_source_artifact(
+    path: Path, payload: bytes, manifest: RawSourceManifest
+) -> RawSourceManifest:
+    """Save a raw artifact with an extended source manifest."""
+    manifest_path = path.with_suffix(f"{path.suffix}.manifest.json")
+    if path.exists() or manifest_path.exists():
+        raise FileExistsError(f"raw artifact already exists: {path}")
+    save_raw_bytes(path, payload)
+    with manifest_path.open("xb") as stream:
+        stream.write(manifest.model_dump_json(indent=2).encode("utf-8"))
+    return manifest
+
+
+def reuse_verified_artifact(
+    path: Path, *, expected: RawSourceIdentity | None
+) -> AcquisitionObjectResult:
+    """Check an existing artifact for integrity and return SKIPPED if valid.
+
+    Raises ValueError with stable error codes for any integrity problem.
+    """
+    manifest_path = path.with_suffix(f"{path.suffix}.manifest.json")
+    if not path.exists() or not manifest_path.exists():
+        raise ValueError("RAW_ARTIFACT_INCOMPLETE: missing zip or sidecar manifest")
+    payload = path.read_bytes()
+    content_sha = hashlib.sha256(payload).hexdigest()
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = RawSourceManifest.model_validate(manifest_data)
+    if manifest.content_sha256 != content_sha:
+        raise ValueError("RAW_HASH_MISMATCH: stored content does not match manifest hash")
+    if expected is not None and (
+        manifest.asset != expected.asset
+        or manifest.dataset != expected.dataset
+        or manifest.interval != expected.interval
+        or manifest.source_period != expected.source_period
+    ):
+        raise ValueError("RAW_IDENTITY_MISMATCH: artifact identity does not match expected")
+    return AcquisitionObjectResult(
+        status=AcquisitionObjectStatus.SKIPPED,
+        path=path,
+        manifest=manifest,
+    )
 
 
 def fetch_raw_http(
