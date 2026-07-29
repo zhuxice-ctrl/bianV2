@@ -53,3 +53,13 @@ Record each approved deviation from the implementation plans here with date, tas
 ### 2026-07-30 — Plan 03.5 Task 4: Canonical parsers migration
 **Evidence:** `parse_metrics` in `binance_derivatives.py` gained an optional `publication_delay` parameter (default 5 minutes) while preserving the existing five-minute default. Assumption labels are now `BINANCE_METRICS_DELAY_5M`, `BINANCE_METRICS_DELAY_10M`, and `BINANCE_METRICS_DELAY_15M`.
 **Impact:** `RawArtifactManifest`, `DatasetManifest`, `MarketRecord`, and existing callers remain source compatible. The new `canonicalize.py` module wraps the existing parsers with point-in-time DataFrame conversion and Zstd Parquet partition writing.
+
+### 2026-07-30 — Plan 03.5 Tasks 5-9: Dual-horizon pipeline, regimes, holdout, reporting
+**Evidence:**
+- Task 5: `derivatives_quality.py` (CoverageReport, inspect_coverage/funding/metrics/ohlcv) and `snapshots.py` (publish_snapshot, build_macro/micro_snapshots, build_delay_views) with causal aggregation and deterministic snapshot IDs. 13 tests pass.
+- Task 6: `dual_horizon.py` (DualHorizonStatus, DualHorizonResult, Downloader Protocol, BinanceDownloader, FixtureDownloader, prepare_dual_horizon) with dry-run support. CLI commands prepare-dual-horizon, analyze-dual-horizon, evaluate-holdout. Offline pipeline test passes.
+- Task 7: `regimes/macro.py` (MacroState, ComparableEpisodeSummary, MacroRegimeEvidence, classify_macro_history, summarize_comparable_episodes, write_macro_evidence) with expanding-window classification preserving prefix invariance. 14 tests pass.
+- Task 8: `experiments/holdout.py` (HoldoutLedger with append-only SQLite triggers, DualHorizonWindows, partition_dual_horizon_windows) and `factors/dual_horizon.py` (8 interpretable factor specs, build_derivatives_factor_frame with causal funding/OI joins and delay invariance, run_dual_horizon_screening). 19 tests pass.
+- Task 9: `reporting/artifacts.py` (ArtifactWriter with exclusive run dirs, atomic JSON writes, finite-value check) and `reporting/decision.py` (write_decision_packet with 7 required artifacts, 4 status types, zero-candidate = NO_PROMOTION). 14 tests pass.
+**Impact:** Complete dual-horizon pipeline from data acquisition through factor screening to decision packet generation. All 71 Plan 03.5 tests pass.
+**Consequence:** Tasks 10-11 (real data acquisition, cross-platform gates) are BLOCKED by sandbox network and TLS limitations. Patch file generated for application on the target environment.
