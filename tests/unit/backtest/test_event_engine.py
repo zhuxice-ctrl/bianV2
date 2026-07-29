@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -285,3 +286,26 @@ def test_zero_signal_creates_zero_trades() -> None:
     engine = _make_engine()
     result = engine.run(bars=bars, signals=signals)
     assert len(result.trades) == 0
+
+
+def test_trade_pnl_and_equity_include_both_fill_fees() -> None:
+    bars = _make_bars()
+    engine = _make_engine(close_at_end=True)
+    result = engine.run(
+        bars=bars,
+        signals=[SignalEvent(timestamp=bars[0].timestamp, direction=1)],
+    )
+    trade = result.trades[0]
+    fill_fees = sum(fill.fee for fill in result.fills)
+    assert trade.fee_paid == fill_fees
+    assert result.equity[-1] == Decimal("10000") + trade.pnl
+
+
+def test_signal_event_rejects_future_availability() -> None:
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    with pytest.raises(ValueError, match="not available"):
+        SignalEvent(
+            timestamp=timestamp,
+            available_time=timestamp + timedelta(hours=1),
+            direction=1,
+        )

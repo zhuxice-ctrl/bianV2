@@ -1,174 +1,60 @@
-"""Tests for the append-only experiment registry."""
-
-from __future__ import annotations
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
-from bian_quant.experiments.models import RunManifest, RunStatus
-from bian_quant.experiments.registry import LEGAL_TRANSITIONS, ExperimentRegistry
+from bian_quant.experiments.models import LockedHoldout, RunManifest, RunStatus
+from bian_quant.experiments.registry import ExperimentRegistry
 
 
-def _make_manifest(
-    *,
-    strategy_name: str = "pa_baseline",
-    data_snapshot_id: str = "snap_001",
-    code_sha256: str = "a" * 64,
-) -> RunManifest:
+def _manifest() -> RunManifest:
     return RunManifest.create(
-        strategy_name=strategy_name,
-        config={" timeframe": "4h", "universe": ["BTCUSDT"]},
-        code_sha256=code_sha256,
-        data_snapshot_id=data_snapshot_id,
+        strategy_name="pa_baseline",
+        code_sha="a" * 40,
+        dataset_snapshot_ids=["ohlcv-v1"],
+        config={"factor": "legacy.pa"},
+        seed=7,
+        locked_holdout=LockedHoldout(
+            start=datetime(2025, 11, 1, tzinfo=UTC),
+            end=datetime(2026, 1, 1, tzinfo=UTC),
+        ),
     )
 
 
-class TestRunManifest:
-    def test_create_produces_sha256_id(self):
-        m = _make_manifest()
-        assert len(m.run_id) == 64
-        assert all(c in "0123456789abcdef" for c in m.run_id)
-
-    def test_create_deterministic(self):
-        m1 = RunManifest.create(
-            strategy_name="s",
-            config={"a": 1},
-            code_sha256="b" * 64,
-            data_snapshot_id="d",
-        )
-        m2 = RunManifest.create(
-            strategy_name="s",
-            config={"a": 1},
-            code_sha256="b" * 64,
-            data_snapshot_id="d",
-        )
-        assert m1.run_id == m2.run_id
-
-    def test_different_config_different_id(self):
-        m1 = RunManifest.create(
-            strategy_name="s",
-            config={"a": 1},
-            code_sha256="b" * 64,
-            data_snapshot_id="d",
-        )
-        m2 = RunManifest.create(
-            strategy_name="s",
-            config={"a": 2},
-            code_sha256="b" * 64,
-            data_snapshot_id="d",
-        )
-        assert m1.run_id != m2.run_id
-
-    def test_default_status_pending(self):
-        m = _make_manifest()
-        assert m.status == RunStatus.PENDING
-
-    def test_frozen(self):
-        m = _make_manifest()
-        with pytest.raises(Exception):
-            m.status = RunStatus.RUNNING  # type: ignore[misc]
+def test_repeated_identity_gets_new_run_id() -> None:
+    first = _manifest()
+    second = _manifest()
+    assert first.identity_sha256 == second.identity_sha256
+    assert first.run_id != second.run_id
 
 
-class TestRegistryCreate:
-    def test_create_and_get(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            fetched = reg.get(m.run_id)
-            assert fetched.run_id == m.run_id
-            assert fetched.status == RunStatus.PENDING
-
-    def test_duplicate_run_id_rejected(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            with pytest.raises(ValueError, match="already exists"):
-                reg.create(m)
-
-    def test_get_missing_raises(self):
-        with ExperimentRegistry() as reg:
-            with pytest.raises(KeyError):
-                reg.get("nonexistent")
+def test_registry_allows_repeated_experiment_as_new_run(tmp_path: Path) -> None:
+    first = _manifest()
+    second = _manifest()
+    with ExperimentRegistry(tmp_path / "runs.sqlite") as registry:
+        registry.create(first)
+        registry.create(second)
+        assert len(registry.list_runs()) == 2
 
 
-class TestRegistryTransition:
-    def test_legal_transition(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            updated = reg.transition(m.run_id, RunStatus.RUNNING)
-            assert updated.status == RunStatus.RUNNING
-
-    def test_illegal_transition_rejected(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            # PENDING -> COMPLETED is illegal
-            with pytest.raises(ValueError, match="illegal transition"):
-                reg.transition(m.run_id, RunStatus.COMPLETED)
-
-    def test_full_happy_path(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            reg.transition(m.run_id, RunStatus.RUNNING)
-            reg.transition(m.run_id, RunStatus.COMPLETED)
-            assert reg.get(m.run_id).status == RunStatus.COMPLETED
-
-    def test_cancelled_can_reopen(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            reg.transition(m.run_id, RunStatus.CANCELLED)
-            reg.transition(m.run_id, RunStatus.PENDING)
-            assert reg.get(m.run_id).status == RunStatus.PENDING
-
-    def test_failed_can_retry(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            reg.transition(m.run_id, RunStatus.RUNNING)
-            reg.transition(m.run_id, RunStatus.FAILED)
-            reg.transition(m.run_id, RunStatus.PENDING)
-            assert reg.get(m.run_id).status == RunStatus.PENDING
-
-    def test_completed_is_terminal(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            reg.transition(m.run_id, RunStatus.RUNNING)
-            reg.transition(m.run_id, RunStatus.COMPLETED)
-            with pytest.raises(ValueError, match="illegal transition"):
-                reg.transition(m.run_id, RunStatus.RUNNING)
-
-    def test_transition_missing_run_raises(self):
-        with ExperimentRegistry() as reg:
-            with pytest.raises(KeyError):
-                reg.transition("nonexistent", RunStatus.RUNNING)
+@pytest.mark.parametrize("terminal", [RunStatus.PASSED, RunStatus.FAILED, RunStatus.BLOCKED])
+def test_terminal_run_cannot_reopen(tmp_path: Path, terminal: RunStatus) -> None:
+    manifest = _manifest()
+    with ExperimentRegistry(tmp_path / "runs.sqlite") as registry:
+        registry.create(manifest)
+        if terminal == RunStatus.BLOCKED:
+            registry.transition(manifest.run_id, terminal)
+        else:
+            registry.transition(manifest.run_id, RunStatus.RUNNING)
+            registry.transition(manifest.run_id, terminal)
+        with pytest.raises(ValueError, match="invalid run transition"):
+            registry.transition(manifest.run_id, RunStatus.RUNNING)
 
 
-class TestTransitionHistory:
-    def test_history_records_all_transitions(self):
-        with ExperimentRegistry() as reg:
-            m = _make_manifest()
-            reg.create(m)
-            reg.transition(m.run_id, RunStatus.RUNNING)
-            reg.transition(m.run_id, RunStatus.COMPLETED)
-
-            history = reg.transition_history(m.run_id)
-            assert len(history) == 3  # create + 2 transitions
-            assert history[0]["from_status"] is None
-            assert history[0]["to_status"] == "pending"
-            assert history[1]["from_status"] == "pending"
-            assert history[1]["to_status"] == "running"
-            assert history[2]["from_status"] == "running"
-            assert history[2]["to_status"] == "completed"
-
-
-class TestLegalTransitionsMap:
-    def test_completed_has_no_outgoing(self):
-        assert len(LEGAL_TRANSITIONS[RunStatus.COMPLETED]) == 0
-
-    def test_pending_can_start_or_cancel(self):
-        allowed = LEGAL_TRANSITIONS[RunStatus.PENDING]
-        assert RunStatus.RUNNING in allowed
-        assert RunStatus.CANCELLED in allowed
+def test_locked_holdout_boundary_round_trips(tmp_path: Path) -> None:
+    manifest = _manifest()
+    with ExperimentRegistry(tmp_path / "runs.sqlite") as registry:
+        registry.create(manifest)
+        restored = registry.get(manifest.run_id)
+    assert restored.locked_holdout == manifest.locked_holdout
+    assert len(restored.dataset_snapshot_ids) == 1

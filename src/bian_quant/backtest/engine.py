@@ -65,6 +65,7 @@ class _Position:
         "entry_time",
         "stop",
         "target",
+        "entry_fee",
         "cumulative_funding",
     )
 
@@ -76,6 +77,7 @@ class _Position:
         self.entry_time: datetime | None = None
         self.stop: Decimal | None = None
         self.target: Decimal | None = None
+        self.entry_fee: Decimal = Decimal("0")
         self.cumulative_funding: Decimal = Decimal("0")
 
     @property
@@ -91,6 +93,7 @@ class _Position:
         entry_time: datetime,
         stop: Decimal | None,
         target: Decimal | None,
+        entry_fee: Decimal,
     ) -> None:
         self.direction = direction
         self.qty = qty
@@ -99,6 +102,7 @@ class _Position:
         self.entry_time = entry_time
         self.stop = stop
         self.target = target
+        self.entry_fee = entry_fee
 
     def close(self) -> None:
         self.direction = 0
@@ -108,6 +112,7 @@ class _Position:
         self.entry_time = None
         self.stop = None
         self.target = None
+        self.entry_fee = Decimal("0")
         self.cumulative_funding = Decimal("0")
 
 
@@ -158,6 +163,11 @@ class EventEngine:
     ) -> BacktestResult:
         """Execute the backtest and return results."""
         funding_events = funding_events or []
+        if not bars:
+            return BacktestResult([], [], [], [], {"rejected_signals": len(signals)})
+        bar_timestamps = [bar.timestamp for bar in bars]
+        if bar_timestamps != sorted(bar_timestamps) or len(set(bar_timestamps)) != len(bars):
+            raise ValueError("bars must be sorted with unique timestamps")
         fee_rate = self.taker_fee_bps / _BPS
         slip_rate = self.slippage_bps / _BPS
 
@@ -165,7 +175,11 @@ class EventEngine:
         returns: list[Decimal] = []
         fills: list[Fill] = []
         trades: list[Trade] = []
-        diagnostics: dict[str, Any] = {"rejected_signals": 0}
+        rejection_reasons: dict[str, int] = {}
+        diagnostics: dict[str, Any] = {
+            "rejected_signals": 0,
+            "rejected_signal_reasons": rejection_reasons,
+        }
 
         cash = self.initial_equity
         pos = _Position()
@@ -175,10 +189,15 @@ class EventEngine:
         matched_signals: set[int] = set()
         funding_by_ts: dict[datetime, Decimal] = {}
         for fe in funding_events:
+            if fe.timestamp in funding_by_ts:
+                raise ValueError("duplicate funding timestamp")
             funding_by_ts[fe.timestamp] = fe.funding_rate
 
         # Sort signals by timestamp for deterministic processing
-        sorted_signals = sorted(signals, key=lambda s: s.timestamp)
+        sorted_signals = sorted(signals, key=lambda signal: signal.timestamp)
+        signals_by_timestamp: dict[datetime, list[tuple[int, SignalEvent]]] = {}
+        for signal_index, signal in enumerate(sorted_signals):
+            signals_by_timestamp.setdefault(signal.timestamp, []).append((signal_index, signal))
 
         # Pending signal to execute at next bar
         pending_signal: SignalEvent | None = None
@@ -215,9 +234,7 @@ class EventEngine:
                         )
                     )
                     trades.append(
-                        self._make_trade(
-                            pos, bar.timestamp, close_exec, pnl - close_fee, "signal", close_fee
-                        )
+                        self._make_trade(pos, bar.timestamp, close_exec, pnl, "signal", close_fee)
                     )
                     pos.close()
 
@@ -228,7 +245,7 @@ class EventEngine:
 
                     # Cap notional
                     requested = sig.notional
-                    max_notional = self.gross_limit * cash
+                    max_notional = max(Decimal("0"), self.gross_limit * cash)
                     if requested is not None:
                         notional = min(requested, max_notional)
                     else:
@@ -238,6 +255,12 @@ class EventEngine:
                         qty = notional / exec_price
                         entry_fee = exec_price * qty * fee_rate
                         cash -= entry_fee
+                        stop = sig.stop
+                        target = sig.target
+                        if sig.stop_distance is not None:
+                            stop = exec_price - Decimal(sig.direction) * sig.stop_distance
+                        if sig.target_distance is not None:
+                            target = exec_price + Decimal(sig.direction) * sig.target_distance
 
                         fills.append(
                             self._make_fill(
@@ -257,8 +280,9 @@ class EventEngine:
                             notional=notional,
                             entry_price=exec_price,
                             entry_time=bar.timestamp,
-                            stop=sig.stop,
-                            target=sig.target,
+                            stop=stop,
+                            target=target,
+                            entry_fee=entry_fee,
                         )
 
                 # Explicit exit (direction=0)
@@ -280,9 +304,7 @@ class EventEngine:
                         )
                     )
                     trades.append(
-                        self._make_trade(
-                            pos, bar.timestamp, close_exec, pnl - close_fee, "signal", close_fee
-                        )
+                        self._make_trade(pos, bar.timestamp, close_exec, pnl, "signal", close_fee)
                     )
                     pos.close()
 
@@ -309,23 +331,26 @@ class EventEngine:
                     )
                     trades.append(
                         self._make_trade(
-                            pos, bar.timestamp, exit_exec, pnl - exit_fee, exit_reason, exit_fee
+                            pos, bar.timestamp, exit_exec, pnl, exit_reason, exit_fee
                         )
                     )
                     pos.close()
 
             # 4. Queue signal for this bar (to execute at next bar)
-            for sig_idx, sig in enumerate(sorted_signals):
-                if sig.timestamp == bar.timestamp:
-                    matched_signals.add(sig_idx)
-                    # Signal is causal if its timestamp <= this bar's timestamp
-                    # and there's a subsequent bar to execute on
-                    if i + 1 < len(bars):
-                        pending_signal = sig
-                    else:
-                        # Signal on last bar can't execute (no next bar)
-                        diagnostics["rejected_signals"] += 1
-                    break
+            matching_signals = signals_by_timestamp.get(bar.timestamp, [])
+            if matching_signals:
+                sig_idx, sig = matching_signals[0]
+                matched_signals.add(sig_idx)
+                if len(matching_signals) > 1:
+                    duplicate_count = len(matching_signals) - 1
+                    diagnostics["rejected_signals"] += duplicate_count
+                    rejection_reasons["MULTIPLE_SIGNALS_SAME_TIME"] = duplicate_count
+                    matched_signals.update(index for index, _ in matching_signals[1:])
+                if i + 1 < len(bars):
+                    pending_signal = sig
+                else:
+                    diagnostics["rejected_signals"] += 1
+                    rejection_reasons["NO_NEXT_BAR"] = rejection_reasons.get("NO_NEXT_BAR", 0) + 1
 
             # 5. Mark-to-market and record equity
             if pos.is_open:
@@ -365,19 +390,22 @@ class EventEngine:
                 )
                 trades.append(
                     self._make_trade(
-                        pos, last_bar.timestamp, close_exec, pnl - exit_fee, "end_of_data", exit_fee
+                        pos, last_bar.timestamp, close_exec, pnl, "end_of_data", exit_fee
                     )
                 )
                 pos.close()
                 equity[-1] = cash
-                if prev_equity != 0:
-                    returns[-1] = (cash - prev_equity) / prev_equity
+                previous = self.initial_equity if len(equity) == 1 else equity[-2]
+                returns[-1] = (cash - previous) / previous if previous != 0 else Decimal("0")
             # If close_at_end=False, position stays open; equity already marked at close
 
         # 7. Count unmatched signals as rejected (future signals)
         for sig_idx in range(len(sorted_signals)):
             if sig_idx not in matched_signals:
                 diagnostics["rejected_signals"] += 1
+                rejection_reasons["TIMESTAMP_NOT_IN_BARS"] = (
+                    rejection_reasons.get("TIMESTAMP_NOT_IN_BARS", 0) + 1
+                )
 
         return BacktestResult(
             trades=trades,
@@ -463,7 +491,7 @@ class EventEngine:
         pos: _Position,
         exit_time: datetime,
         exit_price: Decimal,
-        pnl: Decimal,
+        gross_pnl: Decimal,
         exit_reason: str,
         fee_paid: Decimal,
     ) -> Trade:
@@ -474,8 +502,13 @@ class EventEngine:
             entry_price=pos.entry_price,
             exit_price=exit_price,
             notional=pos.notional,
-            pnl=pnl,
+            pnl=(
+                gross_pnl
+                - pos.entry_fee
+                - fee_paid
+                + pos.cumulative_funding
+            ),
             exit_reason=exit_reason,
-            fee_paid=fee_paid,
+            fee_paid=pos.entry_fee + fee_paid,
             funding_paid=pos.cumulative_funding,
         )

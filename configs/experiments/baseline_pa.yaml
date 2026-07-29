@@ -14,14 +14,15 @@ assets:
 interval: "4h"
 
 walk_forward:
-  initial_train_size: 2000
-  test_size: 500
-  step: 500
+  initial_train_size: 1095
+  test_size: 182
+  step: 182
   horizon: "4h"
+  label_horizon: 1
   embargo: 6
 
 locked_holdout:
-  size: 500
+  size: 365
 
 seed: 42
 
@@ -43,10 +44,4 @@ promotion_thresholds:
   min_normal_max_drawdown: -0.15
   min_stress_drawdown: -0.25
 
-diagnostics:
-  baseline_increment: true
-  concentration: true
-  parameter_stability: true
-  leakage: true
-  reproducibility: true
-  data_quality: true
+# Diagnostics are computed from run evidence. They must never be predeclared true here.

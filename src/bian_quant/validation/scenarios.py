@@ -48,7 +48,7 @@ class ExperimentConfig:
         Maximum gross exposure as a fraction of equity.
     """
 
-    assets: list[str]
+    assets: tuple[str, ...]
     interval: str
     initial_train_size: int
     test_size: int
@@ -62,12 +62,16 @@ class ExperimentConfig:
     stress_taker_fee_bps: float
     stress_slippage_bps: float
     gross_limit: float
+    execution_delay_bars: int = 1
+    parameter_scale: float = 1.0
+    data_gap_fraction: float = 0.0
+    price_spike_fraction: float = 0.0
 
 
 def base_config() -> ExperimentConfig:
     """Return the default base experiment configuration."""
     return ExperimentConfig(
-        assets=["BTCUSDT", "ETHUSDT", "BNBUSDT"],
+        assets=("BTCUSDT", "ETHUSDT", "BNBUSDT"),
         interval="4h",
         initial_train_size=2000,
         test_size=500,
@@ -110,31 +114,31 @@ def double_cost(base: ExperimentConfig | None = None) -> ExperimentConfig:
 def one_bar_delay(base: ExperimentConfig | None = None) -> ExperimentConfig:
     """Signal delayed by one additional bar (extra execution lag)."""
     b = base or base_config()
-    return _scenario(b, embargo=b.embargo + 1)
+    return _scenario(b, execution_delay_bars=b.execution_delay_bars + 1)
 
 
 def parameter_down(base: ExperimentConfig | None = None) -> ExperimentConfig:
     """Conservative parameter set: smaller position size."""
     b = base or base_config()
-    return _scenario(b, gross_limit=b.gross_limit * 0.5)
+    return _scenario(b, parameter_scale=0.9)
 
 
 def parameter_up(base: ExperimentConfig | None = None) -> ExperimentConfig:
     """Aggressive parameter set: larger position size."""
     b = base or base_config()
-    return _scenario(b, gross_limit=min(b.gross_limit * 2.0, 2.0))
+    return _scenario(b, parameter_scale=1.1)
 
 
 def data_gap(base: ExperimentConfig | None = None) -> ExperimentConfig:
     """Simulate a data gap: larger test windows to span potential gaps."""
     b = base or base_config()
-    return _scenario(b, test_size=b.test_size + 100)
+    return _scenario(b, data_gap_fraction=0.01)
 
 
 def price_spike(base: ExperimentConfig | None = None) -> ExperimentConfig:
     """Price spike scenario: higher slippage to simulate adverse selection."""
     b = base or base_config()
-    return _scenario(b, slippage_bps=b.slippage_bps * 3)
+    return _scenario(b, price_spike_fraction=0.10)
 
 
 def all_scenarios(base: ExperimentConfig | None = None) -> dict[str, ExperimentConfig]:
