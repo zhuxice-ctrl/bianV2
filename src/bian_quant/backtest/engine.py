@@ -415,26 +415,26 @@ class EventEngine:
 
             if stop_hit and target_hit:
                 if self.bar_conflict_policy == BarConflictPolicy.STOP_FIRST:
-                    return ("stop", stop)
+                    return ("stop", stop)  # type: ignore[return-value]
                 else:
-                    return ("target", target)
+                    return ("target", target)  # type: ignore[return-value]
             elif stop_hit:
-                return ("stop", stop)
+                return ("stop", stop)  # type: ignore[return-value]
             elif target_hit:
-                return ("target", target)
+                return ("target", target)  # type: ignore[return-value]
         else:  # short
             stop_hit = stop is not None and bar.high >= stop
             target_hit = target is not None and bar.low <= target
 
             if stop_hit and target_hit:
                 if self.bar_conflict_policy == BarConflictPolicy.STOP_FIRST:
-                    return ("stop", stop)
+                    return ("stop", stop)  # type: ignore[return-value]
                 else:
-                    return ("target", target)
+                    return ("target", target)  # type: ignore[return-value]
             elif stop_hit:
-                return ("stop", stop)
+                return ("stop", stop)  # type: ignore[return-value]
             elif target_hit:
-                return ("target", target)
+                return ("target", target)  # type: ignore[return-value]
 
         return None
 
