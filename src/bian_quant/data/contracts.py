@@ -47,6 +47,8 @@ class DatasetManifest(BaseModel):
     row_count: int = Field(ge=0)
     min_event_time: datetime | None
     max_event_time: datetime | None
+    min_available_time: datetime | None = None
+    max_available_time: datetime | None = None
     parent_snapshot_ids: list[str]
     config_json: str
 
