@@ -1,0 +1,38 @@
+{
+  "strategy": "价格行为学融合策略 (Price Action Confluence)",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "BNBUSDT"
+  ],
+  "interval": "4h",
+  "initial_capital": 10000.0,
+  "risk_per_trade": 0.02,
+  "fee": 0.0004,
+  "results": {
+    "BTCUSDT": {
+      "total_return_pct": 27.85,
+      "win_rate_pct": 33.33,
+      "profit_factor": 1.247,
+      "max_drawdown_pct": -17.64,
+      "total_trades": 63,
+      "final_equity": 12784.69
+    },
+    "ETHUSDT": {
+      "total_return_pct": 16.04,
+      "win_rate_pct": 29.51,
+      "profit_factor": 1.128,
+      "max_drawdown_pct": -28.37,
+      "total_trades": 61,
+      "final_equity": 11603.8
+    },
+    "BNBUSDT": {
+      "total_return_pct": -7.39,
+      "win_rate_pct": 26.15,
+      "profit_factor": 0.938,
+      "max_drawdown_pct": -23.61,
+      "total_trades": 65,
+      "final_equity": 9261.1
+    }
+  }
+}
