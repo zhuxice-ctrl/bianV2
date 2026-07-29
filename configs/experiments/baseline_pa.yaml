@@ -1,0 +1,52 @@
+# Baseline PA experiment manifest
+# This config drives the legacy PA strategy through the new validation pipeline.
+# Thresholds are design constants — do NOT tune them using PA results.
+
+experiment:
+  name: "baseline_pa"
+  description: "Legacy Price Action Confluence strategy evaluated through the unified pipeline"
+
+assets:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+
+interval: "4h"
+
+walk_forward:
+  initial_train_size: 2000
+  test_size: 500
+  step: 500
+  horizon: "4h"
+  embargo: 6
+
+locked_holdout:
+  size: 500
+
+seed: 42
+
+costs:
+  normal:
+    taker_fee_bps: 4.0
+    slippage_bps: 5.0
+  stress:
+    taker_fee_bps: 8.0
+    slippage_bps: 10.0
+
+position_sizing:
+  gross_limit: 1.0
+
+promotion_thresholds:
+  min_positive_fold_ratio: 0.70
+  min_median_sharpe: 0.80
+  min_sharpe_ci_lower: 0.0
+  min_normal_max_drawdown: -0.15
+  min_stress_drawdown: -0.25
+
+diagnostics:
+  baseline_increment: true
+  concentration: true
+  parameter_stability: true
+  leakage: true
+  reproducibility: true
+  data_quality: true
