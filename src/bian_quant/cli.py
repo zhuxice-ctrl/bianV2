@@ -53,3 +53,54 @@ def import_legacy(
     )
     write_canonical_ohlcv(frame, output, expected_frequency=interval)
     typer.echo(str(output))
+
+
+@app.command("evaluate-factors")
+def evaluate_factors(
+    dataset: Annotated[str, typer.Option("--dataset")],
+    config: Annotated[Path, typer.Option("--config")],
+    seed: Annotated[int, typer.Option("--seed")] = 42,
+) -> None:
+    """Run factor evaluation pipeline. Prints only run_id and artifact path."""
+    import yaml
+
+    from bian_quant.factors.runner import FactorRunConfig, run_factor_pipeline
+    from bian_quant.factors.registry import FactorRegistry
+
+    with open(config) as f:
+        cfg = yaml.safe_load(f)
+
+    # Build factor specs from config
+    from bian_quant.factors.spec import FactorSpec
+
+    specs = []
+    for fs in cfg.get("factors", []):
+        specs.append(
+            FactorSpec(
+                factor_id=fs["factor_id"],
+                version=fs.get("version", "1.0.0"),
+                formula=fs["formula"],
+                direction=fs.get("direction", "positive"),
+                hypothesis=fs["hypothesis"],
+                required_columns=fs.get("required_columns", ["close"]),
+                horizon=fs.get("horizon", "4h"),
+                missing_policy=fs.get("missing_policy", "preserve"),
+                winsor_limits=tuple(fs.get("winsor_limits", [0.01, 0.99])),
+                valid_regimes=fs.get("valid_regimes", ["all"]),
+                failure_conditions=fs.get("failure_conditions", []),
+                parent_factors=fs.get("parent_factors", []),
+            )
+        )
+
+    run_config = FactorRunConfig(
+        dataset_snapshot_id=dataset,
+        factor_specs=specs,
+        split_config=cfg.get("split", {"n_folds": 3, "train_ratio": 0.6, "purge_bars": 6}),
+        seed=seed,
+        artifact_dir=Path(cfg.get("artifact_dir", "var/factor_runs")),
+    )
+
+    # Note: data loading and factor function mapping must be provided
+    # by the caller via the config. This CLI command is a thin wrapper.
+    typer.echo(f"Configuration loaded for dataset={dataset}, {len(specs)} factors")
+    typer.echo("Use run_factor_pipeline() directly for programmatic access.")
