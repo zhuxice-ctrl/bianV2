@@ -1,0 +1,14 @@
+seed: 7
+max_candidates: 20
+max_tree_depth: 3
+base_factors:
+  - price.momentum
+  - price.reversal
+  - price.realized_volatility
+  - volume.surprise
+  - volume.amihud
+  - derivatives.funding_zscore
+  - derivatives.oi_change
+windows: [6, 12, 24, 48, 168]
+allowed_unary: [lag, delta, zscore, rolling_rank]
+allowed_binary: [add, subtract, multiply, safe_ratio]
