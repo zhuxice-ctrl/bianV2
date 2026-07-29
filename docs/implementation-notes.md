@@ -49,3 +49,7 @@ Record each approved deviation from the implementation plans here with date, tas
 **Evidence:** `run_backtest.py` generates `results/summary.json` and `results/backtest_*.json` for 3 symbols only. `dashboard/generate.py` reads `results/experiments.json` but does not generate it. No script in the repository produces the 165-run experiment artifact.
 **Impact:** `results/experiments.json` and `results/experiments_summary.md` are archival evidence only.
 **Consequence:** The new validation engine must rebuild the anti-overfitting protocol from explicit code. It must not claim numerical continuity with the archival 165-run report.
+
+### 2026-07-30 — Plan 03.5 Task 4: Canonical parsers migration
+**Evidence:** `parse_metrics` in `binance_derivatives.py` gained an optional `publication_delay` parameter (default 5 minutes) while preserving the existing five-minute default. Assumption labels are now `BINANCE_METRICS_DELAY_5M`, `BINANCE_METRICS_DELAY_10M`, and `BINANCE_METRICS_DELAY_15M`.
+**Impact:** `RawArtifactManifest`, `DatasetManifest`, `MarketRecord`, and existing callers remain source compatible. The new `canonicalize.py` module wraps the existing parsers with point-in-time DataFrame conversion and Zstd Parquet partition writing.
