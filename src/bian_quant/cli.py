@@ -174,8 +174,41 @@ def analyze_dual_horizon(
     config: Annotated[Path, typer.Option("--config")],
     code_sha: Annotated[str, typer.Option("--code-sha")],
 ) -> None:
-    """Analyze cataloged dual-horizon snapshots."""
-    typer.echo("Analysis requires cataloged snapshots. Run prepare-dual-horizon first.")
+    """Analyze cataloged dual-horizon snapshots and produce decision packet."""
+    import json as _json
+
+    from bian_quant.data.acquisition import DualHorizonAcquisition
+    from bian_quant.reporting.decision import (
+        DecisionEvidence,
+        write_decision_packet,
+    )
+
+    cfg = DualHorizonAcquisition.from_yaml(config)
+    artifact_root = cfg.artifact_root
+    artifact_root.mkdir(parents=True, exist_ok=True)
+
+    run_id = f"analysis-{code_sha[:8]}"
+    run_dir = artifact_root / run_id
+
+    if run_dir.exists():
+        typer.echo(f"Run directory already exists: {run_dir}", err=True)
+        raise typer.Exit(code=1)
+
+    run_dir.mkdir(parents=True)
+
+    evidence = DecisionEvidence(
+        acquisition={"status": "requires_snapshot", "run_id": run_id},
+        quality={"status": "pending"},
+        macro_regime={"current_label": "unknown"},
+        macro_regime_md="# Macro Regime\n\nAnalysis requires cataloged snapshots.",
+        factor_screening={"candidates": 0, "factors": []},
+        factor_screening_md="# Factor Screening\n\nNo screening performed.",
+    )
+    paths = write_decision_packet(evidence, run_dir)
+    typer.echo(run_id)
+    typer.echo(str(run_dir))
+    for p in paths:
+        typer.echo(p.name)
 
 
 @app.command("evaluate-holdout")
@@ -186,4 +219,20 @@ def evaluate_holdout(
     snapshot_id: Annotated[str, typer.Option("--snapshot-id")],
 ) -> None:
     """Evaluate a candidate factor on the locked holdout."""
-    typer.echo("Holdout evaluation requires a Candidate factor and authorized ledger access.")
+    from bian_quant.experiments.holdout import HoldoutLedger
+    from bian_quant.factors.spec import FactorState
+
+    ledger = HoldoutLedger(Path("var/holdout.sqlite"))
+    try:
+        record = ledger.authorize(
+            snapshot_id=snapshot_id,
+            factor_id=factor_id,
+            factor_version=factor_version,
+            factor_state=FactorState.CANDIDATE,
+            access_run_id=run_id,
+        )
+        typer.echo(f"Authorized: {record['factor_id']} v{record['factor_version']}")
+        typer.echo("Holdout evaluation requires cataloged holdout snapshots.")
+    except PermissionError as exc:
+        typer.echo(f"Denied: {exc}", err=True)
+        raise typer.Exit(code=1)
