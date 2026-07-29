@@ -1,0 +1,214 @@
+{
+  "decision": {
+    "median_sharpe": -0.7851652782000268,
+    "normal_max_drawdown": -0.09611764095107689,
+    "passed": false,
+    "positive_fold_ratio": 0.5,
+    "reasons": [
+      "POSITIVE_FOLD_RATIO",
+      "MEDIAN_SHARPE",
+      "SHARPE_CI_LOWER",
+      "BASELINE_INCREMENT"
+    ],
+    "sharpe_ci_lower": -3.236863871945736,
+    "stress_drawdown": -0.10049695839674533
+  },
+  "diagnostics": {
+    "baseline_increment": false,
+    "concentration": true,
+    "data_quality": true,
+    "leakage": true,
+    "parameter_stability": true,
+    "reproducibility": true
+  },
+  "legacy_engine": {
+    "BNBUSDT": {
+      "final_equity": 9261.1,
+      "max_drawdown_pct": -23.61,
+      "profit_factor": 0.938,
+      "total_return_pct": -7.39,
+      "total_trades": 65,
+      "win_rate_pct": 26.15
+    },
+    "BTCUSDT": {
+      "final_equity": 12784.69,
+      "max_drawdown_pct": -17.64,
+      "profit_factor": 1.247,
+      "total_return_pct": 27.85,
+      "total_trades": 63,
+      "win_rate_pct": 33.33
+    },
+    "ETHUSDT": {
+      "final_equity": 11603.8,
+      "max_drawdown_pct": -28.37,
+      "profit_factor": 1.128,
+      "total_return_pct": 16.04,
+      "total_trades": 61,
+      "win_rate_pct": 29.51
+    }
+  },
+  "locked_holdout": {
+    "assets": {
+      "BNBUSDT": {
+        "max_drawdown": -0.21103582706268575,
+        "sharpe": -4.277132134237308,
+        "total_return": -0.2008273646623706,
+        "trades": 12
+      },
+      "BTCUSDT": {
+        "max_drawdown": -0.13514136123169973,
+        "sharpe": -0.9169091689182968,
+        "total_return": -0.05165359587117968,
+        "trades": 10
+      },
+      "ETHUSDT": {
+        "max_drawdown": -0.14085238953584245,
+        "sharpe": 1.9130877581943946,
+        "total_return": 0.12428500092431105,
+        "trades": 8
+      }
+    },
+    "portfolio": {
+      "max_drawdown": -0.10366805305006999,
+      "sharpe": -1.0094975783810851,
+      "total_return": -0.04803657312183607,
+      "trades": 30
+    }
+  },
+  "new_engine_full_snapshot": {
+    "BNBUSDT": {
+      "max_drawdown": -0.3584143553776833,
+      "sharpe": -0.5921339518665351,
+      "total_return": -0.24592367007339755,
+      "trades": 68
+    },
+    "BTCUSDT": {
+      "max_drawdown": -0.258580331357833,
+      "sharpe": 0.708302514244098,
+      "total_return": 0.18792262534665416,
+      "trades": 66
+    },
+    "ETHUSDT": {
+      "max_drawdown": -0.366537097860303,
+      "sharpe": 0.9734634719224924,
+      "total_return": 0.3968750018894045,
+      "trades": 68
+    }
+  },
+  "normal_folds": [
+    {
+      "max_drawdown": -0.07662794635621739,
+      "net_return": 0.23029522511828682,
+      "sharpe": 5.774675592408381
+    },
+    {
+      "max_drawdown": -0.09611764095107689,
+      "net_return": -0.08590888956545695,
+      "sharpe": -4.455110486132953
+    },
+    {
+      "max_drawdown": -0.07023700414082434,
+      "net_return": -0.03754326874134317,
+      "sharpe": -1.720271622530622
+    },
+    {
+      "max_drawdown": -0.03497322466566355,
+      "net_return": 0.0009383481776104041,
+      "sharpe": 0.14994106613056846
+    }
+  ],
+  "notes": {
+    "baseline_increment": "false: Baseline-0 has no independent incremental comparator",
+    "locked_holdout_usage": "evaluated once after research folds; not used to tune thresholds"
+  },
+  "parameter_down_folds": [
+    {
+      "max_drawdown": -0.0772781212980268,
+      "net_return": 0.23352975126769526,
+      "sharpe": 5.849616711004619
+    },
+    {
+      "max_drawdown": -0.09949778031405343,
+      "net_return": -0.07140380674798674,
+      "sharpe": -3.3394968268485363
+    },
+    {
+      "max_drawdown": -0.06699300658408791,
+      "net_return": -0.03479998631254366,
+      "sharpe": -1.5993452811413709
+    },
+    {
+      "max_drawdown": -0.03249525497799299,
+      "net_return": 0.011722716944434053,
+      "sharpe": 0.9668793670580159
+    }
+  ],
+  "parameter_up_folds": [
+    {
+      "max_drawdown": -0.06283264698071123,
+      "net_return": 0.24095120107888235,
+      "sharpe": 6.008372770198875
+    },
+    {
+      "max_drawdown": -0.12937472391921467,
+      "net_return": -0.11844403398997405,
+      "sharpe": -6.809114738768439
+    },
+    {
+      "max_drawdown": -0.06594176369022386,
+      "net_return": -0.039408958447424314,
+      "sharpe": -1.748329686570061
+    },
+    {
+      "max_drawdown": -0.035063901332998415,
+      "net_return": -0.002999601888673209,
+      "sharpe": -0.1288294372272359
+    }
+  ],
+  "run_manifest": {
+    "code_sha": "1b2e9d1e3cc6e91c71f4731a4736affd7caffd9e",
+    "config_json": "{\"assets\":[\"BTCUSDT\",\"ETHUSDT\",\"BNBUSDT\"],\"costs\":{\"normal\":{\"slippage_bps\":5.0,\"taker_fee_bps\":4.0},\"stress\":{\"slippage_bps\":10.0,\"taker_fee_bps\":8.0}},\"experiment\":{\"description\":\"Legacy Price Action Confluence strategy evaluated through the unified pipeline\",\"name\":\"baseline_pa\"},\"interval\":\"4h\",\"locked_holdout\":{\"size\":365},\"position_sizing\":{\"gross_limit\":1.0},\"promotion_thresholds\":{\"min_median_sharpe\":0.8,\"min_normal_max_drawdown\":-0.15,\"min_positive_fold_ratio\":0.7,\"min_sharpe_ci_lower\":0.0,\"min_stress_drawdown\":-0.25},\"seed\":42,\"walk_forward\":{\"embargo\":6,\"horizon\":\"4h\",\"initial_train_size\":1095,\"label_horizon\":1,\"step\":182,\"test_size\":182}}",
+    "created_at": "2026-07-29T17:17:39.180067Z",
+    "dataset_snapshot_ids": [
+      "legacy-BTCUSDT-4h-7c75ea07c6baa98b57aaf705c418bd04535130dae20a5160e092639692591809",
+      "legacy-ETHUSDT-4h-a43d3c3fe33dacada6947be3b73a567952378f97334215886dcc3102831fd03b",
+      "legacy-BNBUSDT-4h-a12486ddc50fbaea88ea39edee1d2a46f760277f7a70c0f9b4e6f7d8f8405d4a"
+    ],
+    "identity_sha256": "b73fcef247c52430b558acbe113ce2e59f9a3e5238d0367797c489c48a54a8fa",
+    "locked_holdout": {
+      "end": "2026-07-26T20:00:00Z",
+      "start": "2026-05-27T00:00:00Z"
+    },
+    "parent_run_id": null,
+    "run_id": "587e27ce-3601-4481-b307-c961148b467c",
+    "seed": 42,
+    "status": "failed",
+    "strategy_name": "legacy.pa_confluence"
+  },
+  "sharpe_ci": [
+    -3.236863871945736,
+    4.429561343346157
+  ],
+  "stress_folds": [
+    {
+      "max_drawdown": -0.0780314362322373,
+      "net_return": 0.2245645054751082,
+      "sharpe": 5.637585200759408
+    },
+    {
+      "max_drawdown": -0.10049695839674533,
+      "net_return": -0.09059635435578606,
+      "sharpe": -4.696586412053124
+    },
+    {
+      "max_drawdown": -0.0725290227509644,
+      "net_return": -0.05706376297058924,
+      "sharpe": -2.7758951655106987
+    },
+    {
+      "max_drawdown": -0.03725698808763367,
+      "net_return": -0.008963866158399614,
+      "sharpe": -0.5574170159467599
+    }
+  ]
+}

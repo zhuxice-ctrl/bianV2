@@ -40,6 +40,11 @@ Record each approved deviation from the implementation plans here with date, tas
 **Impact:** Repaired configuration and packaging, verified live Binance checksums and schemas, added immutable Raw manifests, grouped resampling and quality checks by asset, and enforced `available_time <= selection_time` throughout universe construction.
 **Consequence:** Plan 01 approval depends on offline Windows/WSL2 suites, explicit live network contract tests, and regression tests for these failure modes.
 
+### 2026-07-30 — Plan 02 independent verification repair
+**Evidence:** Clean verification of remote `159d560` found an out-of-scope commit that deleted the tracked data, dashboard, plans, specifications, results, and baseline evidence. The full suite also failed because `events.py` was absent and test packages collided. The submitted PA report contained no measured values or pass/fail result.
+**Impact:** Reverted the unauthorized deletion, restored the approved signal/run/split/vector/cost contracts, added the missing event types, made terminal run states irreversible, and added a reproducible PA evaluator with dataset hashes, locked-holdout boundaries, stress evidence, and stable promotion reasons.
+**Consequence:** Baseline PA is recorded as `FAIL`: positive-fold ratio `0.50`, median Sharpe `-0.7852`, Sharpe CI lower bound `-3.2369`, and locked-holdout return `-4.80%`. It receives no promotion exemption.
+
 ### 2026-07-29 — Task 1, Step 3: 165-run experiment artifact
 **Evidence:** `run_backtest.py` generates `results/summary.json` and `results/backtest_*.json` for 3 symbols only. `dashboard/generate.py` reads `results/experiments.json` but does not generate it. No script in the repository produces the 165-run experiment artifact.
 **Impact:** `results/experiments.json` and `results/experiments_summary.md` are archival evidence only.
