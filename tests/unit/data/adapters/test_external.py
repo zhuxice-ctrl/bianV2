@@ -9,11 +9,13 @@ from bian_quant.data.external_policy import can_promote_to, enforce_ceiling
 
 
 def test_parse_fear_greed() -> None:
-    payload = json.dumps({
-        "data": [
-            {"timestamp": "1738368000", "value": "50", "value_classification": "Neutral"},
-        ]
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "data": [
+                {"timestamp": "1738368000", "value": "50", "value_classification": "Neutral"},
+            ]
+        }
+    ).encode("utf-8")
 
     result = parse_fear_greed(payload)
 
@@ -23,9 +25,11 @@ def test_parse_fear_greed() -> None:
 
 
 def test_parse_defillama() -> None:
-    payload = json.dumps([
-        {"date": "2025-01-01", "totalCirculating": "150000000000"},
-    ]).encode("utf-8")
+    payload = json.dumps(
+        [
+            {"date": "2025-01-01", "totalCirculating": "150000000000"},
+        ]
+    ).encode("utf-8")
 
     result = parse_stablecoin_supply(payload)
 

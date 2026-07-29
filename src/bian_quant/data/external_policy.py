@@ -12,7 +12,10 @@ def can_promote_to(target_level: str, required_risks: list[str]) -> bool:
 
 
 def enforce_ceiling(target_level: str, required_risks: list[str]) -> None:
-    if RevisionRisk.BACKFILLED_REVISED.value in required_risks and target_level != MAX_PROMOTION_LEVEL:
+    if (
+        RevisionRisk.BACKFILLED_REVISED.value in required_risks
+        and target_level != MAX_PROMOTION_LEVEL
+    ):
         raise ValueError(
             f"Cannot promote above '{MAX_PROMOTION_LEVEL}' when a required dataset has "
             f"{RevisionRisk.BACKFILLED_REVISED.value} risk"

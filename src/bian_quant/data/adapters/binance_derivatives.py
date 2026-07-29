@@ -3,6 +3,7 @@ import io
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from urllib.request import urlopen
 
 from bian_quant.data.adapters.binance_archive import save_raw_bytes
@@ -50,7 +51,7 @@ def _read_zip_csv(payload: bytes) -> list[dict[str, str]]:
             return list(reader)
 
 
-def parse_funding(payload: bytes) -> list[dict]:
+def parse_funding(payload: bytes) -> list[dict[str, Any]]:
     rows = _read_zip_csv(payload)
     if not rows:
         return []
@@ -61,17 +62,19 @@ def parse_funding(payload: bytes) -> list[dict]:
     result = []
     for row in rows:
         event_time = datetime.fromtimestamp(int(row["calc_time"]) / 1000, tz=UTC)
-        result.append({
-            "asset": row["symbol"],
-            "event_time": event_time,
-            "available_time": event_time,
-            "funding_rate": float(row["funding_rate"]),
-            "source": "binance_funding_archive",
-        })
+        result.append(
+            {
+                "asset": row["symbol"],
+                "event_time": event_time,
+                "available_time": event_time,
+                "funding_rate": float(row["funding_rate"]),
+                "source": "binance_funding_archive",
+            }
+        )
     return result
 
 
-def parse_metrics(payload: bytes) -> list[dict]:
+def parse_metrics(payload: bytes) -> list[dict[str, Any]]:
     rows = _read_zip_csv(payload)
     if not rows:
         return []
@@ -82,16 +85,18 @@ def parse_metrics(payload: bytes) -> list[dict]:
     result = []
     for row in rows:
         event_time = datetime.fromtimestamp(int(row["timestamp"]) / 1000, tz=UTC)
-        result.append({
-            "asset": row.get("symbol", ""),
-            "event_time": event_time,
-            "available_time": event_time + OI_PUBLICATION_DELAY,
-            "available_assumption": OI_PUBLICATION_ASSUMPTION,
-            "sum_open_interest": float(row["sum_open_interest"]),
-            "sum_open_interest_value": float(row["sum_open_interest_value"]),
-            "long_short_ratio": float(row.get("long_short_ratio", 0)),
-            "source": "binance_metrics_archive",
-        })
+        result.append(
+            {
+                "asset": row.get("symbol", ""),
+                "event_time": event_time,
+                "available_time": event_time + OI_PUBLICATION_DELAY,
+                "available_assumption": OI_PUBLICATION_ASSUMPTION,
+                "sum_open_interest": float(row["sum_open_interest"]),
+                "sum_open_interest_value": float(row["sum_open_interest_value"]),
+                "long_short_ratio": float(row.get("long_short_ratio", 0)),
+                "source": "binance_metrics_archive",
+            }
+        )
     return result
 
 

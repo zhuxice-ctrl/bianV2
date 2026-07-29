@@ -9,7 +9,16 @@ from bian_quant.data.legacy import import_legacy_ohlcv
 def test_legacy_import_sets_bar_close_as_available_time(tmp_path: Path) -> None:
     source = tmp_path / "BTCUSDT_4h.csv"
     pd.DataFrame(
-        [{"datetime": "2026-01-01T00:00:00Z", "open": 1, "high": 2, "low": 1, "close": 2, "volume": 3}]
+        [
+            {
+                "datetime": "2026-01-01T00:00:00Z",
+                "open": 1,
+                "high": 2,
+                "low": 1,
+                "close": 2,
+                "volume": 3,
+            }
+        ]
     ).to_csv(source, index=False)
 
     frame = import_legacy_ohlcv(
@@ -27,8 +36,22 @@ def test_legacy_import_is_deterministic(tmp_path: Path) -> None:
     source = tmp_path / "BTCUSDT_4h.csv"
     pd.DataFrame(
         [
-            {"datetime": "2026-01-01T00:00:00Z", "open": 1, "high": 2, "low": 1, "close": 2, "volume": 3},
-            {"datetime": "2026-01-01T04:00:00Z", "open": 2, "high": 3, "low": 2, "close": 3, "volume": 5},
+            {
+                "datetime": "2026-01-01T00:00:00Z",
+                "open": 1,
+                "high": 2,
+                "low": 1,
+                "close": 2,
+                "volume": 3,
+            },
+            {
+                "datetime": "2026-01-01T04:00:00Z",
+                "open": 2,
+                "high": 3,
+                "low": 2,
+                "close": 3,
+                "volume": 5,
+            },
         ]
     ).to_csv(source, index=False)
 

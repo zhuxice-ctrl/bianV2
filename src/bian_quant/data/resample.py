@@ -16,4 +16,8 @@ def resample_ohlcv(frame: pd.DataFrame, *, rule: str) -> pd.DataFrame:
             "source": "first",
         }
     )
-    return result.dropna(subset=["open", "high", "low", "close"]).rename_axis("event_time").reset_index()
+    return (
+        result.dropna(subset=["open", "high", "low", "close"])
+        .rename_axis("event_time")
+        .reset_index()
+    )

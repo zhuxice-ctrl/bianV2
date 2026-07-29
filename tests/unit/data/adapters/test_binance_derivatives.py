@@ -22,7 +22,7 @@ def test_funding_url() -> None:
 
 
 def test_metrics_url() -> None:
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
 
     url = metrics_url("BTCUSDT", datetime(2025, 1, 2, tzinfo=UTC))
     assert url == (
@@ -56,19 +56,21 @@ def test_parse_funding_produces_event_time() -> None:
 
 def test_parse_metrics_produces_oi_fields() -> None:
     cols = list(EXPECTED_METRICS_COLUMNS)
-    rows = [{
-        "sum_open_interest": "100.5",
-        "sum_open_interest_value": "5000000",
-        "count": "100",
-        "sum_open_interest_cost": "50",
-        "sum_open_interest_cost_value": "2500000",
-        "long_short_ratio": "1.2",
-        "long_account": "55",
-        "short_account": "45",
-        "long_position": "60",
-        "short_position": "40",
-        "timestamp": "1738368000000",
-    }]
+    rows = [
+        {
+            "sum_open_interest": "100.5",
+            "sum_open_interest_value": "5000000",
+            "count": "100",
+            "sum_open_interest_cost": "50",
+            "sum_open_interest_cost_value": "2500000",
+            "long_short_ratio": "1.2",
+            "long_account": "55",
+            "short_account": "45",
+            "long_position": "60",
+            "short_position": "40",
+            "timestamp": "1738368000000",
+        }
+    ]
     payload = _make_zip(rows, cols)
 
     result = parse_metrics(payload)
@@ -81,20 +83,22 @@ def test_parse_metrics_produces_oi_fields() -> None:
 
 def test_parse_metrics_rejects_unexpected_columns() -> None:
     cols = list(EXPECTED_METRICS_COLUMNS) + ["unexpected_new_col"]
-    rows = [{
-        "sum_open_interest": "100",
-        "sum_open_interest_value": "5000",
-        "count": "10",
-        "sum_open_interest_cost": "5",
-        "sum_open_interest_cost_value": "250",
-        "long_short_ratio": "1.0",
-        "long_account": "50",
-        "short_account": "50",
-        "long_position": "50",
-        "short_position": "50",
-        "timestamp": "1738368000000",
-        "unexpected_new_col": "surprise",
-    }]
+    rows = [
+        {
+            "sum_open_interest": "100",
+            "sum_open_interest_value": "5000",
+            "count": "10",
+            "sum_open_interest_cost": "5",
+            "sum_open_interest_cost_value": "250",
+            "long_short_ratio": "1.0",
+            "long_account": "50",
+            "short_account": "50",
+            "long_position": "50",
+            "short_position": "50",
+            "timestamp": "1738368000000",
+            "unexpected_new_col": "surprise",
+        }
+    ]
     payload = _make_zip(rows, cols)
 
     try:

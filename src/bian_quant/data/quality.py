@@ -1,5 +1,5 @@
-from pydantic import BaseModel
 import pandas as pd
+from pydantic import BaseModel
 
 from bian_quant.data.contracts import QualityFinding, QualitySeverity
 

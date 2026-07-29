@@ -35,6 +35,7 @@ packages = ["src/bian_quant"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-p no:cov"
 markers = ["models: requires optional model dependencies or weights", "network: requires network access"]
 addopts = "-p no:cov"
 
