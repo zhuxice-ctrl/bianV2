@@ -13,6 +13,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from bian_quant.data.adapters.raw import RawSourceIdentity
+
 
 class DiskStatus(StrEnum):
     OK = "ok"
@@ -188,3 +190,253 @@ def check_disk_budget(
     if free_bytes < budget.warn_bytes:
         return DiskStatus.WARNING
     return DiskStatus.OK
+
+
+# ---------------------------------------------------------------------------
+# Source-object plan
+# ---------------------------------------------------------------------------
+
+
+class SourceDataset(StrEnum):
+    OHLCV = "ohlcv"
+    FUNDING = "funding"
+    METRICS_OI = "metrics_oi"
+
+
+class SourceGranularity(StrEnum):
+    MONTHLY = "monthly"
+    DAILY = "daily"
+
+
+@dataclass(frozen=True, order=True)
+class SourceObject:
+    dataset: SourceDataset
+    asset: str
+    interval: str
+    granularity: SourceGranularity
+    period_start: datetime
+    url: str
+    relative_path: Path
+
+    @property
+    def identity_key(self) -> str:
+        return "|".join(
+            (
+                self.dataset.value,
+                self.asset,
+                self.interval,
+                self.granularity.value,
+                self.period_start.isoformat(),
+            )
+        )
+
+    @property
+    def raw_identity(self) -> RawSourceIdentity:
+        return RawSourceIdentity(
+            asset=self.asset,
+            dataset=self.dataset.value,
+            interval=self.interval or None,
+            source_period=self.period_start.strftime(
+                "%Y-%m" if self.granularity == SourceGranularity.MONTHLY else "%Y-%m-%d"
+            ),
+        )
+
+
+def _make_monthly_ohlcv(
+    asset: str, interval: str, year: int, month: int, raw_root: Path
+) -> SourceObject:
+    from bian_quant.data.adapters.binance_archive import archive_url
+
+    period_start = datetime(year, month, 1, tzinfo=UTC)
+    stamp = f"{year:04d}-{month:02d}"
+    return SourceObject(
+        dataset=SourceDataset.OHLCV,
+        asset=asset,
+        interval=interval,
+        granularity=SourceGranularity.MONTHLY,
+        period_start=period_start,
+        url=archive_url(asset, interval, year, month),
+        relative_path=raw_root / "ohlcv" / asset / interval / f"{stamp}.zip",
+    )
+
+
+def _make_daily_ohlcv(
+    asset: str, interval: str, day: datetime, raw_root: Path
+) -> SourceObject:
+    from bian_quant.data.adapters.binance_archive import daily_archive_url
+
+    stamp = day.strftime("%Y-%m-%d")
+    return SourceObject(
+        dataset=SourceDataset.OHLCV,
+        asset=asset,
+        interval=interval,
+        granularity=SourceGranularity.DAILY,
+        period_start=day,
+        url=daily_archive_url(asset, interval, day.date()),
+        relative_path=raw_root / "ohlcv" / asset / interval / f"{stamp}.zip",
+    )
+
+
+def _make_monthly_funding(
+    asset: str, year: int, month: int, raw_root: Path
+) -> SourceObject:
+    from bian_quant.data.adapters.binance_derivatives import funding_url
+
+    period_start = datetime(year, month, 1, tzinfo=UTC)
+    stamp = f"{year:04d}-{month:02d}"
+    return SourceObject(
+        dataset=SourceDataset.FUNDING,
+        asset=asset,
+        interval="native",
+        granularity=SourceGranularity.MONTHLY,
+        period_start=period_start,
+        url=funding_url(asset, year, month),
+        relative_path=raw_root / "funding" / asset / "native" / f"{stamp}.zip",
+    )
+
+
+def _make_daily_funding(asset: str, day: datetime, raw_root: Path) -> SourceObject:
+    from bian_quant.data.adapters.binance_derivatives import daily_funding_url
+
+    stamp = day.strftime("%Y-%m-%d")
+    return SourceObject(
+        dataset=SourceDataset.FUNDING,
+        asset=asset,
+        interval="native",
+        granularity=SourceGranularity.DAILY,
+        period_start=day,
+        url=daily_funding_url(asset, day),
+        relative_path=raw_root / "funding" / asset / "native" / f"{stamp}.zip",
+    )
+
+
+def _make_daily_metrics(asset: str, day: datetime, raw_root: Path) -> SourceObject:
+    from bian_quant.data.adapters.binance_derivatives import metrics_url
+
+    stamp = day.strftime("%Y-%m-%d")
+    return SourceObject(
+        dataset=SourceDataset.METRICS_OI,
+        asset=asset,
+        interval="native",
+        granularity=SourceGranularity.DAILY,
+        period_start=day,
+        url=metrics_url(asset, day),
+        relative_path=raw_root / "metrics_oi" / asset / "native" / f"{stamp}.zip",
+    )
+
+
+def build_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...]:
+    """Build the exact, ordered set of source objects to acquire.
+
+    Rules:
+    - Monthly OHLCV for macro intervals from macro_start; monthly OHLCV for
+      micro-only intervals from micro_start.  4h is shared and only requested
+      from macro_start.
+    - Daily OHLCV for all intervals in the partial month of as_of.
+    - Monthly Funding from macro_start; daily Funding for the partial month.
+    - Daily Metrics/OI only from micro_start (never five years).
+    - No object later than as_of.
+    - Sorted by (dataset, asset, interval, period_start).
+    """
+    raw_root = config.raw_root
+    objects: list[SourceObject] = []
+
+    macro_set = set(config.macro_intervals)
+    micro_only = set(config.micro_intervals) - macro_set
+    all_intervals = sorted(macro_set | set(config.micro_intervals))
+
+    # Monthly OHLCV from macro_start
+    for interval in sorted(macro_set):
+        for asset in config.assets:
+            for year, month in calendar_months(config.macro_start, config.as_of):
+                objects.append(
+                    _make_monthly_ohlcv(asset, interval, year, month, raw_root)
+                )
+
+    # Monthly OHLCV from micro_start (micro-only intervals)
+    for interval in sorted(micro_only):
+        for asset in config.assets:
+            for year, month in calendar_months(config.micro_start, config.as_of):
+                objects.append(
+                    _make_monthly_ohlcv(asset, interval, year, month, raw_root)
+                )
+
+    # Daily OHLCV for partial month (month of as_of)
+    partial_start = config.as_of.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    for interval in all_intervals:
+        for asset in config.assets:
+            for day in calendar_days(partial_start, config.as_of):
+                objects.append(_make_daily_ohlcv(asset, interval, day, raw_root))
+
+    # Monthly Funding from macro_start
+    for asset in config.assets:
+        for year, month in calendar_months(config.macro_start, config.as_of):
+            objects.append(_make_monthly_funding(asset, year, month, raw_root))
+
+    # Daily Funding for partial month
+    for asset in config.assets:
+        for day in calendar_days(partial_start, config.as_of):
+            objects.append(_make_daily_funding(asset, day, raw_root))
+
+    # Daily Metrics/OI from micro_start
+    for asset in config.assets:
+        for day in calendar_days(config.micro_start, config.as_of):
+            objects.append(_make_daily_metrics(asset, day, raw_root))
+
+    objects.sort(
+        key=lambda o: (o.dataset.value, o.asset, o.interval, o.period_start)
+    )
+    return tuple(objects)
+
+
+def source_plan_payload(config: DualHorizonAcquisition) -> dict:
+    """Return a JSON-safe dry-run summary of the source plan.
+
+    Does not access the network or filesystem beyond reading the config.
+    """
+    plan = build_source_plan(config)
+
+    counts_by_dataset: dict[str, int] = {}
+    counts_by_granularity: dict[str, int] = {}
+    for obj in plan:
+        counts_by_dataset[obj.dataset.value] = (
+            counts_by_dataset.get(obj.dataset.value, 0) + 1
+        )
+        counts_by_granularity[obj.granularity.value] = (
+            counts_by_granularity.get(obj.granularity.value, 0) + 1
+        )
+
+    first_period = plan[0].period_start.isoformat() if plan else None
+    last_period = plan[-1].period_start.isoformat() if plan else None
+
+    return {
+        "config_identity": {
+            "assets": list(config.assets),
+            "macro_start": config.macro_start.isoformat(),
+            "micro_start": config.micro_start.isoformat(),
+            "as_of": config.as_of.isoformat(),
+            "macro_intervals": list(config.macro_intervals),
+            "micro_intervals": list(config.micro_intervals),
+        },
+        "counts": {
+            "total": len(plan),
+            "by_dataset": counts_by_dataset,
+            "by_granularity": counts_by_granularity,
+        },
+        "first_period": first_period,
+        "last_period": last_period,
+        "disk_thresholds": {
+            "warn_gb": config.disk_warn_gb,
+            "block_gb": config.disk_block_gb,
+        },
+        "objects": [
+            {
+                "identity_key": obj.identity_key,
+                "url": obj.url,
+                "relative_path": str(obj.relative_path),
+            }
+            for obj in plan
+        ],
+    }
