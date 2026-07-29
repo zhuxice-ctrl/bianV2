@@ -1,0 +1,9 @@
+core_assets:
+  - BTCUSDT
+  - ETHUSDT
+base_interval: 1h
+derived_intervals:
+  - 4h
+  - 1d
+migration_asset_count_min: 5
+migration_asset_count_max: 8
