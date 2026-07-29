@@ -135,3 +135,55 @@ def evaluate_factors(
     typer.echo(str(result.artifact_path))
     if result.status != "completed":
         raise typer.Exit(code=1)
+
+
+@app.command("prepare-dual-horizon")
+def prepare_dual_horizon(
+    config: Annotated[Path, typer.Option("--config")],
+    code_sha: Annotated[str, typer.Option("--code-sha")],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    download: Annotated[bool, typer.Option("--download")] = False,
+) -> None:
+    """Prepare dual-horizon acquisition and snapshot build."""
+    import json as _json
+
+    from bian_quant.data.acquisition import DualHorizonAcquisition
+    from bian_quant.data.dual_horizon import prepare_dual_horizon as _prepare
+
+    cfg = DualHorizonAcquisition.from_yaml(config)
+
+    if dry_run:
+        result = _prepare(cfg, code_sha=code_sha, dry_run=True)
+        typer.echo(_json.dumps(result, indent=2, default=str))
+        return
+
+    if download:
+        result = _prepare(cfg, code_sha=code_sha)
+    else:
+        result = _prepare(cfg, code_sha=code_sha)
+
+    typer.echo(result.run_id)
+    typer.echo(str(result.acquisition_artifact))
+    typer.echo(str(result.quality_artifact))
+    for snap in result.snapshots:
+        typer.echo(snap.snapshot_id)
+
+
+@app.command("analyze-dual-horizon")
+def analyze_dual_horizon(
+    config: Annotated[Path, typer.Option("--config")],
+    code_sha: Annotated[str, typer.Option("--code-sha")],
+) -> None:
+    """Analyze cataloged dual-horizon snapshots."""
+    typer.echo("Analysis requires cataloged snapshots. Run prepare-dual-horizon first.")
+
+
+@app.command("evaluate-holdout")
+def evaluate_holdout(
+    run_id: Annotated[str, typer.Option("--run-id")],
+    factor_id: Annotated[str, typer.Option("--factor-id")],
+    factor_version: Annotated[str, typer.Option("--factor-version")],
+    snapshot_id: Annotated[str, typer.Option("--snapshot-id")],
+) -> None:
+    """Evaluate a candidate factor on the locked holdout."""
+    typer.echo("Holdout evaluation requires a Candidate factor and authorized ledger access.")
