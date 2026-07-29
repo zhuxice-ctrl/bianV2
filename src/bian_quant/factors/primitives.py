@@ -22,6 +22,8 @@ class ExprNode:
     children: tuple[ExprNode, ...] = ()
     params: tuple[Any, ...] = ()
     required_columns: tuple[str, ...] = ()
+    output_unit: str = "dimensionless"
+    parent_ids: tuple[str, ...] = ()
 
     @property
     def lookback(self) -> int:
@@ -37,7 +39,14 @@ class ExprNode:
             "rolling_rank",
         ):
             own = int(self.params[0]) if self.params else 0
+        if self.children and own:
+            return own + max(child_lookbacks, default=0)
         return max([own] + child_lookbacks)
+
+    @property
+    def depth(self) -> int:
+        """Expression-tree depth, with a column leaf at depth one."""
+        return 1 + max((child.depth for child in self.children), default=0)
 
     @property
     def expression_hash(self) -> str:
@@ -50,22 +59,42 @@ class ExprNode:
         if self.params:
             parts.append("(" + ",".join(str(p) for p in self.params) + ")")
         if self.required_columns:
-            parts.append("[" + ",".join(self.required_columns) + "]")
+            parts.append("[" + ",".join(sorted(set(self.required_columns))) + "]")
         if self.children:
-            parts.append("{" + ",".join(c._canonical() for c in self.children) + "}")
+            child_parts = [child._canonical() for child in self.children]
+            if self.op in {"add", "multiply"}:
+                child_parts.sort()
+            parts.append("{" + ",".join(child_parts) + "}")
+        parts.append(f"unit={self.output_unit}")
+        if self.parent_ids:
+            parts.append("parents=[" + ",".join(sorted(self.parent_ids)) + "]")
         return ":".join(parts)
 
 
 def column(name: str) -> ExprNode:
     """Reference a data column."""
-    return ExprNode(op="column", required_columns=(name,))
+    units = {
+        "close": "quote_currency",
+        "open": "quote_currency",
+        "high": "quote_currency",
+        "low": "quote_currency",
+        "volume": "base_currency",
+        "funding_rate": "ratio",
+        "open_interest": "base_currency",
+    }
+    return ExprNode(op="column", required_columns=(name,), output_unit=units.get(name, "unknown"))
 
 
 def lag(node: ExprNode, periods: int) -> ExprNode:
     if periods <= 0:
         raise ValueError("lag periods must be positive")
     return ExprNode(
-        op="lag", children=(node,), params=(periods,), required_columns=node.required_columns
+        op="lag",
+        children=(node,),
+        params=(periods,),
+        required_columns=node.required_columns,
+        output_unit=node.output_unit,
+        parent_ids=node.parent_ids,
     )
 
 
@@ -73,7 +102,12 @@ def delta(node: ExprNode, periods: int) -> ExprNode:
     if periods <= 0:
         raise ValueError("delta periods must be positive")
     return ExprNode(
-        op="delta", children=(node,), params=(periods,), required_columns=node.required_columns
+        op="delta",
+        children=(node,),
+        params=(periods,),
+        required_columns=node.required_columns,
+        output_unit=node.output_unit,
+        parent_ids=node.parent_ids,
     )
 
 
@@ -85,6 +119,8 @@ def percent_change(node: ExprNode, periods: int) -> ExprNode:
         children=(node,),
         params=(periods,),
         required_columns=node.required_columns,
+        output_unit="ratio",
+        parent_ids=node.parent_ids,
     )
 
 
@@ -96,6 +132,8 @@ def rolling_mean(node: ExprNode, window: int) -> ExprNode:
         children=(node,),
         params=(window,),
         required_columns=node.required_columns,
+        output_unit=node.output_unit,
+        parent_ids=node.parent_ids,
     )
 
 
@@ -103,7 +141,12 @@ def rolling_std(node: ExprNode, window: int) -> ExprNode:
     if window < 2:
         raise ValueError("rolling window must be >= 2")
     return ExprNode(
-        op="rolling_std", children=(node,), params=(window,), required_columns=node.required_columns
+        op="rolling_std",
+        children=(node,),
+        params=(window,),
+        required_columns=node.required_columns,
+        output_unit=node.output_unit,
+        parent_ids=node.parent_ids,
     )
 
 
@@ -111,7 +154,12 @@ def zscore(node: ExprNode, window: int) -> ExprNode:
     if window < 2:
         raise ValueError("zscore window must be >= 2")
     return ExprNode(
-        op="zscore", children=(node,), params=(window,), required_columns=node.required_columns
+        op="zscore",
+        children=(node,),
+        params=(window,),
+        required_columns=node.required_columns,
+        output_unit="dimensionless",
+        parent_ids=node.parent_ids,
     )
 
 
@@ -123,6 +171,8 @@ def rolling_rank(node: ExprNode, window: int) -> ExprNode:
         children=(node,),
         params=(window,),
         required_columns=node.required_columns,
+        output_unit="rank",
+        parent_ids=node.parent_ids,
     )
 
 
@@ -131,6 +181,8 @@ def add(left: ExprNode, right: ExprNode) -> ExprNode:
         op="add",
         children=(left, right),
         required_columns=left.required_columns + right.required_columns,
+        output_unit=left.output_unit if left.output_unit == right.output_unit else "mixed",
+        parent_ids=left.parent_ids + right.parent_ids,
     )
 
 
@@ -139,6 +191,8 @@ def subtract(left: ExprNode, right: ExprNode) -> ExprNode:
         op="subtract",
         children=(left, right),
         required_columns=left.required_columns + right.required_columns,
+        output_unit=left.output_unit if left.output_unit == right.output_unit else "mixed",
+        parent_ids=left.parent_ids + right.parent_ids,
     )
 
 
@@ -147,6 +201,8 @@ def multiply(left: ExprNode, right: ExprNode) -> ExprNode:
         op="multiply",
         children=(left, right),
         required_columns=left.required_columns + right.required_columns,
+        output_unit=f"{left.output_unit}*{right.output_unit}",
+        parent_ids=left.parent_ids + right.parent_ids,
     )
 
 
@@ -156,12 +212,19 @@ def safe_ratio(left: ExprNode, right: ExprNode, epsilon: float = 1e-10) -> ExprN
         children=(left, right),
         params=(epsilon,),
         required_columns=left.required_columns + right.required_columns,
+        output_unit=f"{left.output_unit}/{right.output_unit}",
+        parent_ids=left.parent_ids + right.parent_ids,
     )
 
 
 def clip(node: ExprNode, lower: float | None = None, upper: float | None = None) -> ExprNode:
     return ExprNode(
-        op="clip", children=(node,), params=(lower, upper), required_columns=node.required_columns
+        op="clip",
+        children=(node,),
+        params=(lower, upper),
+        required_columns=node.required_columns,
+        output_unit=node.output_unit,
+        parent_ids=node.parent_ids,
     )
 
 

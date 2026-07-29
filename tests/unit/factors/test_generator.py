@@ -139,6 +139,21 @@ allowed_binary: [add, subtract, multiply, safe_ratio]
         candidates = generate_candidates(config_path, code_sha="abc")
         assert len(candidates) <= 5
 
+    def test_config_cannot_raise_global_hard_cap(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "search_space.yaml"
+        config_path.write_text(
+            """seed: 42
+max_candidates: 1000
+max_tree_depth: 3
+base_factors: [price.momentum]
+windows: [6, 12, 24, 48, 168]
+allowed_unary: [lag, delta, zscore, rolling_rank]
+allowed_binary: [add, subtract, multiply, safe_ratio]
+""",
+            encoding="utf-8",
+        )
+        assert len(generate_candidates(config_path, code_sha="abc")) <= 20
+
 
 class TestResearchOnlyState:
     def test_candidates_have_generation_rank(self) -> None:
@@ -154,7 +169,7 @@ class TestResearchOnlyState:
     def test_candidates_have_search_manifest_hash(self) -> None:
         candidates = generate_candidates(SEARCH_SPACE, code_sha="abc")
         for c in candidates:
-            assert len(c.search_manifest_hash) > 0
+            assert len(c.search_manifest_hash) == 64
 
     def test_candidates_have_parent_factors(self) -> None:
         candidates = generate_candidates(SEARCH_SPACE, code_sha="abc")
@@ -165,6 +180,18 @@ class TestResearchOnlyState:
         candidates = generate_candidates(SEARCH_SPACE, code_sha="abc")
         for c in candidates:
             assert c.required_lookback >= 0
+
+
+def test_nested_temporal_lookback_is_additive() -> None:
+    tree = zscore(percent_change(column("close"), 24), 168)
+    assert tree.lookback == 192
+
+
+def test_commutative_expression_hash_is_normalized() -> None:
+    assert (
+        add(column("close"), column("volume")).expression_hash
+        == add(column("volume"), column("close")).expression_hash
+    )
 
 
 class TestEvaluateNode:

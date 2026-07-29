@@ -31,21 +31,25 @@ class RegimeThresholds:
 
 
 def _rolling_volatility(close: pd.Series, window: int = 48) -> pd.Series:
-    returns = np.log(close / close.shift(1))
+    ratio = (close / close.shift(1)).to_numpy(dtype=float)
+    returns = pd.Series(np.log(ratio), index=close.index, dtype=float)
     return returns.rolling(window, min_periods=window).std(ddof=1)
 
 
 def _trend_strength(close: pd.Series, window: int = 48) -> pd.Series:
     vol = _rolling_volatility(close, window)
     abs_ret = (close / close.shift(window) - 1.0).abs()
-    return (abs_ret / vol.replace(0.0, np.nan)).rename("trend_strength")
+    result = abs_ret / vol.replace(0.0, np.nan)
+    return pd.Series(result, index=close.index, name="trend_strength", dtype=float)
 
 
 def _illiquidity(close: pd.Series, volume: pd.Series, window: int = 48) -> pd.Series:
-    abs_ret = np.log(close / close.shift(1)).abs()
+    ratio_values = (close / close.shift(1)).to_numpy(dtype=float)
+    abs_ret = pd.Series(np.abs(np.log(ratio_values)), index=close.index, dtype=float)
     dollar_vol = close * volume
     ratio = abs_ret / dollar_vol.replace(0.0, np.nan)
-    return ratio.rolling(window, min_periods=window).mean().rename("illiquidity")
+    result = ratio.rolling(window, min_periods=window).mean()
+    return pd.Series(result, index=close.index, name="illiquidity", dtype=float)
 
 
 def fit_regime_thresholds(train_frame: pd.DataFrame) -> RegimeThresholds:
@@ -64,11 +68,14 @@ def fit_regime_thresholds(train_frame: pd.DataFrame) -> RegimeThresholds:
     trend = _trend_strength(close)
     illiq = _illiquidity(close, volume)
 
-    return RegimeThresholds(
+    thresholds = RegimeThresholds(
         vol_48_q75=float(vol.dropna().quantile(0.75)),
         trend_q60=float(trend.dropna().quantile(0.60)),
         illiquidity_q95=float(illiq.dropna().quantile(0.95)),
     )
+    if not all(np.isfinite(value) for value in thresholds.__dict__.values()):
+        raise ValueError("training fold does not contain enough data to fit regime thresholds")
+    return thresholds
 
 
 def classify_regime(frame: pd.DataFrame, thresholds: RegimeThresholds) -> pd.Series:

@@ -27,4 +27,10 @@ def forward_log_return(close: pd.Series, *, periods: int) -> pd.Series:
     """
     if periods <= 0:
         raise ValueError("periods must be positive")
-    return np.log(close.shift(-periods) / close).rename(f"forward_log_return_{periods}")
+    ratio = (close.shift(-periods) / close).to_numpy(dtype=float)
+    return pd.Series(
+        np.log(ratio),
+        index=close.index,
+        name=f"forward_log_return_{periods}",
+        dtype=float,
+    )

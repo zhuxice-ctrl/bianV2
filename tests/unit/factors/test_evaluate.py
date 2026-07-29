@@ -7,7 +7,10 @@ import pandas as pd
 import pytest
 
 from bian_quant.factors.evaluate import evaluate_factor
-from bian_quant.factors.multiple_testing import benjamini_hochberg
+from bian_quant.factors.multiple_testing import (
+    benjamini_hochberg,
+    benjamini_hochberg_details,
+)
 
 
 def test_perfect_correlation_produces_rank_ic_one() -> None:
@@ -20,8 +23,9 @@ def test_perfect_correlation_produces_rank_ic_one() -> None:
     assert len(results) == 1
     assert results[0].spearman_ic == 1.0
     assert results[0].pearson_ic == pytest.approx(1.0, abs=1e-3)
-    # CI is NaN for small samples (< 10)
+    # Inferential outputs are withheld for small slices (< 30).
     assert np.isnan(results[0].ci_lower)
+    assert np.isnan(results[0].p_value)
 
 
 def test_metadata_produces_all_group_keys() -> None:
@@ -72,6 +76,14 @@ def test_bh_validates_p_value_range() -> None:
         benjamini_hochberg({"a": 1.01}, alpha=0.05)
 
 
+def test_bh_details_include_monotone_adjusted_p_values() -> None:
+    details = benjamini_hochberg_details({"a": 0.001, "b": 0.02, "c": 0.20}, alpha=0.05)
+    assert details["a"].raw_p_value == 0.001
+    assert details["a"].adjusted_p_value <= details["b"].adjusted_p_value
+    assert details["b"].rank == 2
+    assert details["c"].rejected_null is False
+
+
 def test_coverage_and_sample_count_with_missing() -> None:
     """Factor [1.0, NaN, 3.0, NaN] must report coverage 0.5 and sample_count 2."""
     factor = pd.Series([1.0, np.nan, 3.0, np.nan], name="f")
@@ -109,3 +121,4 @@ def test_confidence_interval_is_reported() -> None:
     assert not np.isnan(r.ci_lower)
     assert not np.isnan(r.ci_upper)
     assert r.ci_lower <= r.ci_upper
+    assert 0.0 <= r.p_value <= 1.0

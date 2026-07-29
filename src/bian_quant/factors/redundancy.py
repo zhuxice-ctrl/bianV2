@@ -11,8 +11,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import fcluster, linkage
-from scipy.spatial.distance import squareform
+from scipy.cluster.hierarchy import fcluster, linkage  # type: ignore[import-untyped]
+from scipy.spatial.distance import squareform  # type: ignore[import-untyped]
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,12 @@ class IncrementalResult:
 
     factor_name: str
     standalone_ic: float
+    baseline_ic: float
+    full_ic: float
     incremental_ic: float
+    baseline_cost_adjusted_return: float
+    full_cost_adjusted_return: float
+    delta_cost_adjusted_return: float
     has_incremental_value: bool
 
 
@@ -117,90 +122,129 @@ def evaluate_incremental_contribution(
     *,
     factor_name: str,
     alpha: float = 1.0,
+    validation_candidate_factor: pd.Series | None = None,
+    validation_baseline_factors: pd.DataFrame | None = None,
+    validation_label: pd.Series | None = None,
+    cost_rate_bps: float = 5.0,
 ) -> IncrementalResult:
-    """Evaluate the incremental IC of a candidate over a regularized baseline.
+    """Evaluate validation-only incremental IC and cost-adjusted return.
 
     Parameters
     ----------
-    candidate_factor
-        The factor being evaluated for incremental value.
-    baseline_factors
-        DataFrame of already-approved baseline factors.
-    label
-        Forward return label.
+    The first three arguments are the training fold. Optional validation
+    arguments provide a disjoint evaluation fold. When omitted, the training
+    fold is reused for backwards compatibility with small unit fixtures.
     factor_name
         Name of the candidate factor.
     alpha
         L2 regularization strength for the linear baseline.
     """
-    # Align data
-    df = pd.DataFrame({"candidate": candidate_factor, "label": label})
-    for col in baseline_factors.columns:
-        df[col] = baseline_factors[col]
-    df = df.dropna()
+    if cost_rate_bps < 0:
+        raise ValueError("cost_rate_bps must be non-negative")
 
-    if len(df) < 5:
+    train = pd.DataFrame({"candidate": candidate_factor, "label": label})
+    for col in baseline_factors.columns:
+        train[str(col)] = baseline_factors[col]
+    train = train.dropna()
+
+    validation_candidate = (
+        candidate_factor if validation_candidate_factor is None else validation_candidate_factor
+    )
+    validation_baseline = (
+        baseline_factors if validation_baseline_factors is None else validation_baseline_factors
+    )
+    validation_target = label if validation_label is None else validation_label
+    validation = pd.DataFrame({"candidate": validation_candidate, "label": validation_target})
+    for col in validation_baseline.columns:
+        validation[str(col)] = validation_baseline[col]
+    validation = validation.dropna()
+
+    if len(train) < 5 or len(validation) < 5:
         return IncrementalResult(
             factor_name=factor_name,
             standalone_ic=float("nan"),
+            baseline_ic=float("nan"),
+            full_ic=float("nan"),
             incremental_ic=float("nan"),
+            baseline_cost_adjusted_return=float("nan"),
+            full_cost_adjusted_return=float("nan"),
+            delta_cost_adjusted_return=float("nan"),
             has_incremental_value=False,
         )
 
-    y = df["label"].values
-    candidate = df["candidate"].values
+    train_y = train["label"].to_numpy(dtype=float)
+    validation_y = validation["label"].to_numpy(dtype=float)
+    train_candidate = train["candidate"].to_numpy(dtype=float)
+    validation_candidate_values = validation["candidate"].to_numpy(dtype=float)
 
-    # Standalone IC
-    if np.std(candidate) > 0 and np.std(y) > 0:
-        standalone_ic = float(np.corrcoef(candidate, y)[0, 1])
+    standalone_ic = _correlation(validation_candidate_values, validation_y)
+
+    baseline_columns = [str(column) for column in baseline_factors.columns]
+    if baseline_columns:
+        train_base = train[baseline_columns].to_numpy(dtype=float)
+        validation_base = validation[baseline_columns].to_numpy(dtype=float)
+        baseline_pred = _ridge_predict(train_base, train_y, validation_base, alpha=alpha)
     else:
-        standalone_ic = 0.0
+        train_base = np.empty((len(train), 0), dtype=float)
+        validation_base = np.empty((len(validation), 0), dtype=float)
+        baseline_pred = np.zeros(len(validation), dtype=float)
 
-    # Baseline IC (using regularized linear combination)
-    if baseline_factors.shape[1] > 0:
-        X_base = df[baseline_factors.columns].values
-        # Ridge regression: w = (X'X + alpha*I)^-1 X'y
-        n_features = X_base.shape[1]
-        reg = alpha * np.eye(n_features)
-        try:
-            w = np.linalg.solve(X_base.T @ X_base + reg, X_base.T @ y)
-            baseline_pred = X_base @ w
-            if np.std(baseline_pred) > 0 and np.std(y) > 0:
-                baseline_ic = float(np.corrcoef(baseline_pred, y)[0, 1])
-            else:
-                baseline_ic = 0.0
-        except np.linalg.LinAlgError:
-            baseline_ic = 0.0
-    else:
-        baseline_ic = 0.0
+    train_full = np.column_stack([train_base, train_candidate])
+    validation_full = np.column_stack([validation_base, validation_candidate_values])
+    full_pred = _ridge_predict(train_full, train_y, validation_full, alpha=alpha)
 
-    # Full model IC (baseline + candidate)
-    if baseline_factors.shape[1] > 0:
-        X_full = np.column_stack([X_base, candidate])
-    else:
-        X_full = candidate.reshape(-1, 1)
-
-    n_full = X_full.shape[1]
-    reg_full = alpha * np.eye(n_full)
-    try:
-        w_full = np.linalg.solve(X_full.T @ X_full + reg_full, X_full.T @ y)
-        full_pred = X_full @ w_full
-        if np.std(full_pred) > 0 and np.std(y) > 0:
-            full_ic = float(np.corrcoef(full_pred, y)[0, 1])
-        else:
-            full_ic = 0.0
-    except np.linalg.LinAlgError:
-        full_ic = 0.0
+    baseline_ic = _correlation(baseline_pred, validation_y)
+    full_ic = _correlation(full_pred, validation_y)
 
     incremental_ic = full_ic - baseline_ic
+    baseline_return = _cost_adjusted_return(
+        baseline_pred, validation_y, cost_rate_bps=cost_rate_bps
+    )
+    full_return = _cost_adjusted_return(full_pred, validation_y, cost_rate_bps=cost_rate_bps)
+    delta_return = full_return - baseline_return
 
-    # A factor with no incremental value remains "observed" even if
-    # standalone IC is strong
-    has_incremental = incremental_ic > 0.001
+    has_incremental = incremental_ic > 0.001 and delta_return > 0.0
 
     return IncrementalResult(
         factor_name=factor_name,
         standalone_ic=standalone_ic,
+        baseline_ic=baseline_ic,
+        full_ic=full_ic,
         incremental_ic=incremental_ic,
+        baseline_cost_adjusted_return=baseline_return,
+        full_cost_adjusted_return=full_return,
+        delta_cost_adjusted_return=delta_return,
         has_incremental_value=has_incremental,
     )
+
+
+def _ridge_predict(
+    train_x: np.ndarray,
+    train_y: np.ndarray,
+    validation_x: np.ndarray,
+    *,
+    alpha: float,
+) -> np.ndarray:
+    if train_x.shape[1] == 0:
+        return np.zeros(len(validation_x), dtype=float)
+    regularizer = alpha * np.eye(train_x.shape[1])
+    try:
+        weights = np.linalg.solve(train_x.T @ train_x + regularizer, train_x.T @ train_y)
+    except np.linalg.LinAlgError:
+        return np.zeros(len(validation_x), dtype=float)
+    return np.asarray(validation_x @ weights, dtype=float)
+
+
+def _correlation(left: np.ndarray, right: np.ndarray) -> float:
+    if len(left) < 2 or np.ptp(left) == 0.0 or np.ptp(right) == 0.0:
+        return 0.0
+    return float(np.corrcoef(left, right)[0, 1])
+
+
+def _cost_adjusted_return(
+    prediction: np.ndarray, label: np.ndarray, *, cost_rate_bps: float
+) -> float:
+    positions = np.sign(prediction)
+    gross = float(np.mean(positions * label))
+    turnover = float(np.mean(np.abs(np.diff(positions)))) if len(positions) > 1 else 0.0
+    return gross - turnover * cost_rate_bps / 10_000.0

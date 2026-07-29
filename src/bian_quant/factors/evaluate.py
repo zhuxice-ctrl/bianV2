@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy import stats as sp_stats
+from scipy import stats as sp_stats  # type: ignore[import-untyped]
+
+MIN_INFERENCE_SAMPLES = 30
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class FactorEvaluation:
     coverage: float
     turnover: float
     sample_count: int
+    p_value: float
     ci_lower: float
     ci_upper: float
 
@@ -34,42 +36,14 @@ def _winsorize(series: pd.Series, lower: float, upper: float) -> pd.Series:
     return series.clip(lower=lo, upper=hi)
 
 
-def _stationary_block_bootstrap_ci(
-    values: Sequence[float], block_size: int = 5, n_resamples: int = 1000, seed: int = 42
-) -> tuple[float, float]:
-    """Stationary block bootstrap confidence interval for the mean."""
-    arr = np.asarray(values, dtype=float)
-    arr = arr[~np.isnan(arr)]
-    if len(arr) < 2:
-        return (float("nan"), float("nan"))
-
-    rng = np.random.default_rng(seed)
-    n = len(arr)
-    resampled_means = np.empty(n_resamples)
-
-    for i in range(n_resamples):
-        # Build a resampled series of length n using geometric block sizes
-        idx: list[int] = []
-        while len(idx) < n:
-            # Geometric distribution for block length
-            block_len = max(1, rng.geometric(1.0 / block_size))
-            start = rng.integers(0, n)
-            block = [int((start + j) % n) for j in range(block_len)]
-            idx.extend(block)
-        idx = idx[:n]
-        resampled_means[i] = np.mean(arr[np.array(idx)])
-
-    return (float(np.percentile(resampled_means, 2.5)), float(np.percentile(resampled_means, 97.5)))
-
-
-def _bootstrap_ic_ci(
+def _bootstrap_rank_ic_ci(
     f_vals: np.ndarray,
     l_vals: np.ndarray,
     block_size: int = 5,
     n_resamples: int = 500,
     seed: int = 42,
 ) -> tuple[float, float]:
-    """Block bootstrap CI for Pearson correlation."""
+    """Stationary-block bootstrap confidence interval for Spearman RankIC."""
     n = len(f_vals)
     rng = np.random.default_rng(seed)
     resampled = np.empty(n_resamples)
@@ -84,13 +58,18 @@ def _bootstrap_ic_ci(
         idx_arr = np.array(idx[:n])
         f_sample = f_vals[idx_arr]
         l_sample = l_vals[idx_arr]
-        # Guard against zero variance in resample
-        if np.std(f_sample) > 0 and np.std(l_sample) > 0:
-            resampled[i] = np.corrcoef(f_sample, l_sample)[0, 1]
+        # Guard against zero variance in resample.
+        if np.ptp(f_sample) > 0.0 and np.ptp(l_sample) > 0.0:
+            factor_ranks = np.asarray(sp_stats.rankdata(f_sample), dtype=float)
+            label_ranks = np.asarray(sp_stats.rankdata(l_sample), dtype=float)
+            resampled[i] = float(np.corrcoef(factor_ranks, label_ranks)[0, 1])
         else:
-            resampled[i] = 0.0
+            resampled[i] = np.nan
 
-    return (float(np.percentile(resampled, 2.5)), float(np.percentile(resampled, 97.5)))
+    valid = resampled[np.isfinite(resampled)]
+    if len(valid) < 2:
+        return (float("nan"), float("nan"))
+    return (float(np.percentile(valid, 2.5)), float(np.percentile(valid, 97.5)))
 
 
 def evaluate_factor(
@@ -147,16 +126,13 @@ def evaluate_factor(
 
     # Group by (asset, regime) — never pooled
     for (asset, regime), group in df.groupby(["asset", "regime"], sort=False):
-        group["factor"].dropna()
-        group["label"].dropna()
-
         # Align factor and label
         common = group[["factor", "label"]].dropna()
         if len(common) < 2:
             continue
 
-        f_vals = common["factor"].values
-        l_vals = common["label"].values
+        f_vals = common["factor"].to_numpy(dtype=float)
+        l_vals = common["label"].to_numpy(dtype=float)
 
         # Coverage
         total = len(group)
@@ -167,23 +143,26 @@ def evaluate_factor(
         turnover = float(np.mean(np.abs(np.diff(f_vals)))) if len(f_vals) > 1 else 0.0
 
         # IC
-        pearson_ic = float(np.corrcoef(f_vals, l_vals)[0, 1]) if len(f_vals) > 1 else float("nan")
+        pearson_ic = _safe_pearson(f_vals, l_vals)
         spearman_result = sp_stats.spearmanr(f_vals, l_vals)
         spearman_ic = (
             float(spearman_result.statistic)
             if not np.isnan(spearman_result.statistic)
             else float("nan")
         )
+        p_value = float("nan")
+        if valid >= MIN_INFERENCE_SAMPLES and not np.isnan(spearman_result.pvalue):
+            p_value = float(spearman_result.pvalue)
 
         # Confidence interval via block bootstrap on the IC itself
-        if len(f_vals) > 10:
-            ci_lower, ci_upper = _bootstrap_ic_ci(f_vals, l_vals)
+        if valid >= MIN_INFERENCE_SAMPLES:
+            ci_lower, ci_upper = _bootstrap_rank_ic_ci(f_vals, l_vals)
         else:
             ci_lower, ci_upper = float("nan"), float("nan")
 
         results.append(
             FactorEvaluation(
-                factor_name=factor.name or "factor",
+                factor_name=str(factor.name or "factor"),
                 fold=fold,
                 asset=str(asset),
                 regime=str(regime),
@@ -192,9 +171,16 @@ def evaluate_factor(
                 coverage=coverage,
                 turnover=turnover,
                 sample_count=valid,
+                p_value=p_value,
                 ci_lower=ci_lower,
                 ci_upper=ci_upper,
             )
         )
 
     return results
+
+
+def _safe_pearson(left: np.ndarray, right: np.ndarray) -> float:
+    if len(left) < 2 or np.ptp(left) == 0.0 or np.ptp(right) == 0.0:
+        return float("nan")
+    return float(np.corrcoef(left, right)[0, 1])

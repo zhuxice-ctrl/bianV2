@@ -67,11 +67,16 @@ def asof_join(
             direction="backward",
             allow_exact_matches=True,
         )
+    known_aux = merged["aux_available_time"].notna()
+    if (merged.loc[known_aux, "aux_available_time"] > merged.loc[known_aux, on]).any():
+        raise AssertionError("as-of join exposed auxiliary data before publication")
     return merged
 
 
 def funding_zscore(funding_rate: pd.Series, *, periods: int) -> pd.Series:
     """Z-score of funding rate relative to its rolling statistics."""
+    if periods <= 1:
+        raise ValueError("periods must be greater than one")
     mean = funding_rate.rolling(periods, min_periods=periods).mean()
     std = funding_rate.rolling(periods, min_periods=periods).std(ddof=1)
     return ((funding_rate - mean) / std.replace(0.0, np.nan)).rename(f"funding_zscore_{periods}")
@@ -79,6 +84,8 @@ def funding_zscore(funding_rate: pd.Series, *, periods: int) -> pd.Series:
 
 def oi_change(open_interest: pd.Series, *, periods: int) -> pd.Series:
     """Percentage change in open interest over *periods* bars."""
+    if periods <= 0:
+        raise ValueError("periods must be positive")
     return open_interest.pct_change(periods=periods, fill_method=None).rename(
         f"oi_change_{periods}"
     )

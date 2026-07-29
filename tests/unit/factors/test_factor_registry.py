@@ -113,3 +113,10 @@ def test_transition_history_is_append_only(tmp_path: Path) -> None:
     assert history[0]["to_state"] == "researching"
     assert history[1]["to_state"] == "observed"
     assert history[2]["to_state"] == "candidate"
+
+
+def test_invalid_winsor_limits_are_rejected() -> None:
+    payload = sample_spec().model_dump()
+    payload["winsor_limits"] = (0.9, 0.1)
+    with pytest.raises(ValueError, match="winsor_limits"):
+        FactorSpec.model_validate(payload)

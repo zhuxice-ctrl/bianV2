@@ -65,7 +65,7 @@ def test_label_is_isolated_from_factor_modules() -> None:
         if modname in excluded:
             continue
         mod = importlib.import_module(modname)
-        with open(mod.__file__) as f:
+        with open(mod.__file__, encoding="utf-8") as f:
             source = f.read()
         # Check for import of labels module, not just the word "labels" in comments
         assert "import labels" not in source, f"{modname} imports labels module"

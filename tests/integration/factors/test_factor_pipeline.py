@@ -87,23 +87,50 @@ def test_factor_pipeline_e2e(tmp_path: Path) -> None:
     assert result.artifact_path is not None
     assert result.artifact_path.exists()
 
-    # Lifecycle transition should cite the run_id
-    # Factor should be registered as RESEARCHING
-    assert registry.state("price.momentum", "1.0.0") == FactorState.RESEARCHING
-
-    # If we transition to OBSERVED, it must use evidence_run_id
-    registry.transition(
-        "price.momentum",
-        "1.0.0",
-        FactorState.OBSERVED,
-        evidence_run_id=result.run_id,
-    )
+    # Completed evidence automatically records the factor as OBSERVED.
     assert registry.state("price.momentum", "1.0.0") == FactorState.OBSERVED
 
     # Verify the transition history cites the run_id
     history = registry.history("price.momentum", "1.0.0")
     transition = [h for h in history if h["to_state"] == "observed"][0]
     assert transition["evidence_run_id"] == result.run_id
+
+
+def test_factor_pipeline_rejects_rows_unavailable_at_decision_time(tmp_path: Path) -> None:
+    registry = FactorRegistry(tmp_path / "registry.sqlite")
+    spec = FactorSpec(
+        factor_id="price.momentum",
+        version="1.0.0",
+        formula="close / close.shift(24) - 1",
+        direction="positive",
+        hypothesis="persistent price movement may continue over the next horizon",
+        required_columns=["close"],
+        horizon="4h",
+        missing_policy="preserve",
+        winsor_limits=(0.01, 0.99),
+        valid_regimes=["all"],
+        failure_conditions=["cost-adjusted OOS IC lower bound <= 0"],
+        parent_factors=[],
+    )
+    config = FactorRunConfig(
+        dataset_snapshot_id="test-snapshot-v1",
+        factor_specs=[spec],
+        split_config={"n_folds": 3, "purge_bars": 6},
+        code_sha="a" * 40,
+        artifact_dir=tmp_path / "artifacts",
+    )
+    data = _make_deterministic_data(500)
+    data.loc[0, "available_time"] = data.loc[0, "timestamp"] + pd.Timedelta(hours=1)
+
+    result = run_factor_pipeline(
+        config,
+        data,
+        registry=registry,
+        factor_functions={"price.momentum": _momentum_fn},
+    )
+
+    assert result.status == "blocked"
+    assert "available_time" in (result.error or "")
 
 
 def test_factor_pipeline_blocked_on_insufficient_data(tmp_path: Path) -> None:

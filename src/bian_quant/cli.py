@@ -59,47 +59,79 @@ def import_legacy(
 def evaluate_factors(
     dataset: Annotated[str, typer.Option("--dataset")],
     config: Annotated[Path, typer.Option("--config")],
+    code_sha: Annotated[str, typer.Option("--code-sha")],
     seed: Annotated[int, typer.Option("--seed")] = 42,
 ) -> None:
     """Run factor evaluation pipeline. Prints only run_id and artifact path."""
     import yaml
 
-    from bian_quant.factors.runner import FactorRunConfig
-
-    with open(config) as f:
-        cfg = yaml.safe_load(f)
-
-    # Build factor specs from config
-    from bian_quant.factors.spec import FactorSpec
-
-    specs = []
-    for fs in cfg.get("factors", []):
-        specs.append(
-            FactorSpec(
-                factor_id=fs["factor_id"],
-                version=fs.get("version", "1.0.0"),
-                formula=fs["formula"],
-                direction=fs.get("direction", "positive"),
-                hypothesis=fs["hypothesis"],
-                required_columns=fs.get("required_columns", ["close"]),
-                horizon=fs.get("horizon", "4h"),
-                missing_policy=fs.get("missing_policy", "preserve"),
-                winsor_limits=tuple(fs.get("winsor_limits", [0.01, 0.99])),
-                valid_regimes=fs.get("valid_regimes", ["all"]),
-                failure_conditions=fs.get("failure_conditions", []),
-                parent_factors=fs.get("parent_factors", []),
-            )
-        )
-
-    _run_config = FactorRunConfig(
-        dataset_snapshot_id=dataset,
-        factor_specs=specs,
-        split_config=cfg.get("split", {"n_folds": 3, "train_ratio": 0.6, "purge_bars": 6}),
-        seed=seed,
-        artifact_dir=Path(cfg.get("artifact_dir", "var/factor_runs")),
+    from bian_quant.experiments.registry import ExperimentRegistry
+    from bian_quant.factors.registry import FactorRegistry
+    from bian_quant.factors.runner import FactorRunConfig, run_factor_pipeline
+    from bian_quant.factors.screening import (
+        BUILTIN_FACTOR_FUNCTIONS,
+        builtin_factor_specs,
+        load_legacy_screening_data,
     )
 
-    # Note: data loading and factor function mapping must be provided
-    # by the caller via the config. This CLI command is a thin wrapper.
-    typer.echo(f"Configuration loaded for dataset={dataset}, {len(specs)} factors")
-    typer.echo("Use run_factor_pipeline() directly for programmatic access.")
+    with open(config, encoding="utf-8") as file:
+        cfg = yaml.safe_load(file)
+    if not isinstance(cfg, dict):
+        raise typer.BadParameter("factor config must be a YAML mapping")
+
+    interval = str(cfg.get("interval", "4h"))
+    assets_value = cfg.get("assets", ["BTCUSDT", "ETHUSDT", "BNBUSDT"])
+    if not isinstance(assets_value, list) or not all(
+        isinstance(asset, str) for asset in assets_value
+    ):
+        raise typer.BadParameter("assets must be a list of symbols")
+    assets = [str(asset) for asset in assets_value]
+    data_dir = Path(str(cfg.get("data_dir", "data")))
+    data, content_snapshot_id = load_legacy_screening_data(
+        data_dir, assets=assets, interval=interval
+    )
+
+    selected_value = cfg.get("factors", list(BUILTIN_FACTOR_FUNCTIONS))
+    if not isinstance(selected_value, list) or not all(
+        isinstance(name, str) for name in selected_value
+    ):
+        raise typer.BadParameter("factors must be a list of built-in factor IDs")
+    selected = {str(name) for name in selected_value}
+    unknown = selected - set(BUILTIN_FACTOR_FUNCTIONS)
+    if unknown:
+        raise typer.BadParameter(f"unknown built-in factors: {sorted(unknown)}")
+    specs = [spec for spec in builtin_factor_specs(horizon=interval) if spec.factor_id in selected]
+    functions = {
+        factor_id: function
+        for factor_id, function in BUILTIN_FACTOR_FUNCTIONS.items()
+        if factor_id in selected
+    }
+
+    run_config = FactorRunConfig(
+        dataset_snapshot_id=f"{dataset}:{content_snapshot_id}",
+        factor_specs=specs,
+        split_config=cfg.get("split", {"n_folds": 3, "train_ratio": 0.6, "purge_bars": 6}),
+        code_sha=code_sha,
+        seed=seed,
+        artifact_dir=Path(cfg.get("artifact_dir", "var/factor_runs")),
+        experiment_registry_path=Path(cfg.get("experiment_registry", "var/experiments.sqlite")),
+    )
+
+    factor_registry_path = Path(cfg.get("factor_registry", "var/factors.sqlite"))
+    factor_registry_path.parent.mkdir(parents=True, exist_ok=True)
+    Path(run_config.experiment_registry_path).parent.mkdir(parents=True, exist_ok=True)
+    with (
+        FactorRegistry(factor_registry_path) as factor_registry,
+        ExperimentRegistry(run_config.experiment_registry_path) as experiment_registry,
+    ):
+        result = run_factor_pipeline(
+            run_config,
+            data,
+            registry=factor_registry,
+            factor_functions=functions,
+            experiment_registry=experiment_registry,
+        )
+    typer.echo(result.run_id)
+    typer.echo(str(result.artifact_path))
+    if result.status != "completed":
+        raise typer.Exit(code=1)

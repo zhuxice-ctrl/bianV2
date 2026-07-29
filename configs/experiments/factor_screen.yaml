@@ -1,0 +1,19 @@
+assets:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+interval: 4h
+data_dir: data
+factors:
+  - momentum_24
+  - reversal_12
+  - realized_vol_24
+  - volume_surprise_24
+  - amihud_24
+split:
+  n_folds: 3
+  train_ratio: 0.6
+  purge_bars: 6
+artifact_dir: var/factor_runs
+factor_registry: var/factors.sqlite
+experiment_registry: var/experiments.sqlite

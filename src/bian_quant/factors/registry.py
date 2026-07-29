@@ -22,6 +22,7 @@ class FactorRegistry:
     def __init__(self, db_path: Path | str) -> None:
         self._db_path = Path(db_path)
         self._conn = sqlite3.connect(str(self._db_path))
+        self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_tables()
 
@@ -49,12 +50,35 @@ class FactorRegistry:
                 created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
                 FOREIGN KEY (factor_id, version) REFERENCES factor_specs(factor_id, version)
             );
+
+            CREATE TRIGGER IF NOT EXISTS factor_specs_no_update
+            BEFORE UPDATE ON factor_specs
+            BEGIN
+                SELECT RAISE(ABORT, 'factor specs are immutable');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_specs_no_delete
+            BEFORE DELETE ON factor_specs
+            BEGIN
+                SELECT RAISE(ABORT, 'factor specs are append-only');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_transitions_no_update
+            BEFORE UPDATE ON factor_transitions
+            BEGIN
+                SELECT RAISE(ABORT, 'factor transitions are append-only');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_transitions_no_delete
+            BEFORE DELETE ON factor_transitions
+            BEGIN
+                SELECT RAISE(ABORT, 'factor transitions are append-only');
+            END;
             """
         )
         self._conn.commit()
 
     def register(self, spec: FactorSpec, *, code_sha: str) -> None:
         """Register a new factor spec.  Re-registration is rejected."""
+        if not code_sha.strip():
+            raise ValueError("code_sha is required")
         cur = self._conn.execute(
             "SELECT 1 FROM factor_specs WHERE factor_id=? AND version=?",
             (spec.factor_id, spec.version),

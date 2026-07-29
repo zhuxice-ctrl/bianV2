@@ -13,6 +13,8 @@ import pandas as pd
 
 def momentum(close: pd.Series, *, periods: int) -> pd.Series:
     """Percentage return over *periods* bars."""
+    if periods <= 0:
+        raise ValueError("periods must be positive")
     return (close / close.shift(periods) - 1.0).rename(f"momentum_{periods}")
 
 
@@ -23,7 +25,10 @@ def reversal(close: pd.Series, *, periods: int) -> pd.Series:
 
 def realized_volatility(close: pd.Series, *, periods: int) -> pd.Series:
     """Rolling standard deviation of log returns."""
-    returns = np.log(close / close.shift(1))
+    if periods <= 1:
+        raise ValueError("periods must be greater than one")
+    ratio = (close / close.shift(1)).to_numpy(dtype=float)
+    returns = pd.Series(np.log(ratio), index=close.index, dtype=float)
     return (
         returns.rolling(periods, min_periods=periods).std(ddof=1).rename(f"realized_vol_{periods}")
     )

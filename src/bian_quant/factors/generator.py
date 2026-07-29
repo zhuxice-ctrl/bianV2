@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from bian_quant.factors.primitives import (
     ExprNode,
@@ -53,8 +53,11 @@ class CandidateFactor:
 
 def _load_search_space(config_path: Path | str) -> dict[str, Any]:
     """Load search space configuration."""
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+    with open(config_path, encoding="utf-8") as file:
+        loaded = yaml.safe_load(file)
+    if not isinstance(loaded, dict):
+        raise ValueError("search space must be a YAML mapping")
+    return {str(key): value for key, value in loaded.items()}
 
 
 def _build_templates(windows: list[int]) -> list[tuple[str, ExprNode]]:
@@ -149,8 +152,13 @@ def generate_candidates(
     config = _load_search_space(config_path)
 
     seed = config.get("seed", 7)
-    max_candidates = config.get("max_candidates", 20)
-    config.get("max_tree_depth", 3)
+    configured_max = int(config.get("max_candidates", 20))
+    if configured_max <= 0:
+        raise ValueError("max_candidates must be positive")
+    max_candidates = min(configured_max, 20)
+    max_tree_depth = int(config.get("max_tree_depth", 3))
+    if max_tree_depth <= 0:
+        raise ValueError("max_tree_depth must be positive")
     base_factors = config.get("base_factors", [])
     windows = config.get("windows", [6, 12, 24, 48, 168])
     allowed_unary = config.get("allowed_unary", ["lag", "delta", "zscore", "rolling_rank"])
@@ -158,7 +166,7 @@ def generate_candidates(
 
     # Compute search manifest hash
     manifest_str = yaml.dump(config, sort_keys=True, default_flow_style=False)
-    search_manifest_hash = hashlib.sha256(manifest_str.encode()).hexdigest()[:16]
+    search_manifest_hash = hashlib.sha256(manifest_str.encode()).hexdigest()
 
     # 1. Templates first (deterministic order)
     templates = _build_templates(windows)
@@ -172,6 +180,8 @@ def generate_candidates(
     seen_hashes: set[str] = set()
     unique: list[tuple[str, ExprNode]] = []
     for name, node in all_expressions:
+        if node.depth > max_tree_depth:
+            continue
         h = node.expression_hash
         if h not in seen_hashes:
             seen_hashes.add(h)
@@ -182,7 +192,7 @@ def generate_candidates(
 
     candidates: list[CandidateFactor] = []
     for rank, (name, node) in enumerate(unique):
-        parent_factors = tuple(bf for bf in base_factors if bf.split(".")[0] in name)
+        parent_factors = _parents_for_expression(name, node, base_factors)
         candidates.append(
             CandidateFactor(
                 expression_tree=node,
@@ -196,3 +206,21 @@ def generate_candidates(
         )
 
     return candidates
+
+
+def _parents_for_expression(name: str, node: ExprNode, base_factors: list[str]) -> tuple[str, ...]:
+    """Resolve auditable parent factor families from template names and columns."""
+    families: set[str] = set()
+    if name.startswith(("momentum_", "volatility_", "zscore_close_", "rank_close_")):
+        families.add("price")
+    if name.startswith("volume_trend_"):
+        families.add("volume")
+    if "funding_rate" in node.required_columns or "open_interest" in node.required_columns:
+        families.add("derivatives")
+    if "volume" in node.required_columns:
+        families.add("volume")
+    if any(
+        column_name in node.required_columns for column_name in ("close", "open", "high", "low")
+    ):
+        families.add("price")
+    return tuple(factor for factor in base_factors if factor.partition(".")[0] in families)
