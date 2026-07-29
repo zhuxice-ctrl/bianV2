@@ -42,13 +42,9 @@ logs/
 .cache/
 
 
-# Research platform additions
+# Research platform additions not covered above
 .env.*
 !.env.example
-build/
-dist/
-.cache/
-logs/
 var/
 *.duckdb
 *.duckdb.wal
