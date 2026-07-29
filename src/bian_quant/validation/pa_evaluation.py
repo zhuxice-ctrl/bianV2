@@ -418,8 +418,8 @@ def render_markdown(evidence: dict[str, Any]) -> str:
             "",
             "## Locked holdout",
             "",
-            f"Portfolio return: `{evidence['locked_holdout']['portfolio']['total_return']:.4f}`  ",
-            f"Portfolio Sharpe: `{evidence['locked_holdout']['portfolio']['sharpe']:.4f}`  ",
+            f"Portfolio return: `{evidence['locked_holdout']['portfolio']['total_return']:.4f}`",
+            f"Portfolio Sharpe: `{evidence['locked_holdout']['portfolio']['sharpe']:.4f}`",
             (
                 "Portfolio max drawdown: "
                 f"`{evidence['locked_holdout']['portfolio']['max_drawdown']:.4f}`"
@@ -472,7 +472,7 @@ def render_comparison(evidence: dict[str, Any]) -> str:
             "",
             "## Promotion result",
             "",
-            f"Decision: **{'PASS' if evidence['decision']['passed'] else 'FAIL'}**  ",
+            f"Decision: **{'PASS' if evidence['decision']['passed'] else 'FAIL'}**",
             f"Reasons: `{', '.join(evidence['decision']['reasons']) or 'none'}`",
             "",
             "See `pa-validation-result.json` for fold, stress, locked-holdout, manifest,",
