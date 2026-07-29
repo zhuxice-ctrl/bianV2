@@ -14,9 +14,7 @@ def test_perfect_correlation_produces_rank_ic_one() -> None:
     """Factor [1,2,3,4] and label [10,20,30,40] must produce RankIC 1.0."""
     factor = pd.Series([1.0, 2.0, 3.0, 4.0], name="test_factor")
     label = pd.Series([10.0, 20.0, 30.0, 40.0])
-    metadata = pd.DataFrame(
-        {"asset": ["A"] * 4, "regime": ["all"] * 4}
-    )
+    metadata = pd.DataFrame({"asset": ["A"] * 4, "regime": ["all"] * 4})
 
     results = evaluate_factor(factor, label, metadata, fold="fold_0")
     assert len(results) == 1
@@ -28,7 +26,6 @@ def test_perfect_correlation_produces_rank_ic_one() -> None:
 
 def test_metadata_produces_all_group_keys() -> None:
     """Two assets, two folds, two regimes → 8 group keys, no pooled."""
-    n = 8
     factor = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], name="f")
     label = pd.Series([2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0])
     metadata = pd.DataFrame(
@@ -41,9 +38,7 @@ def test_metadata_produces_all_group_keys() -> None:
     # Evaluate per fold
     all_results = []
     for fold in ["fold_1", "fold_2"]:
-        all_results.extend(
-            evaluate_factor(factor, label, metadata, fold=fold)
-        )
+        all_results.extend(evaluate_factor(factor, label, metadata, fold=fold))
 
     # 2 folds × 2 assets × 2 regimes = 8 groups
     assert len(all_results) == 8

@@ -16,7 +16,6 @@ from pandas.testing import assert_series_equal
 
 from bian_quant.regimes.classifier import (
     REGIME_LABELS,
-    RegimeThresholds,
     classify_regime,
     fit_regime_thresholds,
 )

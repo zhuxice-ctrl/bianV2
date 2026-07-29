@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bian_quant.factors.labels import forward_log_return
 from bian_quant.factors.price import momentum
 from bian_quant.factors.registry import FactorRegistry
 from bian_quant.factors.runner import FactorRunConfig, run_factor_pipeline

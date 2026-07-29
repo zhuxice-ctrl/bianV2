@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from bian_quant.factors.redundancy import (
     cluster_redundant_factors,

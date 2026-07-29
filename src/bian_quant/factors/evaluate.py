@@ -38,26 +38,26 @@ def _stationary_block_bootstrap_ci(
     values: Sequence[float], block_size: int = 5, n_resamples: int = 1000, seed: int = 42
 ) -> tuple[float, float]:
     """Stationary block bootstrap confidence interval for the mean."""
-    values = np.asarray(values, dtype=float)
-    values = values[~np.isnan(values)]
-    if len(values) < 2:
+    arr = np.asarray(values, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if len(arr) < 2:
         return (float("nan"), float("nan"))
 
     rng = np.random.default_rng(seed)
-    n = len(values)
+    n = len(arr)
     resampled_means = np.empty(n_resamples)
 
     for i in range(n_resamples):
         # Build a resampled series of length n using geometric block sizes
-        idx = []
+        idx: list[int] = []
         while len(idx) < n:
             # Geometric distribution for block length
             block_len = max(1, rng.geometric(1.0 / block_size))
             start = rng.integers(0, n)
-            block = [(start + j) % n for j in range(block_len)]
+            block = [int((start + j) % n) for j in range(block_len)]
             idx.extend(block)
         idx = idx[:n]
-        resampled_means[i] = np.mean(values[idx])
+        resampled_means[i] = np.mean(arr[np.array(idx)])
 
     return (float(np.percentile(resampled_means, 2.5)), float(np.percentile(resampled_means, 97.5)))
 
@@ -75,15 +75,15 @@ def _bootstrap_ic_ci(
     resampled = np.empty(n_resamples)
 
     for i in range(n_resamples):
-        idx = []
+        idx: list[int] = []
         while len(idx) < n:
             block_len = max(1, rng.geometric(1.0 / block_size))
             start = rng.integers(0, n)
-            block = [(start + j) % n for j in range(block_len)]
+            block = [int((start + j) % n) for j in range(block_len)]
             idx.extend(block)
-        idx = idx[:n]
-        f_sample = f_vals[idx]
-        l_sample = l_vals[idx]
+        idx_arr = np.array(idx[:n])
+        f_sample = f_vals[idx_arr]
+        l_sample = l_vals[idx_arr]
         # Guard against zero variance in resample
         if np.std(f_sample) > 0 and np.std(l_sample) > 0:
             resampled[i] = np.corrcoef(f_sample, l_sample)[0, 1]

@@ -53,15 +53,20 @@ def test_label_is_isolated_from_factor_modules() -> None:
     import bian_quant.factors.labels  # noqa: F401
 
     # Factor computation modules that must not reference labels
-    excluded = {"bian_quant.factors.labels", "bian_quant.factors.evaluate", "bian_quant.factors.runner"}
+    excluded = {
+        "bian_quant.factors.labels",
+        "bian_quant.factors.evaluate",
+        "bian_quant.factors.runner",
+    }
 
-    for importer, modname, ispkg in pkgutil.iter_modules(
+    for _importer, modname, _ispkg in pkgutil.iter_modules(
         factors_pkg.__path__, prefix="bian_quant.factors."
     ):
         if modname in excluded:
             continue
         mod = importlib.import_module(modname)
-        source = open(mod.__file__).read()
+        with open(mod.__file__) as f:
+            source = f.read()
         # Check for import of labels module, not just the word "labels" in comments
         assert "import labels" not in source, f"{modname} imports labels module"
         assert "factors.labels" not in source, f"{modname} references factors.labels"

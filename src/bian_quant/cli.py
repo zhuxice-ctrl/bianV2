@@ -64,8 +64,7 @@ def evaluate_factors(
     """Run factor evaluation pipeline. Prints only run_id and artifact path."""
     import yaml
 
-    from bian_quant.factors.runner import FactorRunConfig, run_factor_pipeline
-    from bian_quant.factors.registry import FactorRegistry
+    from bian_quant.factors.runner import FactorRunConfig
 
     with open(config) as f:
         cfg = yaml.safe_load(f)
@@ -92,7 +91,7 @@ def evaluate_factors(
             )
         )
 
-    run_config = FactorRunConfig(
+    _run_config = FactorRunConfig(
         dataset_snapshot_id=dataset,
         factor_specs=specs,
         split_config=cfg.get("split", {"n_folds": 3, "train_ratio": 0.6, "purge_bars": 6}),

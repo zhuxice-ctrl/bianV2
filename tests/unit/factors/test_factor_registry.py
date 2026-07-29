@@ -42,9 +42,7 @@ def test_initial_state_is_researching(tmp_path: Path) -> None:
 def test_legal_transition(tmp_path: Path) -> None:
     registry = FactorRegistry(tmp_path / "registry.sqlite")
     registry.register(sample_spec(), code_sha="a" * 40)
-    registry.transition(
-        "price.momentum", "1.0.0", FactorState.OBSERVED, evidence_run_id="run-1"
-    )
+    registry.transition("price.momentum", "1.0.0", FactorState.OBSERVED, evidence_run_id="run-1")
     assert registry.state("price.momentum", "1.0.0") == FactorState.OBSERVED
 
 
@@ -69,9 +67,7 @@ def test_transition_requires_evidence_run_id(tmp_path: Path) -> None:
 def test_retired_factor_needs_explicit_restart_evidence(tmp_path: Path) -> None:
     registry = FactorRegistry(tmp_path / "registry.sqlite")
     registry.register(sample_spec(), code_sha="a" * 40)
-    registry.transition(
-        "price.momentum", "1.0.0", FactorState.RETIRED, evidence_run_id="run-1"
-    )
+    registry.transition("price.momentum", "1.0.0", FactorState.RETIRED, evidence_run_id="run-1")
 
     with pytest.raises(ValueError, match="restart evidence"):
         registry.transition("price.momentum", "1.0.0", FactorState.RESEARCHING)
@@ -80,9 +76,7 @@ def test_retired_factor_needs_explicit_restart_evidence(tmp_path: Path) -> None:
 def test_retired_factor_can_restart_with_evidence(tmp_path: Path) -> None:
     registry = FactorRegistry(tmp_path / "registry.sqlite")
     registry.register(sample_spec(), code_sha="a" * 40)
-    registry.transition(
-        "price.momentum", "1.0.0", FactorState.RETIRED, evidence_run_id="run-1"
-    )
+    registry.transition("price.momentum", "1.0.0", FactorState.RETIRED, evidence_run_id="run-1")
     registry.transition(
         "price.momentum",
         "1.0.0",
@@ -96,7 +90,7 @@ def test_retired_factor_can_restart_with_evidence(tmp_path: Path) -> None:
 
 def test_spec_is_immutable(tmp_path: Path) -> None:
     spec = sample_spec()
-    with pytest.raises(Exception):
+    with pytest.raises((TypeError, ValueError, AttributeError)):
         spec.factor_id = "other"  # type: ignore[misc]
 
 
@@ -111,12 +105,8 @@ def test_duplicate_registration_raises(tmp_path: Path) -> None:
 def test_transition_history_is_append_only(tmp_path: Path) -> None:
     registry = FactorRegistry(tmp_path / "registry.sqlite")
     registry.register(sample_spec(), code_sha="a" * 40)
-    registry.transition(
-        "price.momentum", "1.0.0", FactorState.OBSERVED, evidence_run_id="run-1"
-    )
-    registry.transition(
-        "price.momentum", "1.0.0", FactorState.CANDIDATE, evidence_run_id="run-2"
-    )
+    registry.transition("price.momentum", "1.0.0", FactorState.OBSERVED, evidence_run_id="run-1")
+    registry.transition("price.momentum", "1.0.0", FactorState.CANDIDATE, evidence_run_id="run-2")
 
     history = registry.history("price.momentum", "1.0.0")
     assert len(history) == 3  # initial registration + 2 transitions

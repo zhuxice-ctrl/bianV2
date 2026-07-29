@@ -13,22 +13,18 @@ from bian_quant.factors.primitives import (
     ExprNode,
     add,
     column,
-    delta,
     evaluate_node,
     lag,
-    multiply,
     percent_change,
     rolling_mean,
-    rolling_rank,
-    rolling_std,
     safe_ratio,
-    subtract,
     validate_node,
     zscore,
 )
 
-
-SEARCH_SPACE = "configs/factors/search_space.yaml"
+SEARCH_SPACE = str(
+    Path(__file__).resolve().parents[3] / "configs" / "factors" / "search_space.yaml"
+)
 
 
 class TestExpressionHashing:
@@ -103,7 +99,7 @@ class TestDeterministicGeneration:
         c2 = generate_candidates(SEARCH_SPACE, code_sha="abc")
 
         assert len(c1) == len(c2)
-        for a, b in zip(c1, c2):
+        for a, b in zip(c1, c2, strict=False):
             assert a.expression_hash == b.expression_hash
             assert a.generation_rank == b.generation_rank
             assert a.search_manifest_hash == b.search_manifest_hash
@@ -112,7 +108,7 @@ class TestDeterministicGeneration:
         """Templates come before grammar samples."""
         candidates = generate_candidates(SEARCH_SPACE, code_sha="abc")
         # First candidate should be a template (momentum_6, volatility_6, etc.)
-        first_hash = candidates[0].expression_hash
+        _ = candidates[0].expression_hash  # noqa: F841
         # Templates are built from percent_change(column("close"), w) etc.
         # Verify by checking that the first few candidates are deterministic templates
         assert candidates[0].generation_rank == 0

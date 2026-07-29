@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from bian_quant.factors.primitives import (
     ExprNode,
@@ -89,7 +89,7 @@ def _build_grammar_samples(
         "zscore": lambda n, w: zscore(n, w),
         "rolling_rank": lambda n, w: rolling_rank(n, w),
     }
-    binary_ops = {
+    binary_ops: dict[str, Any] = {
         "add": add,
         "subtract": subtract,
         "multiply": multiply,
