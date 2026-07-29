@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 
-def benjamini_hochberg(
-    p_values: dict[str, float], alpha: float = 0.05
-) -> dict[str, bool]:
+def benjamini_hochberg(p_values: dict[str, float], alpha: float = 0.05) -> dict[str, bool]:
     """Apply Benjamini-Hochberg correction to control FDR.
 
     Parameters
@@ -34,7 +32,7 @@ def benjamini_hochberg(
 
     # Find the largest k where p_(k) <= k/m * alpha
     max_k = 0
-    for k, (name, p) in enumerate(sorted_items, start=1):
+    for k, (_name, p) in enumerate(sorted_items, start=1):
         threshold = (k / m) * alpha
         if p <= threshold:
             max_k = k

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 
@@ -61,15 +60,15 @@ class FactorRegistry:
             (spec.factor_id, spec.version),
         )
         if cur.fetchone() is not None:
-            raise ValueError(
-                f"factor {spec.factor_id}@{spec.version} already registered"
-            )
+            raise ValueError(f"factor {spec.factor_id}@{spec.version} already registered")
         self._conn.execute(
-            "INSERT INTO factor_specs (factor_id, version, spec_json, code_sha) VALUES (?, ?, ?, ?)",
+            "INSERT INTO factor_specs (factor_id, version, spec_json, code_sha)"
+            " VALUES (?, ?, ?, ?)",
             (spec.factor_id, spec.version, spec.model_dump_json(), code_sha),
         )
         self._conn.execute(
-            "INSERT INTO factor_transitions (factor_id, version, from_state, to_state) VALUES (?, ?, NULL, ?)",
+            "INSERT INTO factor_transitions (factor_id, version, from_state, to_state)"
+            " VALUES (?, ?, NULL, ?)",
             (spec.factor_id, spec.version, FactorState.RESEARCHING.value),
         )
         self._conn.commit()
@@ -86,7 +85,8 @@ class FactorRegistry:
 
     def state(self, factor_id: str, version: str) -> FactorState:
         cur = self._conn.execute(
-            "SELECT to_state FROM factor_transitions WHERE factor_id=? AND version=? ORDER BY id DESC LIMIT 1",
+            "SELECT to_state FROM factor_transitions WHERE factor_id=? AND"
+            " version=? ORDER BY id DESC LIMIT 1",
             (factor_id, version),
         )
         row = cur.fetchone()
@@ -113,9 +113,7 @@ class FactorRegistry:
         current = self.state(factor_id, version)
 
         if to_state not in LEGAL.get(current, set()):
-            raise ValueError(
-                f"illegal transition: {current.value} -> {to_state.value}"
-            )
+            raise ValueError(f"illegal transition: {current.value} -> {to_state.value}")
 
         if (
             current == FactorState.RETIRED
@@ -156,7 +154,7 @@ class FactorRegistry:
             (factor_id, version),
         )
         cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
 
     def close(self) -> None:
         self._conn.close()

@@ -24,6 +24,6 @@ def reversal(close: pd.Series, *, periods: int) -> pd.Series:
 def realized_volatility(close: pd.Series, *, periods: int) -> pd.Series:
     """Rolling standard deviation of log returns."""
     returns = np.log(close / close.shift(1))
-    return returns.rolling(periods, min_periods=periods).std(ddof=1).rename(
-        f"realized_vol_{periods}"
+    return (
+        returns.rolling(periods, min_periods=periods).std(ddof=1).rename(f"realized_vol_{periods}")
     )

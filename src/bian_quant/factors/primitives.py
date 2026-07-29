@@ -7,8 +7,8 @@ with a declared lookback. The evaluator walks the tree directly.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,7 @@ class ExprNode:
     """A node in a factor expression tree."""
 
     op: str
-    children: tuple["ExprNode", ...] = ()
+    children: tuple[ExprNode, ...] = ()
     params: tuple[Any, ...] = ()
     required_columns: tuple[str, ...] = ()
 
@@ -30,9 +30,12 @@ class ExprNode:
         own = 0
         if self.op == "column":
             own = 0
-        elif self.op in ("lag", "delta", "percent_change"):
-            own = int(self.params[0]) if self.params else 0
-        elif self.op in ("rolling_mean", "rolling_std", "zscore", "rolling_rank"):
+        elif self.op in ("lag", "delta", "percent_change") or self.op in (
+            "rolling_mean",
+            "rolling_std",
+            "zscore",
+            "rolling_rank",
+        ):
             own = int(self.params[0]) if self.params else 0
         return max([own] + child_lookbacks)
 
@@ -61,55 +64,90 @@ def column(name: str) -> ExprNode:
 def lag(node: ExprNode, periods: int) -> ExprNode:
     if periods <= 0:
         raise ValueError("lag periods must be positive")
-    return ExprNode(op="lag", children=(node,), params=(periods,), required_columns=node.required_columns)
+    return ExprNode(
+        op="lag", children=(node,), params=(periods,), required_columns=node.required_columns
+    )
 
 
 def delta(node: ExprNode, periods: int) -> ExprNode:
     if periods <= 0:
         raise ValueError("delta periods must be positive")
-    return ExprNode(op="delta", children=(node,), params=(periods,), required_columns=node.required_columns)
+    return ExprNode(
+        op="delta", children=(node,), params=(periods,), required_columns=node.required_columns
+    )
 
 
 def percent_change(node: ExprNode, periods: int) -> ExprNode:
     if periods <= 0:
         raise ValueError("percent_change periods must be positive")
-    return ExprNode(op="percent_change", children=(node,), params=(periods,), required_columns=node.required_columns)
+    return ExprNode(
+        op="percent_change",
+        children=(node,),
+        params=(periods,),
+        required_columns=node.required_columns,
+    )
 
 
 def rolling_mean(node: ExprNode, window: int) -> ExprNode:
     if window < 2:
         raise ValueError("rolling window must be >= 2")
-    return ExprNode(op="rolling_mean", children=(node,), params=(window,), required_columns=node.required_columns)
+    return ExprNode(
+        op="rolling_mean",
+        children=(node,),
+        params=(window,),
+        required_columns=node.required_columns,
+    )
 
 
 def rolling_std(node: ExprNode, window: int) -> ExprNode:
     if window < 2:
         raise ValueError("rolling window must be >= 2")
-    return ExprNode(op="rolling_std", children=(node,), params=(window,), required_columns=node.required_columns)
+    return ExprNode(
+        op="rolling_std", children=(node,), params=(window,), required_columns=node.required_columns
+    )
 
 
 def zscore(node: ExprNode, window: int) -> ExprNode:
     if window < 2:
         raise ValueError("zscore window must be >= 2")
-    return ExprNode(op="zscore", children=(node,), params=(window,), required_columns=node.required_columns)
+    return ExprNode(
+        op="zscore", children=(node,), params=(window,), required_columns=node.required_columns
+    )
 
 
 def rolling_rank(node: ExprNode, window: int) -> ExprNode:
     if window < 2:
         raise ValueError("rolling_rank window must be >= 2")
-    return ExprNode(op="rolling_rank", children=(node,), params=(window,), required_columns=node.required_columns)
+    return ExprNode(
+        op="rolling_rank",
+        children=(node,),
+        params=(window,),
+        required_columns=node.required_columns,
+    )
 
 
 def add(left: ExprNode, right: ExprNode) -> ExprNode:
-    return ExprNode(op="add", children=(left, right), required_columns=left.required_columns + right.required_columns)
+    return ExprNode(
+        op="add",
+        children=(left, right),
+        required_columns=left.required_columns + right.required_columns,
+    )
 
 
 def subtract(left: ExprNode, right: ExprNode) -> ExprNode:
-    return ExprNode(op="subtract", children=(left, right), required_columns=left.required_columns + right.required_columns)
+    return ExprNode(
+        op="subtract",
+        children=(left, right),
+        required_columns=left.required_columns + right.required_columns,
+    )
 
 
 def multiply(left: ExprNode, right: ExprNode) -> ExprNode:
-    return ExprNode(op="multiply", children=(left, right), required_columns=left.required_columns + right.required_columns)
+    return ExprNode(
+        op="multiply",
+        children=(left, right),
+        required_columns=left.required_columns + right.required_columns,
+    )
 
 
 def safe_ratio(left: ExprNode, right: ExprNode, epsilon: float = 1e-10) -> ExprNode:
@@ -122,7 +160,9 @@ def safe_ratio(left: ExprNode, right: ExprNode, epsilon: float = 1e-10) -> ExprN
 
 
 def clip(node: ExprNode, lower: float | None = None, upper: float | None = None) -> ExprNode:
-    return ExprNode(op="clip", children=(node,), params=(lower, upper), required_columns=node.required_columns)
+    return ExprNode(
+        op="clip", children=(node,), params=(lower, upper), required_columns=node.required_columns
+    )
 
 
 # Forbidden tokens — any candidate referencing these is rejected

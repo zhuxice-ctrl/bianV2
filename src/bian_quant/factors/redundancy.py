@@ -7,12 +7,10 @@ linear baseline + delta IC on validation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy import stats as sp_stats
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 
@@ -80,7 +78,7 @@ def cluster_redundant_factors(
     labels = fcluster(Z, t=distance_threshold, criterion="distance")
 
     factor_names = list(factor_values.columns)
-    clusters = {name: int(label) for name, label in zip(factor_names, labels)}
+    clusters = {name: int(label) for name, label in zip(factor_names, labels, strict=False)}
 
     # Select representative per cluster
     representatives: dict[int, str] = {}

@@ -74,9 +74,7 @@ def funding_zscore(funding_rate: pd.Series, *, periods: int) -> pd.Series:
     """Z-score of funding rate relative to its rolling statistics."""
     mean = funding_rate.rolling(periods, min_periods=periods).mean()
     std = funding_rate.rolling(periods, min_periods=periods).std(ddof=1)
-    return ((funding_rate - mean) / std.replace(0.0, np.nan)).rename(
-        f"funding_zscore_{periods}"
-    )
+    return ((funding_rate - mean) / std.replace(0.0, np.nan)).rename(f"funding_zscore_{periods}")
 
 
 def oi_change(open_interest: pd.Series, *, periods: int) -> pd.Series:

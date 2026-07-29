@@ -13,9 +13,7 @@ def volume_surprise(volume: pd.Series, *, periods: int) -> pd.Series:
     """Z-score of volume relative to its rolling mean."""
     mean = volume.rolling(periods, min_periods=periods).mean()
     std = volume.rolling(periods, min_periods=periods).std(ddof=1)
-    return ((volume - mean) / std.replace(0.0, np.nan)).rename(
-        f"volume_surprise_{periods}"
-    )
+    return ((volume - mean) / std.replace(0.0, np.nan)).rename(f"volume_surprise_{periods}")
 
 
 def amihud_illiquidity(close: pd.Series, volume: pd.Series, *, periods: int) -> pd.Series:

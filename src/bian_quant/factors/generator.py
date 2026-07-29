@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,6 @@ from bian_quant.factors.primitives import (
     add,
     column,
     delta,
-    evaluate_node,
     lag,
     multiply,
     percent_change,
@@ -151,7 +150,7 @@ def generate_candidates(
 
     seed = config.get("seed", 7)
     max_candidates = config.get("max_candidates", 20)
-    max_tree_depth = config.get("max_tree_depth", 3)
+    config.get("max_tree_depth", 3)
     base_factors = config.get("base_factors", [])
     windows = config.get("windows", [6, 12, 24, 48, 168])
     allowed_unary = config.get("allowed_unary", ["lag", "delta", "zscore", "rolling_rank"])
@@ -165,8 +164,7 @@ def generate_candidates(
     templates = _build_templates(windows)
     # 2. Grammar samples (seeded, deterministic)
     grammar_samples = _build_grammar_samples(
-        windows, allowed_unary, allowed_binary,
-        ["close", "volume", "high", "low"], seed
+        windows, allowed_unary, allowed_binary, ["close", "volume", "high", "low"], seed
     )
 
     # Combine and deduplicate by expression hash
@@ -184,9 +182,7 @@ def generate_candidates(
 
     candidates: list[CandidateFactor] = []
     for rank, (name, node) in enumerate(unique):
-        parent_factors = tuple(
-            bf for bf in base_factors if bf.split(".")[0] in name
-        )
+        parent_factors = tuple(bf for bf in base_factors if bf.split(".")[0] in name)
         candidates.append(
             CandidateFactor(
                 expression_tree=node,

@@ -71,9 +71,7 @@ def fit_regime_thresholds(train_frame: pd.DataFrame) -> RegimeThresholds:
     )
 
 
-def classify_regime(
-    frame: pd.DataFrame, thresholds: RegimeThresholds
-) -> pd.Series:
+def classify_regime(frame: pd.DataFrame, thresholds: RegimeThresholds) -> pd.Series:
     """Classify each bar into one of five regime labels.
 
     The classification uses only backward-looking rolling statistics

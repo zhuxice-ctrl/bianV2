@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -63,7 +63,11 @@ def _stationary_block_bootstrap_ci(
 
 
 def _bootstrap_ic_ci(
-    f_vals: np.ndarray, l_vals: np.ndarray, block_size: int = 5, n_resamples: int = 500, seed: int = 42
+    f_vals: np.ndarray,
+    l_vals: np.ndarray,
+    block_size: int = 5,
+    n_resamples: int = 500,
+    seed: int = 42,
 ) -> tuple[float, float]:
     """Block bootstrap CI for Pearson correlation."""
     n = len(f_vals)
@@ -143,8 +147,8 @@ def evaluate_factor(
 
     # Group by (asset, regime) — never pooled
     for (asset, regime), group in df.groupby(["asset", "regime"], sort=False):
-        f = group["factor"].dropna()
-        l = group["label"].dropna()
+        group["factor"].dropna()
+        group["label"].dropna()
 
         # Align factor and label
         common = group[["factor", "label"]].dropna()
@@ -160,15 +164,16 @@ def evaluate_factor(
         coverage = valid / total if total > 0 else 0.0
 
         # Turnover (mean absolute change)
-        if len(f_vals) > 1:
-            turnover = float(np.mean(np.abs(np.diff(f_vals))))
-        else:
-            turnover = 0.0
+        turnover = float(np.mean(np.abs(np.diff(f_vals)))) if len(f_vals) > 1 else 0.0
 
         # IC
         pearson_ic = float(np.corrcoef(f_vals, l_vals)[0, 1]) if len(f_vals) > 1 else float("nan")
         spearman_result = sp_stats.spearmanr(f_vals, l_vals)
-        spearman_ic = float(spearman_result.statistic) if not np.isnan(spearman_result.statistic) else float("nan")
+        spearman_ic = (
+            float(spearman_result.statistic)
+            if not np.isnan(spearman_result.statistic)
+            else float("nan")
+        )
 
         # Confidence interval via block bootstrap on the IC itself
         if len(f_vals) > 10:

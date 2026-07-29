@@ -7,6 +7,7 @@ it transitions to ``blocked``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -20,10 +21,9 @@ from bian_quant.factors.evaluate import FactorEvaluation, evaluate_factor
 from bian_quant.factors.multiple_testing import benjamini_hochberg
 from bian_quant.factors.redundancy import (
     cluster_redundant_factors,
-    evaluate_incremental_contribution,
 )
 from bian_quant.factors.registry import FactorRegistry
-from bian_quant.factors.spec import FactorSpec, FactorState
+from bian_quant.factors.spec import FactorSpec
 
 
 @dataclass
@@ -97,10 +97,8 @@ def run_factor_pipeline(
 
             for spec in config.factor_specs:
                 # Register factor if not already
-                try:
+                with contextlib.suppress(ValueError):
                     registry.register(spec, code_sha=run_id)
-                except ValueError:
-                    pass  # already registered
 
                 # Compute factor on test data
                 fn = factor_functions.get(spec.factor_id)
@@ -143,7 +141,9 @@ def run_factor_pipeline(
                 # Fisher transform for p-value
                 z = 0.5 * np.log((1 + ev.spearman_ic) / (1 - ev.spearman_ic))
                 p = 2 * (1 - _standard_normal_cdf(abs(z) * np.sqrt(ev.sample_count - 3)))
-                p_values[ev.factor_name + f"@{ev.fold}:{ev.asset}:{ev.regime}"] = max(min(p, 1.0), 0.0)
+                p_values[ev.factor_name + f"@{ev.fold}:{ev.asset}:{ev.regime}"] = max(
+                    min(p, 1.0), 0.0
+                )
 
         mt_result = benjamini_hochberg(p_values, alpha=0.05)
 
@@ -266,7 +266,10 @@ def _assign_regimes(data: pd.DataFrame) -> list[str]:
     if np.isnan(median_vol):
         return ["range_low_vol"] * len(data)
     high_vol = vol > median_vol
-    return ["trend_high_vol" if hv else "trend_low_vol" if not np.isnan(hv) else "range_low_vol" for hv in high_vol.fillna(False)]
+    return [
+        "trend_high_vol" if hv else "trend_low_vol" if not np.isnan(hv) else "range_low_vol"
+        for hv in high_vol.fillna(False)
+    ]
 
 
 def _standard_normal_cdf(x: float) -> float:
