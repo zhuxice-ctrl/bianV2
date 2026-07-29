@@ -1,0 +1,36 @@
+assets: [BTCUSDT, ETHUSDT, BNBUSDT]
+macro_start: 2021-07-01T00:00:00Z
+micro_start: 2024-07-01T00:00:00Z
+as_of: 2026-07-26T19:59:59.999Z
+macro_intervals: [1d, 4h]
+micro_intervals: [1h, 4h]
+oi_delay_minutes: [5, 10, 15]
+parent_snapshot_ids: []
+raw_root: var/lake/raw/binance-futures-um
+canonical_root: var/lake/canonical/binance-futures-um
+research_root: var/lake/research/dual-horizon
+artifact_root: var/artifacts/dual-horizon
+catalog_path: var/catalog.sqlite
+experiment_registry_path: var/experiments.sqlite
+factor_registry_path: var/factors.sqlite
+download_attempts: 3
+max_workers: 4
+disk_warn_gb: 10
+disk_block_gb: 5
+coverage:
+  ohlcv: 0.999
+  funding: 0.99
+  metrics_oi: 0.98
+factor_protocol:
+  primary_interval: 4h
+  sensitivity_interval: 1h
+  development_months: 18
+  holdout_months: 6
+  development_start: 2024-07-01T00:00:00Z
+  development_end_exclusive: 2026-01-01T00:00:00Z
+  holdout_start: 2026-01-26T20:00:00Z
+  holdout_end: 2026-07-26T19:59:59.999Z
+  bh_alpha: 0.05
+  minimum_inference_samples: 30
+  max_candidates: 20
+  cost_bps: [5, 10]
