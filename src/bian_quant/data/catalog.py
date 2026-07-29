@@ -27,20 +27,25 @@ class DatasetCatalog:
 
     def register(self, manifest: DatasetManifest, *, path: Path) -> None:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT content_sha256 FROM datasets WHERE snapshot_id = ?",
+                "SELECT path, manifest_json FROM datasets WHERE snapshot_id = ?",
                 (manifest.snapshot_id,),
             ).fetchone()
-            if row is not None and row[0] != manifest.content_sha256:
-                raise ValueError("snapshot_id already exists with different content")
+            manifest_json = manifest.model_dump_json()
+            registered_path = str(path.resolve())
+            if row is not None:
+                if row != (registered_path, manifest_json):
+                    raise ValueError("snapshot_id already exists with different evidence")
+                return
             connection.execute(
-                "INSERT OR IGNORE INTO datasets VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO datasets VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     manifest.snapshot_id,
                     manifest.layer.value,
                     manifest.name,
                     manifest.content_sha256,
-                    str(path),
-                    manifest.model_dump_json(),
+                    registered_path,
+                    manifest_json,
                 ),
             )

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -27,7 +28,7 @@ def test_parse_fear_greed() -> None:
 def test_parse_defillama() -> None:
     payload = json.dumps(
         [
-            {"date": "2025-01-01", "totalCirculating": "150000000000"},
+            {"date": "1735689600", "totalCirculating": {"peggedUSD": 150000000000}},
         ]
     ).encode("utf-8")
 
@@ -41,11 +42,13 @@ def test_parse_defillama() -> None:
 def test_parse_fred_csv() -> None:
     payload = b"observation_date,WALCL\n2025-01-01,8000000\n2025-01-08,8100000\n"
 
-    result = parse_fred_csv(payload)
+    observed_at = datetime(2025, 2, 1, tzinfo=UTC)
+    result = parse_fred_csv(payload, observed_at=observed_at)
 
     assert len(result) == 2
     assert result[0]["value"] == 8000000.0
     assert result[0]["revision_risk"] == RevisionRisk.BACKFILLED_REVISED.value
+    assert result[0]["available_time"] == observed_at
 
 
 def test_backfilled_risk_blocks_promotion() -> None:
@@ -74,9 +77,24 @@ def test_invalid_json_raises() -> None:
         parse_fear_greed(b"not json")
 
 
-def test_empty_fred_csv_returns_empty() -> None:
+def test_empty_fred_csv_is_not_a_successful_dataset() -> None:
     payload = b"observation_date,WALCL\n"
 
-    result = parse_fred_csv(payload)
+    with pytest.raises(ValueError, match="EXTERNAL_EMPTY"):
+        parse_fred_csv(payload, observed_at=datetime(2025, 2, 1, tzinfo=UTC))
 
-    assert len(result) == 0
+
+def test_live_defillama_shape_is_supported() -> None:
+    payload = json.dumps(
+        [{"date": "1511913600", "totalCirculating": {"peggedUSD": 109970}}]
+    ).encode()
+
+    result = parse_stablecoin_supply(payload)
+
+    assert result[0]["total_supply"] == 109970.0
+    assert result[0]["event_time"] == datetime(2017, 11, 29, tzinfo=UTC)
+
+
+def test_unknown_promotion_level_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown promotion level"):
+        enforce_ceiling("production", [])

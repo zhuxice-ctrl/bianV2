@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from bian_quant.data.adapters.binance_archive import archive_url, save_raw_bytes
+from bian_quant.data.adapters.binance_archive import (
+    archive_url,
+    verify_checksum,
+)
+from bian_quant.data.adapters.raw import save_raw_bytes
 
 
 def test_monthly_futures_kline_url() -> None:
@@ -22,6 +26,11 @@ def test_raw_bytes_are_append_only(tmp_path: Path) -> None:
         raise AssertionError("raw evidence was overwritten")
 
 
+def test_checksum_verification_rejects_changed_bytes() -> None:
+    with pytest.raises(ValueError, match="BINANCE_CHECKSUM_MISMATCH"):
+        verify_checksum(b"changed", b"0" * 64 + b"  sample.zip")
+
+
 @pytest.mark.network
 def test_download_monthly_zip(tmp_path: Path) -> None:
     from bian_quant.data.adapters.binance_archive import download_month
@@ -32,3 +41,4 @@ def test_download_monthly_zip(tmp_path: Path) -> None:
     with target.open("rb") as f:
         magic = f.read(2)
     assert magic == b"PK"
+    assert target.with_suffix(".zip.manifest.json").exists()

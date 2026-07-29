@@ -35,14 +35,25 @@ def inspect_ohlcv(frame: pd.DataFrame, *, expected_frequency: str) -> QualityRep
                 message="volume must be non-negative",
             )
         )
-    times = pd.to_datetime(frame["event_time"], utc=True).sort_values()
     expected = pd.Timedelta(expected_frequency)
-    if len(times) > 1 and (times.diff().dropna() > expected).any():
-        findings.append(
-            QualityFinding(
-                code="TIME_GAP",
-                severity=QualitySeverity.WARNING,
-                message="one or more bars are missing",
+    groups = frame.groupby("asset", sort=False) if "asset" in frame.columns else [(None, frame)]
+    for asset, group in groups:
+        times = pd.to_datetime(group["event_time"], utc=True).sort_values()
+        label = f" for asset={asset!r}" if asset is not None else ""
+        if times.duplicated().any():
+            findings.append(
+                QualityFinding(
+                    code="DUPLICATE_BAR",
+                    severity=QualitySeverity.BLOCKING,
+                    message=f"duplicate event_time{label}",
+                )
             )
-        )
+        if len(times) > 1 and (times.diff().dropna() > expected).any():
+            findings.append(
+                QualityFinding(
+                    code="TIME_GAP",
+                    severity=QualitySeverity.WARNING,
+                    message=f"one or more bars are missing{label}",
+                )
+            )
     return QualityReport(findings=findings)

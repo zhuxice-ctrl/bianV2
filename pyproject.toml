@@ -25,25 +25,32 @@ dependencies = [
 dashboard = ["fastapi>=0.116,<1", "jinja2>=3.1,<4", "plotly>=6,<7", "uvicorn>=0.35,<1"]
 ml = ["lightgbm>=4.6,<5", "scikit-learn>=1.7,<2"]
 models = ["einops>=0.8,<1", "huggingface-hub>=0.33,<1", "safetensors>=0.6,<1", "torch>=2.7,<3", "tqdm>=4.67,<5"]
-dev = ["hypothesis>=6.135,<7", "mypy>=1.16,<2", "pytest>=8.4,<9", "pytest-cov>=6.2,<7", "ruff>=0.12,<1"]
+dev = [
+  "hypothesis>=6.135,<7",
+  "mypy>=1.16,<2",
+  "pandas-stubs>=2.3,<3",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "ruff>=0.12,<1",
+  "types-PyYAML>=6.0,<7",
+]
 
 [project.scripts]
 bian-quant = "bian_quant.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bian_quant"]
+packages = ["src/bian_quant", "backtest", "strategies"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-p no:cov"
 markers = ["models: requires optional model dependencies or weights", "network: requires network access"]
-addopts = "-p no:cov"
+addopts = "-m 'not network'"
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["docs", "dashboard", "artifacts"]
-exclude = [
+extend-exclude = [
+  "artifacts",
   "backtest",
   "strategies",
   "dashboard",
@@ -62,3 +69,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.11"
 strict = true
 packages = ["bian_quant"]
+
+[[tool.mypy.overrides]]
+module = ["backtest.*", "strategies.*"]
+follow_imports = "skip"

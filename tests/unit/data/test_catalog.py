@@ -28,3 +28,29 @@ def test_catalog_rejects_snapshot_id_reuse_with_different_content(tmp_path: Path
         assert "snapshot_id already exists" in str(error)
     else:
         raise AssertionError("catalog allowed evidence replacement")
+
+
+def test_catalog_rejects_same_content_with_different_lineage(tmp_path: Path) -> None:
+    catalog = DatasetCatalog(tmp_path / "registry.sqlite")
+    base = DatasetManifest(
+        snapshot_id="research-v1",
+        layer=DatasetLayer.RESEARCH,
+        name="features",
+        content_sha256="a" * 64,
+        row_count=1,
+        min_event_time=datetime(2026, 1, 1, tzinfo=UTC),
+        max_event_time=datetime(2026, 1, 1, tzinfo=UTC),
+        parent_snapshot_ids=["canonical-v1"],
+        config_json="{}",
+    )
+    path = tmp_path / "research.parquet"
+    catalog.register(base, path=path)
+
+    changed = base.model_copy(update={"parent_snapshot_ids": ["canonical-v2"]})
+
+    try:
+        catalog.register(changed, path=path)
+    except ValueError as error:
+        assert "different evidence" in str(error)
+    else:
+        raise AssertionError("catalog allowed lineage replacement")

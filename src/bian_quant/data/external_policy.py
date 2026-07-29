@@ -12,6 +12,8 @@ def can_promote_to(target_level: str, required_risks: list[str]) -> bool:
 
 
 def enforce_ceiling(target_level: str, required_risks: list[str]) -> None:
+    if target_level not in ("observed", "validated", "alpha"):
+        raise ValueError(f"Unknown promotion level: {target_level}")
     if (
         RevisionRisk.BACKFILLED_REVISED.value in required_risks
         and target_level != MAX_PROMOTION_LEVEL

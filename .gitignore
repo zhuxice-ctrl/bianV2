@@ -6,9 +6,11 @@ __pycache__/
 .eggs/
 .pytest_cache/
 .mypy_cache/
+.coverage
 
 # Virtual envs
 .venv/
+.venv-wsl/
 venv/
 env/
 

@@ -44,13 +44,20 @@ def _make_zip(rows: list[dict], fieldnames: list[str]) -> bytes:
 
 def test_parse_funding_produces_event_time() -> None:
     cols = list(EXPECTED_FUNDING_COLUMNS)
-    rows = [{"calc_time": "1738368000000", "funding_rate": "0.0001", "symbol": "BTCUSDT"}]
+    rows = [
+        {
+            "calc_time": "1735689600015",
+            "funding_interval_hours": "8",
+            "last_funding_rate": "0.00010000",
+        }
+    ]
     payload = _make_zip(rows, cols)
 
-    result = parse_funding(payload)
+    result = parse_funding(payload, asset="BTCUSDT")
 
     assert len(result) == 1
     assert result[0]["funding_rate"] == 0.0001
+    assert result[0]["asset"] == "BTCUSDT"
     assert result[0]["available_time"] == result[0]["event_time"]
 
 
@@ -58,17 +65,14 @@ def test_parse_metrics_produces_oi_fields() -> None:
     cols = list(EXPECTED_METRICS_COLUMNS)
     rows = [
         {
+            "create_time": "2025-01-02 00:00:00",
+            "symbol": "BTCUSDT",
             "sum_open_interest": "100.5",
             "sum_open_interest_value": "5000000",
-            "count": "100",
-            "sum_open_interest_cost": "50",
-            "sum_open_interest_cost_value": "2500000",
-            "long_short_ratio": "1.2",
-            "long_account": "55",
-            "short_account": "45",
-            "long_position": "60",
-            "short_position": "40",
-            "timestamp": "1738368000000",
+            "count_toptrader_long_short_ratio": "1.2",
+            "sum_toptrader_long_short_ratio": "1.3",
+            "count_long_short_ratio": "1.1",
+            "sum_taker_long_short_vol_ratio": "0.9",
         }
     ]
     payload = _make_zip(rows, cols)
@@ -78,24 +82,22 @@ def test_parse_metrics_produces_oi_fields() -> None:
     assert len(result) == 1
     assert result[0]["sum_open_interest"] == 100.5
     assert result[0]["sum_open_interest_value"] == 5000000.0
-    assert result[0]["long_short_ratio"] == 1.2
+    assert result[0]["top_trader_account_long_short_ratio"] == 1.2
+    assert result[0]["source_timestamp"] == "2025-01-02 00:00:00"
 
 
 def test_parse_metrics_rejects_unexpected_columns() -> None:
     cols = list(EXPECTED_METRICS_COLUMNS) + ["unexpected_new_col"]
     rows = [
         {
+            "create_time": "2025-01-02 00:00:00",
+            "symbol": "BTCUSDT",
             "sum_open_interest": "100",
             "sum_open_interest_value": "5000",
-            "count": "10",
-            "sum_open_interest_cost": "5",
-            "sum_open_interest_cost_value": "250",
-            "long_short_ratio": "1.0",
-            "long_account": "50",
-            "short_account": "50",
-            "long_position": "50",
-            "short_position": "50",
-            "timestamp": "1738368000000",
+            "count_toptrader_long_short_ratio": "1.0",
+            "sum_toptrader_long_short_ratio": "1.0",
+            "count_long_short_ratio": "1.0",
+            "sum_taker_long_short_vol_ratio": "1.0",
             "unexpected_new_col": "surprise",
         }
     ]
@@ -117,5 +119,27 @@ def test_download_funding_zip(tmp_path) -> None:
     download_funding(target, asset="BTCUSDT", year=2025, month=1)
     assert target.exists()
     with target.open("rb") as f:
-        magic = f.read(2)
+        payload = f.read()
+    magic = payload[:2]
     assert magic == b"PK"
+    assert parse_funding(payload, asset="BTCUSDT")
+    assert target.with_suffix(".zip.manifest.json").exists()
+
+
+@pytest.mark.network
+def test_download_metrics_zip_matches_parser(tmp_path) -> None:
+    from datetime import UTC, datetime
+
+    from bian_quant.data.adapters.binance_derivatives import download_metrics
+
+    target = tmp_path / "BTCUSDT-metrics-2025-01-02.zip"
+    download_metrics(
+        target,
+        asset="BTCUSDT",
+        date=datetime(2025, 1, 2, tzinfo=UTC),
+    )
+
+    rows = parse_metrics(target.read_bytes())
+    assert rows
+    assert rows[0]["asset"] == "BTCUSDT"
+    assert target.with_suffix(".zip.manifest.json").exists()
