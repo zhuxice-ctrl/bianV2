@@ -181,37 +181,15 @@ def analyze_dual_horizon(
     """Analyze cataloged dual-horizon snapshots and produce decision packet."""
 
     from bian_quant.data.acquisition import DualHorizonAcquisition
-    from bian_quant.reporting.decision import (
-        DecisionEvidence,
-        write_decision_packet,
-    )
+    from bian_quant.research.operations import analyze_cataloged_dual_horizon
 
     cfg = DualHorizonAcquisition.from_yaml(config)
-    artifact_root = cfg.artifact_root
-    artifact_root.mkdir(parents=True, exist_ok=True)
-
-    run_id = f"analysis-{code_sha[:8]}"
-    run_dir = artifact_root / run_id
-
-    if run_dir.exists():
-        typer.echo(f"Run directory already exists: {run_dir}", err=True)
-        raise typer.Exit(code=1) from None
-
-    run_dir.mkdir(parents=True)
-
-    evidence = DecisionEvidence(
-        acquisition={"status": "requires_snapshot", "run_id": run_id},
-        quality={"status": "pending"},
-        macro_regime={"current_label": "unknown"},
-        macro_regime_md="# Macro Regime\n\nAnalysis requires cataloged snapshots.",
-        factor_screening={"candidates": 0, "factors": []},
-        factor_screening_md="# Factor Screening\n\nNo screening performed.",
-    )
-    paths = write_decision_packet(evidence, run_dir)
-    typer.echo(run_id)
-    typer.echo(str(run_dir))
-    for p in paths:
-        typer.echo(p.name)
+    result = analyze_cataloged_dual_horizon(cfg, code_sha=code_sha)
+    typer.echo(result.run_id)
+    typer.echo(str(result.artifact_dir))
+    if result.status != "passed":
+        typer.echo(result.error_code or "ANALYSIS_BLOCKED", err=True)
+        raise typer.Exit(code=1)
 
 
 @app.command("evaluate-holdout")
@@ -220,22 +198,28 @@ def evaluate_holdout(
     factor_id: Annotated[str, typer.Option("--factor-id")],
     factor_version: Annotated[str, typer.Option("--factor-version")],
     snapshot_id: Annotated[str, typer.Option("--snapshot-id")],
+    config: Annotated[
+        Path,
+        typer.Option("--config"),
+    ] = Path("configs/experiments/dual_horizon_derivatives.yaml"),
 ) -> None:
     """Evaluate a candidate factor on the locked holdout."""
-    from bian_quant.experiments.holdout import HoldoutLedger
-    from bian_quant.factors.spec import FactorState
+    from bian_quant.data.acquisition import DualHorizonAcquisition
+    from bian_quant.research.operations import evaluate_candidate_holdout
 
-    ledger = HoldoutLedger(Path("var/holdout.sqlite"))
     try:
-        record = ledger.authorize(
-            snapshot_id=snapshot_id,
+        result = evaluate_candidate_holdout(
+            DualHorizonAcquisition.from_yaml(config),
+            run_id=run_id,
             factor_id=factor_id,
             factor_version=factor_version,
-            factor_state=FactorState.CANDIDATE,
-            access_run_id=run_id,
+            snapshot_id=snapshot_id,
         )
-        typer.echo(f"Authorized: {record['factor_id']} v{record['factor_version']}")
-        typer.echo("Holdout evaluation requires cataloged holdout snapshots.")
-    except PermissionError as exc:
+        typer.echo(result.status)
+        typer.echo(str(result.artifact_path))
+        typer.echo(result.factor_state.value)
+        if result.status != "passed":
+            raise typer.Exit(code=1)
+    except (KeyError, PermissionError, ValueError, FileExistsError) as exc:
         typer.echo(f"Denied: {exc}", err=True)
         raise typer.Exit(code=1) from None

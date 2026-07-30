@@ -144,18 +144,23 @@ def evaluate_factor(
 
         # IC
         pearson_ic = _safe_pearson(f_vals, l_vals)
-        spearman_result = sp_stats.spearmanr(f_vals, l_vals)
+        constant_input = np.ptp(f_vals) == 0.0 or np.ptp(l_vals) == 0.0
+        spearman_result = None if constant_input else sp_stats.spearmanr(f_vals, l_vals)
         spearman_ic = (
             float(spearman_result.statistic)
-            if not np.isnan(spearman_result.statistic)
+            if spearman_result is not None and not np.isnan(spearman_result.statistic)
             else float("nan")
         )
         p_value = float("nan")
-        if valid >= MIN_INFERENCE_SAMPLES and not np.isnan(spearman_result.pvalue):
+        if (
+            valid >= MIN_INFERENCE_SAMPLES
+            and spearman_result is not None
+            and not np.isnan(spearman_result.pvalue)
+        ):
             p_value = float(spearman_result.pvalue)
 
         # Confidence interval via block bootstrap on the IC itself
-        if valid >= MIN_INFERENCE_SAMPLES:
+        if valid >= MIN_INFERENCE_SAMPLES and not constant_input:
             ci_lower, ci_upper = _bootstrap_rank_ic_ci(f_vals, l_vals)
         else:
             ci_lower, ci_upper = float("nan"), float("nan")

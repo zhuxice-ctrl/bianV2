@@ -63,7 +63,7 @@ class ArtifactWriter:
                 f.write(text)
                 f.flush()
                 os.fsync(f.fileno())
-            os.rename(tmp_path, target)
+            _commit_exclusive(tmp_path, target)
         except Exception:
             Path(tmp_path).unlink(missing_ok=True)
             raise
@@ -82,7 +82,7 @@ class ArtifactWriter:
                 f.write(text)
                 f.flush()
                 os.fsync(f.fileno())
-            os.rename(tmp_path, target)
+            _commit_exclusive(tmp_path, target)
         except Exception:
             Path(tmp_path).unlink(missing_ok=True)
             raise
@@ -101,3 +101,9 @@ def _check_finite(value: Any) -> None:
     elif isinstance(value, (list, tuple)):
         for item in value:
             _check_finite(item)
+
+
+def _commit_exclusive(tmp_path: str, target: Path) -> None:
+    """Atomically publish a same-filesystem temp file without replacement."""
+    os.link(tmp_path, target)
+    Path(tmp_path).unlink()

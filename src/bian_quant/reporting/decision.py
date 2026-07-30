@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from bian_quant.reporting.artifacts import ArtifactWriter, RunDirectory
+from bian_quant.reporting.artifacts import ArtifactWriter
 
 REQUIRED_ARTIFACTS = {
     "data-acquisition.json",
@@ -79,12 +79,9 @@ def write_decision_packet(
     Returns the list of paths to all written artifacts.
     """
     writer = ArtifactWriter(run_dir.parent)
-    run = RunDirectory(path=run_dir, name=run_dir.name)
-
-    # If run dir doesn't exist yet, create it
-    if not run_dir.exists():
-        runDir = writer.create_run(run.name)
-        run = runDir
+    # Production packet creation always owns the directory reservation.  A
+    # pre-created directory is ambiguous and must fail closed.
+    run = writer.create_run(run_dir.name)
 
     paths: list[Path] = []
 

@@ -302,7 +302,20 @@ def write_macro_evidence(
     if json_path.exists() or md_path.exists():
         raise FileExistsError(f"macro evidence already exists in {artifact_dir}")
 
-    json_data = {
+    json_data = macro_evidence_payload(evidence)
+    markdown = render_macro_evidence_markdown(evidence)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    with json_path.open("x", encoding="utf-8") as handle:
+        json.dump(json_data, handle, indent=2, default=str)
+    with md_path.open("x", encoding="utf-8") as handle:
+        handle.write(markdown)
+
+    return json_path, md_path
+
+
+def macro_evidence_payload(evidence: MacroRegimeEvidence) -> dict[str, object]:
+    """Return the complete JSON-safe Macro evidence without writing files."""
+    return {
         "current": {
             "label": evidence.current.label,
             "decision_time": evidence.current.decision_time.isoformat()
@@ -350,10 +363,10 @@ def write_macro_evidence(
             for decision in evidence.decisions
         ],
     }
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    with json_path.open("x", encoding="utf-8") as handle:
-        json.dump(json_data, handle, indent=2, default=str)
 
+
+def render_macro_evidence_markdown(evidence: MacroRegimeEvidence) -> str:
+    """Render human-readable Macro evidence without touching the filesystem."""
     md_lines = [
         "# Macro Regime Evidence",
         "",
@@ -398,7 +411,4 @@ def write_macro_evidence(
     )
     for label, summary in evidence.state_summaries.items():
         md_lines.append(f"- **{label}**: {summary.sample_count} samples — {summary.status}")
-    with md_path.open("x", encoding="utf-8") as handle:
-        handle.write("\n".join(md_lines))
-
-    return json_path, md_path
+    return "\n".join(md_lines)
