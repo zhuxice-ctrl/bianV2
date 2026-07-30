@@ -8,6 +8,7 @@ import json
 import math
 import shutil
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -419,33 +420,44 @@ def prepare_dual_horizon(
     acquired: dict[str, AcquisitionObjectResult] = {}
     blocked_periods: list[str] = []
 
-    for source in plan:
+    def acquire_one(
+        source: SourceObject,
+    ) -> tuple[SourceObject, AcquisitionObjectResult | None, str | None]:
         try:
-            result = downloader.acquire(source, config)
-            acquired[source.identity_key] = result
-            acquisition_results.append(
-                {
-                    "identity_key": source.identity_key,
-                    "status": result.status,
-                    "content_sha256": result.manifest.content_sha256,
-                    "byte_count": result.manifest.byte_count,
-                }
-            )
+            return source, downloader.acquire(source, config), None
         except Exception as exc:
-            acquisition_results.append(
-                {
-                    "identity_key": source.identity_key,
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            )
-            blocked_periods.append(source.identity_key)
+            return source, None, str(exc)
 
-        # Track peak working bytes
-        current_free = shutil.disk_usage(config.raw_root).free
-        reduction = baseline_free - current_free
-        if reduction > peak_reduction:
-            peak_reduction = reduction
+    # executor.map preserves source-plan order in the persisted artifact while
+    # limiting concurrent public downloads to the locked configuration value.
+    with ThreadPoolExecutor(max_workers=config.max_workers) as executor:
+        outcomes = executor.map(acquire_one, plan)
+        for source, result, error in outcomes:
+            if result is not None:
+                acquired[source.identity_key] = result
+                acquisition_results.append(
+                    {
+                        "identity_key": source.identity_key,
+                        "status": result.status,
+                        "content_sha256": result.manifest.content_sha256,
+                        "byte_count": result.manifest.byte_count,
+                    }
+                )
+            else:
+                acquisition_results.append(
+                    {
+                        "identity_key": source.identity_key,
+                        "status": "failed",
+                        "error": error or "RAW_DOWNLOAD_FAILED",
+                    }
+                )
+                blocked_periods.append(source.identity_key)
+
+            # Track peak working bytes after each completed plan object.
+            current_free = shutil.disk_usage(config.raw_root).free
+            reduction = baseline_free - current_free
+            if reduction > peak_reduction:
+                peak_reduction = reduction
 
     # Canonicalize verified objects and persist immutable partitions.
     snapshots: list[DatasetManifest] = []

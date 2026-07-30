@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -95,3 +97,37 @@ def test_local_only_pipeline_blocks_with_exact_missing_objects(tmp_path: Path) -
     payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
     assert payload["planned_objects"] == 45
     assert len([item for item in payload["results"] if item["status"] == "failed"]) == 45
+
+
+def test_acquisition_honors_locked_worker_bound_and_persists_plan_order(
+    tmp_path: Path,
+) -> None:
+    config = _miniature_config(tmp_path).model_copy(update={"max_workers": 4})
+    inner = FixtureDownloader(FIXTURES)
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    class RecordingDownloader:
+        def acquire(self, source, current_config):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                time.sleep(0.01)
+                return inner.acquire(source, current_config)
+            finally:
+                with lock:
+                    active -= 1
+
+    result = prepare_dual_horizon(
+        config,
+        code_sha="c" * 40,
+        downloader=RecordingDownloader(),
+    )
+    assert result.status == DualHorizonStatus.PASSED
+    assert 1 < peak <= config.max_workers
+    payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    identity_keys = [item["identity_key"] for item in payload["results"]]
+    assert identity_keys == sorted(identity_keys)
