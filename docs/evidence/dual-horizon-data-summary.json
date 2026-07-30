@@ -1,0 +1,62 @@
+{
+  "code_sha": "bf4013c335d168b5698600aff4fa7e43e06384ea",
+  "as_of": "2026-07-26T19:59:59.999000+00:00",
+  "assets": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "BNBUSDT"
+  ],
+  "macro_window": {
+    "start": "2021-07-01T00:00:00Z",
+    "end": "2026-07-26T19:59:59Z"
+  },
+  "micro_window": {
+    "start": "2024-07-01T00:00:00Z",
+    "end": "2026-07-26T19:59:59Z"
+  },
+  "ohlcv": {
+    "rows": 93324,
+    "assets": 3,
+    "intervals": [
+      "1d",
+      "4h",
+      "1h"
+    ],
+    "date_range": "2021-07-01 to 2026-07-26",
+    "files_downloaded": 666,
+    "files_failed": 0
+  },
+  "funding": {
+    "rows": 16434,
+    "files_downloaded": 180,
+    "files_404": 18,
+    "note": "18 daily funding files for July 2026 not yet published on Binance"
+  },
+  "metrics_oi": {
+    "rows": 647985,
+    "files_downloaded": 2250,
+    "files_failed": 18,
+    "note": "18 daily metrics files for July 2026 not yet published"
+  },
+  "snapshots": {
+    "macro_1d": "macro-1d-0bc48fbf5cdbbd04-02add34be6e6",
+    "macro_4h": "macro-4h-046e0fed542143e9-e21e31c3bf98",
+    "micro_1h": "micro-1h-0a691da5ce4ef74d-501fbbfd7ec9"
+  },
+  "delay_views": {
+    "delays_minutes": [
+      5,
+      10,
+      15
+    ],
+    "status": "built"
+  },
+  "download_stats": {
+    "total_objects": 3192,
+    "cached": 3192,
+    "failed": 0
+  },
+  "blocked_periods": [],
+  "engineering_passed": true,
+  "notes": "Micro 1h snapshot built on 2026-01+ subsample due to sandbox memory constraints. Full 2-year Micro data canonicalized and available in var/canonical_metrics.parquet."
+}

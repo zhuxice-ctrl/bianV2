@@ -12,7 +12,6 @@ Missing values are preserved — never forward-filled or zero-filled.
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import shutil
 import zipfile
@@ -25,7 +24,6 @@ import pandas as pd
 from bian_quant.data.adapters.binance_derivatives import (
     EXPECTED_FUNDING_COLUMNS,
     EXPECTED_METRICS_COLUMNS,
-    _read_zip_csv,
     _require_exact_schema,
 )
 from bian_quant.data.hashing import dataframe_content_hash
@@ -78,8 +76,36 @@ def _extract_single_csv(path: Path, *, temp_root: Path | None = None) -> bytes:
             raise ValueError("ARCHIVE_INVALID: not a valid ZIP file") from error
 
 
-def _parse_csv_bytes(payload: bytes) -> list[dict[str, str]]:
-    reader = csv.DictReader(io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8"))
+_OHLCV_FIELDNAMES = [
+    "open_time",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time",
+    "quote_volume",
+    "trades",
+    "taker_buy_base",
+    "taker_buy_quote",
+    "ignore",
+]
+
+
+def _parse_csv_bytes(
+    payload: bytes, *, fieldnames: list[str] | None = None
+) -> list[dict[str, str]]:
+    """Parse CSV bytes into a list of dict rows.
+
+    If *fieldnames* is provided, the CSV is treated as headerless and the
+    given names are assigned positionally.  Otherwise the first row is used
+    as the header (standard DictReader behaviour).
+    """
+    text_stream = io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8")
+    if fieldnames is not None:
+        reader = csv.DictReader(text_stream, fieldnames=fieldnames)
+    else:
+        reader = csv.DictReader(text_stream)
     return list(reader)
 
 
@@ -97,16 +123,35 @@ def canonicalize_ohlcv_zip(
     close and volume become known).  ``event_time`` is the bar's ``open_time``.
     """
     csv_bytes = _extract_single_csv(path, temp_root=temp_root)
-    rows = _parse_csv_bytes(csv_bytes)
+    # Binance USD-M klines archives are headerless; test fixtures have headers.
+    # Detect headerless by checking if the first row looks like numeric data
+    # (12 fields, first field is a millisecond timestamp).
+    import csv as _csv
+    import io as _io
+
+    _peek = list(_csv.reader(_io.TextIOWrapper(_io.BytesIO(csv_bytes), encoding="utf-8")))
+    if _peek and len(_peek[0]) == 12 and _peek[0][0].isdigit():
+        rows = _parse_csv_bytes(csv_bytes, fieldnames=_OHLCV_FIELDNAMES)
+    else:
+        rows = _parse_csv_bytes(csv_bytes)
     if not rows:
         raise ValueError("OHLCV_SCHEMA_CHANGED: archive contains no rows")
+    # Normalize Binance column name variants (2022+ renamed some columns)
+    _COLUMN_ALIASES = {
+        "count": "trades",
+        "taker_buy_volume": "taker_buy_base",
+        "taker_buy_quote_volume": "taker_buy_quote",
+    }
+    normalized_rows = []
+    for row in rows:
+        normalized = {_COLUMN_ALIASES.get(k, k): v for k, v in row.items()}
+        normalized_rows.append(normalized)
+    rows = normalized_rows
     actual_columns = set(rows[0].keys())
     if actual_columns != EXPECTED_OHLCV_COLUMNS:
         missing = sorted(EXPECTED_OHLCV_COLUMNS - actual_columns)
         unexpected = sorted(actual_columns - EXPECTED_OHLCV_COLUMNS)
-        raise ValueError(
-            f"OHLCV_SCHEMA_CHANGED: missing={missing} unexpected={unexpected}"
-        )
+        raise ValueError(f"OHLCV_SCHEMA_CHANGED: missing={missing} unexpected={unexpected}")
 
     records: list[dict[str, Any]] = []
     for row in rows:
@@ -139,9 +184,7 @@ def canonicalize_ohlcv_zip(
     return frame
 
 
-def canonicalize_funding_zip(
-    path: Path, *, asset: str, ingested_at: datetime
-) -> pd.DataFrame:
+def canonicalize_funding_zip(path: Path, *, asset: str, ingested_at: datetime) -> pd.DataFrame:
     """Parse a Funding ZIP into a canonical point-in-time DataFrame.
 
     Funding ``available_time`` equals ``event_time`` (the archived calc_time).
@@ -196,9 +239,7 @@ def canonicalize_metrics_zip(
 
     records: list[dict[str, Any]] = []
     for row in rows:
-        event_time = datetime.strptime(
-            row["create_time"], "%Y-%m-%d %H:%M:%S"
-        ).replace(tzinfo=UTC)
+        event_time = datetime.strptime(row["create_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
         records.append(
             {
                 "asset": row["symbol"],
@@ -239,9 +280,7 @@ def write_canonical_partition(frame: pd.DataFrame, path: Path) -> str:
     Refuses to overwrite a file with different content.  Writing the same
     content again is idempotent.
     """
-    content_hash = dataframe_content_hash(
-        frame, sort_by=["asset", "event_time"]
-    )
+    content_hash = dataframe_content_hash(frame, sort_by=["asset", "event_time"])
 
     if path.exists():
         # Idempotent: same content hash means the file is already correct

@@ -1,0 +1,7 @@
+{
+  "code_sha": "bf4013c335d168b5698600aff4fa7e43e06384ea",
+  "status": "NOT_RUN",
+  "note": "Factor screening not executed in this run. Pipeline ready - run analyze-dual-horizon CLI on target environment.",
+  "factors": [],
+  "candidates": 0
+}
