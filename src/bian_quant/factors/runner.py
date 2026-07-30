@@ -108,23 +108,23 @@ def run_factor_pipeline(
             run_id=manifest.run_id,
         )
         # Persist evidence before allowing factor lifecycle transitions.
-        result.artifact_path = _persist_result(config, result)
+        result.artifact_path = _persist_result(config, result, stage="development")
         _transition_completed_factors(registry, config.factor_specs, result)
         result.lifecycle_states = {
             spec.factor_id: registry.state(spec.factor_id, spec.version).value
             for spec in config.factor_specs
         }
-        result.artifact_path = _persist_result(config, result)
+        result.artifact_path = _persist_result(config, result, stage="lifecycle")
         runs.transition(manifest.run_id, RunStatus.PASSED)
         return result
     except FactorDataBlockedError as error:
         result = FactorRunResult(run_id=manifest.run_id, status="blocked", error=str(error))
-        result.artifact_path = _persist_result(config, result)
+        result.artifact_path = _persist_result(config, result, stage="blocked")
         runs.transition(manifest.run_id, RunStatus.BLOCKED)
         return result
     except Exception as error:
         result = FactorRunResult(run_id=manifest.run_id, status="failed", error=str(error))
-        result.artifact_path = _persist_result(config, result)
+        result.artifact_path = _persist_result(config, result, stage="failed")
         runs.transition(manifest.run_id, RunStatus.FAILED)
         return result
     finally:
@@ -420,11 +420,12 @@ def _manifest_config(config: FactorRunConfig) -> dict[str, Any]:
     }
 
 
-def _persist_result(config: FactorRunConfig, result: FactorRunResult) -> Path:
-    artifact_path = Path(config.artifact_dir) / f"{result.run_id}.json"
+def _persist_result(config: FactorRunConfig, result: FactorRunResult, *, stage: str) -> Path:
+    artifact_path = Path(config.artifact_dir) / f"{result.run_id}.{stage}.json"
     payload: dict[str, Any] = {
         "run_id": result.run_id,
         "status": result.status,
+        "stage": stage,
         "dataset_snapshot_id": config.dataset_snapshot_id,
         "code_sha": config.code_sha,
         "seed": config.seed,
@@ -442,10 +443,11 @@ def _persist_result(config: FactorRunConfig, result: FactorRunResult) -> Path:
         ],
         "lifecycle_states": result.lifecycle_states,
     }
-    artifact_path.write_text(
-        json.dumps(_json_safe(payload), indent=2, sort_keys=True, allow_nan=False),
-        encoding="utf-8",
-    )
+    try:
+        with artifact_path.open("x", encoding="utf-8") as handle:
+            json.dump(_json_safe(payload), handle, indent=2, sort_keys=True, allow_nan=False)
+    except FileExistsError as error:
+        raise FileExistsError(f"factor evidence already exists: {artifact_path}") from error
     return artifact_path
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -11,8 +12,10 @@ from pandas.testing import assert_series_equal
 from bian_quant.factors.dual_horizon import (
     build_derivatives_factor_frame,
     dual_horizon_factor_specs,
-    run_dual_horizon_screening,
 )
+from bian_quant.factors.registry import FactorRegistry
+from bian_quant.factors.spec import FactorState
+from bian_quant.research.dual_horizon import run_dual_horizon_screening
 
 
 def bars_fixture() -> pd.DataFrame:
@@ -23,6 +26,7 @@ def bars_fixture() -> pd.DataFrame:
     close = 100.0 * np.cumprod(1 + rng.normal(0, 0.01, n))
     return pd.DataFrame(
         {
+            "asset": "BTCUSDT",
             "event_time": dates,
             "available_time": dates + pd.Timedelta(minutes=1),
             "close": close,
@@ -37,6 +41,7 @@ def funding_fixture() -> pd.DataFrame:
     dates = pd.date_range("2025-12-01", periods=70, freq="8h", tz="UTC")
     return pd.DataFrame(
         {
+            "asset": "BTCUSDT",
             "event_time": dates,
             "available_time": dates + pd.Timedelta(minutes=1),
             "funding_rate": rng.normal(0.0001, 0.0005, 70),
@@ -52,6 +57,7 @@ def oi_fixture() -> pd.DataFrame:
     oi = 1_000_000.0 * np.cumprod(1 + rng.normal(0, 0.02, n))
     return pd.DataFrame(
         {
+            "asset": "BTCUSDT",
             "event_time": dates,
             "available_time": dates + pd.Timedelta(minutes=1),
             "open_interest": oi,
@@ -65,6 +71,7 @@ def weak_signal_fixture() -> pd.DataFrame:
     dates = pd.date_range("2025-12-01", periods=n, freq="4h", tz="UTC")
     return pd.DataFrame(
         {
+            "asset": "BTCUSDT",
             "event_time": dates,
             "available_time": dates + pd.Timedelta(minutes=1),
             "close": [100.0] * n,
@@ -151,20 +158,281 @@ class TestBuildDerivativesFactorFrame:
         assert "funding_available_time" in frame.columns
         assert "oi_available_time" in frame.columns
 
+    def test_interleaved_assets_do_not_share_derivatives_or_rolling_history(self) -> None:
+        bars = pd.concat(
+            [
+                bars_fixture().iloc[:30],
+                bars_fixture().iloc[:30].assign(asset="ETHUSDT", close=50.0),
+            ],
+            ignore_index=True,
+        ).sort_values("available_time")
+        funding = pd.concat(
+            [
+                funding_fixture().iloc[:15],
+                funding_fixture().iloc[:15].assign(asset="ETHUSDT", funding_rate=0.25),
+            ],
+            ignore_index=True,
+        ).sort_values("available_time")
+        oi = pd.concat(
+            [
+                oi_fixture().iloc[:30],
+                oi_fixture().iloc[:30].assign(asset="ETHUSDT", open_interest=10.0),
+            ],
+            ignore_index=True,
+        ).sort_values("available_time")
+
+        frame = build_derivatives_factor_frame(bars, funding, oi, delay=5)
+        btc = frame.loc[frame.asset == "BTCUSDT"]
+        eth = frame.loc[frame.asset == "ETHUSDT"]
+
+        assert btc["funding_rate"].max() < 0.01
+        assert eth["funding_rate"].min() == 0.25
+        assert eth["momentum_24"].dropna().eq(0.0).all()
+        assert btc["open_interest"].min() > 100_000
+        assert eth["open_interest"].dropna().eq(10.0).all()
+
+    def test_missing_derivatives_remain_null(self) -> None:
+        bars = bars_fixture().iloc[:30].assign(asset="ETHUSDT")
+        frame = build_derivatives_factor_frame(
+            bars,
+            funding_fixture().iloc[:5],
+            oi_fixture().iloc[:5],
+        )
+
+        assert frame["funding_rate"].isna().all()
+        assert frame["open_interest"].isna().all()
+        assert frame["funding_zscore"].isna().all()
+        assert frame["oi_change"].isna().all()
+
+    def test_delay_scenarios_diverge_only_after_their_publication_boundary(self) -> None:
+        bars = pd.DataFrame(
+            {
+                "asset": "BTCUSDT",
+                "available_time": pd.to_datetime(
+                    ["2026-01-01T00:04Z", "2026-01-01T00:10Z", "2026-01-01T00:16Z"]
+                ),
+                "close": [100.0, 101.0, 102.0],
+                "volume": [10.0, 10.0, 10.0],
+            }
+        )
+        funding = funding_fixture().iloc[:1]
+        oi = pd.DataFrame(
+            {
+                "asset": ["BTCUSDT"],
+                "event_time": pd.to_datetime(["2026-01-01T00:00Z"]),
+                "open_interest": [123.0],
+            }
+        )
+
+        five = build_derivatives_factor_frame(bars, funding, oi, delay=5)
+        ten = build_derivatives_factor_frame(bars, funding, oi, delay=10)
+        fifteen = build_derivatives_factor_frame(bars, funding, oi, delay=15)
+
+        assert five["open_interest"].isna().tolist() == [True, False, False]
+        assert ten["open_interest"].isna().tolist() == [True, False, False]
+        assert fifteen["open_interest"].isna().tolist() == [True, True, False]
+
+    def test_existing_canonical_oi_delay_is_not_applied_twice(self) -> None:
+        bars = pd.DataFrame(
+            {
+                "asset": "BTCUSDT",
+                "available_time": pd.to_datetime(
+                    ["2026-01-01T00:09Z", "2026-01-01T00:14Z", "2026-01-01T00:16Z"]
+                ),
+                "close": [100.0, 101.0, 102.0],
+                "volume": [10.0, 10.0, 10.0],
+            }
+        )
+        oi = pd.DataFrame(
+            {
+                "asset": ["BTCUSDT"],
+                "event_time": pd.to_datetime(["2026-01-01T00:00Z"]),
+                "available_time": pd.to_datetime(["2026-01-01T00:10Z"]),
+                "availability_assumption": ["BINANCE_METRICS_DELAY_10M"],
+                "open_interest": [123.0],
+            }
+        )
+
+        fifteen = build_derivatives_factor_frame(bars, funding_fixture().iloc[:1], oi, delay=15)
+
+        assert fifteen["open_interest"].isna().tolist() == [True, True, False]
+
+    def test_gapped_derivatives_are_null_with_exclusion_evidence(self) -> None:
+        bars = bars_fixture().iloc[:5].copy()
+        bars["available_time"] = pd.date_range("2026-01-01T00:00Z", periods=5, freq="4h")
+        funding = pd.DataFrame(
+            {
+                "asset": ["BTCUSDT"],
+                "available_time": pd.to_datetime(["2026-01-01T00:00Z"]),
+                "funding_rate": [0.001],
+                "funding_interval_hours": [8],
+            }
+        )
+        oi = pd.DataFrame(
+            {
+                "asset": ["BTCUSDT"],
+                "event_time": pd.to_datetime(["2025-12-31T23:55Z"]),
+                "open_interest": [123.0],
+            }
+        )
+
+        frame = build_derivatives_factor_frame(bars, funding, oi, delay=5, interval="4h")
+
+        assert pd.isna(frame.loc[3, "funding_rate"])
+        assert frame.loc[3, "funding_exclusion_reason"] == "FUNDING_UNAVAILABLE_OR_GAPPED"
+        assert pd.isna(frame.loc[2, "open_interest"])
+        assert frame.loc[2, "oi_exclusion_reason"] == "OI_UNAVAILABLE_OR_GAPPED"
+
+    def test_1h_and_4h_use_clock_equivalent_price_lookbacks(self) -> None:
+        bars_1h = bars_fixture().iloc[:120].copy()
+        bars_1h["available_time"] = pd.date_range(
+            "2025-12-01T00:01Z", periods=len(bars_1h), freq="1h"
+        )
+        bars_1h["close"] = np.arange(1.0, len(bars_1h) + 1.0)
+        bars_4h = bars_1h.iloc[::4].reset_index(drop=True)
+
+        one = build_derivatives_factor_frame(
+            bars_1h, funding_fixture(), oi_fixture(), interval="1h"
+        )
+        four = build_derivatives_factor_frame(
+            bars_4h, funding_fixture(), oi_fixture(), interval="4h"
+        )
+
+        assert one["momentum_24"].first_valid_index() == 96
+        assert four["momentum_24"].first_valid_index() == 24
+
 
 class TestRunDualHorizonScreening:
     def test_zero_candidate_run_is_completed_not_failed(self, tmp_path: Path) -> None:
         result = run_dual_horizon_screening(
             weak_signal_fixture(),
-            config=screening_config(tmp_path),
+            config={
+                **screening_config(tmp_path),
+                "development_start": "2025-12-01T00:00:00Z",
+                "development_end": "2026-02-01T00:00:00Z",
+            },
         )
         assert result.engineering_status == "passed"
         assert result.candidate_factor_ids == ()
 
-    def test_strong_signal_produces_candidates(self, tmp_path: Path) -> None:
+    def test_unconfigured_or_weak_signal_never_promotes_by_variance(self, tmp_path: Path) -> None:
         frame = build_derivatives_factor_frame(
             bars_fixture(), funding_fixture(), oi_fixture(), delay=5
         )
-        result = run_dual_horizon_screening(frame, config=screening_config(tmp_path))
+        result = run_dual_horizon_screening(
+            frame,
+            config={
+                **screening_config(tmp_path),
+                "development_start": "2025-12-01T00:00:00Z",
+                "development_end": "2026-02-01T00:00:00Z",
+            },
+        )
         assert result.engineering_status == "passed"
-        assert len(result.candidate_factor_ids) > 0
+        assert result.candidate_factor_ids == ()
+
+    def test_signal_added_after_development_window_is_inaccessible(self, tmp_path: Path) -> None:
+        base = build_derivatives_factor_frame(
+            bars_fixture(), funding_fixture(), oi_fixture(), delay=5
+        )
+        config = {
+            **screening_config(tmp_path),
+            "development_start": "2025-12-01T00:00:00Z",
+            "development_end": "2025-12-25T00:00:00Z",
+        }
+        original = run_dual_horizon_screening(base, config=config)
+        future = base.loc[base.available_time >= config["development_end"]].copy()
+        future["momentum_24"] = np.linspace(1.0, 1_000_000.0, len(future))
+        changed = pd.concat(
+            [base.loc[base.available_time < config["development_end"]], future],
+            ignore_index=True,
+        )
+
+        extended = run_dual_horizon_screening(changed, config=config)
+
+        assert extended.candidate_factor_ids == original.candidate_factor_ids
+        assert extended.gate_reasons == original.gate_reasons
+        assert extended.factor_evaluations == original.factor_evaluations
+        assert extended.factor_diagnostics == original.factor_diagnostics
+
+    def test_completed_evidence_precedes_lifecycle_and_is_append_only(self, tmp_path: Path) -> None:
+        registry_path = tmp_path / "factor-registry.sqlite"
+        config = {
+            **screening_config(tmp_path),
+            "run_id": "repair-3-lifecycle",
+            "code_sha": "a" * 40,
+            "factor_registry_path": registry_path,
+            "development_start": "2025-12-01T00:00:00Z",
+            "development_end": "2026-02-01T00:00:00Z",
+        }
+        frame = build_derivatives_factor_frame(
+            bars_fixture(), funding_fixture(), oi_fixture(), delay=5
+        )
+
+        result = run_dual_horizon_screening(frame, config=config)
+
+        assert result.artifact_path is not None
+        assert result.lifecycle_artifact_path is not None
+        import json
+
+        payload = json.loads(result.artifact_path.read_text(encoding="utf-8"))
+        assert payload["stage"] == "completed_development_evidence"
+        assert payload["holdout_accessed"] is False
+        assert payload["planned_lifecycle_states"]["momentum_24"] == "observed"
+        assert payload["factor_diagnostics"]["momentum_24"]["reason_codes"]
+        development_bytes = result.artifact_path.read_bytes()
+        with FactorRegistry(registry_path) as registry:
+            assert registry.state("momentum_24", "1.0.0") == FactorState.OBSERVED
+            history_before = registry.history("momentum_24", "1.0.0")
+            assert history_before[-1]["evidence_run_id"] == "repair-3-lifecycle"
+
+        import pytest
+
+        with pytest.raises(FileExistsError, match="already exists"):
+            run_dual_horizon_screening(frame, config=config)
+        assert result.artifact_path.read_bytes() == development_bytes
+        with FactorRegistry(registry_path) as registry:
+            assert registry.history("momentum_24", "1.0.0") == history_before
+
+    def test_generator_runs_only_after_all_eight_interpretable_factors(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        import bian_quant.research.dual_horizon as research
+
+        events: list[str] = []
+        real_evaluate = research.evaluate_factor
+
+        def recording_evaluate(factor: pd.Series, *args: Any, **kwargs: Any) -> Any:
+            events.append(str(factor.name))
+            return real_evaluate(factor, *args, **kwargs)
+
+        def recording_generate(*args: Any, **kwargs: Any) -> list[Any]:
+            events.append("__generator__")
+            return []
+
+        monkeypatch.setattr(research, "evaluate_factor", recording_evaluate)
+        monkeypatch.setattr(research, "generate_candidates", recording_generate)
+        frame = build_derivatives_factor_frame(
+            bars_fixture(), funding_fixture(), oi_fixture(), delay=5
+        )
+
+        result = run_dual_horizon_screening(
+            frame,
+            config={
+                **screening_config(tmp_path),
+                "development_start": "2025-12-01T00:00:00Z",
+                "development_end": "2026-02-01T00:00:00Z",
+            },
+        )
+
+        generator_index = events.index("__generator__")
+        assert set(events[:generator_index]) == {
+            "momentum_24",
+            "reversal_12",
+            "realized_vol_24",
+            "volume_surprise_24",
+            "amihud_24",
+            "funding_zscore",
+            "oi_change",
+            "leverage_crowding",
+        }
+        assert len(result.generated_factor_ids) <= 20

@@ -8,9 +8,7 @@ change earlier factor values.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+import re
 
 import numpy as np
 import pandas as pd
@@ -24,6 +22,17 @@ LOOKBACKS: dict[str, dict[str, int]] = {
     "4h": {"momentum": 24, "reversal": 12, "volatility": 24, "volume": 24},
     "1h": {"momentum": 96, "reversal": 48, "volatility": 96, "volume": 96},
 }
+
+FACTOR_COLUMNS = (
+    "momentum_24",
+    "reversal_12",
+    "realized_vol_24",
+    "volume_surprise_24",
+    "amihud_24",
+    "funding_zscore",
+    "oi_change",
+    "leverage_crowding",
+)
 
 
 def dual_horizon_factor_specs(primary_interval: str = "4h") -> tuple[FactorSpec, ...]:
@@ -117,7 +126,7 @@ def dual_horizon_factor_specs(primary_interval: str = "4h") -> tuple[FactorSpec,
         ),
         build(
             factor_id="funding_zscore",
-            formula="zscore(funding_rate, 24)",
+            formula=f"zscore(funding_rate, {m})",
             direction="two_sided",
             hypothesis=(
                 "extreme funding rates may signal crowded positioning and subsequent reversal"
@@ -147,6 +156,7 @@ def build_derivatives_factor_frame(
     oi: pd.DataFrame,
     *,
     delay: int = 5,
+    interval: str = "4h",
 ) -> pd.DataFrame:
     """Build a derivatives factor frame with causal funding/OI joins.
 
@@ -154,130 +164,149 @@ def build_derivatives_factor_frame(
     Factor values computed with a given delay must not change when a larger
     delay is applied to data AFTER the cutoff time.
     """
-    frame = bars.copy()
+    if interval not in LOOKBACKS:
+        raise ValueError(f"unsupported factor interval: {interval}")
+    required = {
+        "bars": {"asset", "close", "volume", "available_time"},
+        "funding": {"asset", "funding_rate"},
+        "oi": {"asset"},
+    }
+    for name, (table, columns) in {
+        "bars": (bars, required["bars"]),
+        "funding": (funding, required["funding"]),
+        "oi": (oi, required["oi"]),
+    }.items():
+        missing = columns - set(table.columns)
+        if missing:
+            raise ValueError(f"{name} missing columns: {sorted(missing)}")
+    if "open_interest" not in oi and "sum_open_interest" not in oi:
+        raise ValueError("oi missing columns: ['open_interest or sum_open_interest']")
 
-    # Ensure availability_time exists
-    if "available_time" not in frame.columns:
-        frame["available_time"] = frame.get("event_time", frame.index)
+    output: list[pd.DataFrame] = []
+    for asset, asset_bars in bars.groupby("asset", sort=True):
+        frame = asset_bars.sort_values("available_time").copy()
+        frame["available_time"] = pd.to_datetime(frame["available_time"], utc=True)
+        asset_funding = funding.loc[funding["asset"] == asset].copy()
+        if not asset_funding.empty:
+            funding_key = "available_time" if "available_time" in asset_funding else "event_time"
+            asset_funding[funding_key] = pd.to_datetime(asset_funding[funding_key], utc=True)
+            funding_columns = [funding_key, "funding_rate"]
+            if "funding_interval_hours" in asset_funding:
+                funding_columns.append("funding_interval_hours")
+            frame = pd.merge_asof(
+                frame,
+                asset_funding.sort_values(funding_key)[funding_columns].rename(
+                    columns={funding_key: "funding_available_time"}
+                ),
+                left_on="available_time",
+                right_on="funding_available_time",
+                direction="backward",
+            )
+            funding_interval = (
+                pd.to_numeric(frame["funding_interval_hours"], errors="coerce").fillna(8.0)
+                if "funding_interval_hours" in frame
+                else pd.Series(8.0, index=frame.index)
+            )
+            funding_age = frame["available_time"] - frame["funding_available_time"]
+            funding_gap = funding_age > pd.to_timedelta(funding_interval, unit="h")
+            frame.loc[funding_gap, "funding_rate"] = np.nan
+            funding_reason = pd.Series(pd.NA, index=frame.index, dtype="string")
+            funding_reason.loc[frame["funding_rate"].isna()] = "FUNDING_UNAVAILABLE_OR_GAPPED"
+            frame["funding_exclusion_reason"] = funding_reason
+        else:
+            frame["funding_rate"] = np.nan
+            frame["funding_available_time"] = pd.NaT
+            frame["funding_exclusion_reason"] = "FUNDING_ASSET_MISSING"
 
-    # Join funding backward by availability time
-    if not funding.empty:
-        funding = funding.copy()
-        funding_key = "available_time" if "available_time" in funding.columns else "event_time"
-        funding_sorted = funding.sort_values(funding_key)
-        frame = frame.sort_values("available_time")
-        frame = pd.merge_asof(
-            frame,
-            funding_sorted[["funding_rate", funding_key]].rename(
-                columns={funding_key: "funding_available_time"}
-            ),
-            left_on="available_time",
-            right_on="funding_available_time",
-            direction="backward",
-        )
-    else:
-        frame["funding_rate"] = 0.0
-        frame["funding_available_time"] = frame["available_time"]
+        asset_oi = oi.loc[oi["asset"] == asset].copy()
+        if not asset_oi.empty:
+            oi_key = "available_time" if "available_time" in asset_oi else "event_time"
+            if "open_interest" not in asset_oi and "sum_open_interest" in asset_oi:
+                asset_oi = asset_oi.rename(columns={"sum_open_interest": "open_interest"})
+            asset_oi[oi_key] = pd.to_datetime(asset_oi[oi_key], utc=True)
+            asset_oi["oi_available_time"] = asset_oi[oi_key]
+            if "availability_assumption" in asset_oi.columns:
+                existing_delay = asset_oi["availability_assumption"].map(
+                    _availability_delay_minutes
+                )
+                additional_delay = (delay - existing_delay).clip(lower=0)
+                asset_oi["oi_available_time"] += pd.to_timedelta(additional_delay, unit="m")
+            else:
+                asset_oi["oi_available_time"] += pd.Timedelta(minutes=delay)
+            frame = pd.merge_asof(
+                frame,
+                asset_oi.sort_values("oi_available_time")[["oi_available_time", "open_interest"]],
+                left_on="available_time",
+                right_on="oi_available_time",
+                direction="backward",
+            )
+            oi_age = frame["available_time"] - frame["oi_available_time"]
+            oi_gap = oi_age > _interval_timedelta(interval)
+            frame.loc[oi_gap, "open_interest"] = np.nan
+            oi_reason = pd.Series(pd.NA, index=frame.index, dtype="string")
+            oi_reason.loc[frame["open_interest"].isna()] = "OI_UNAVAILABLE_OR_GAPPED"
+            frame["oi_exclusion_reason"] = oi_reason
+        else:
+            frame["open_interest"] = np.nan
+            frame["oi_available_time"] = pd.NaT
+            frame["oi_exclusion_reason"] = "OI_ASSET_MISSING"
+        output.append(frame)
+    if not output:
+        return bars.copy()
+    joined = pd.concat(output, ignore_index=True).sort_values(["asset", "available_time"])
+    return compute_dual_horizon_factor_columns(joined, interval=interval)
 
-    # Join OI backward by availability time, applying publication delay
-    if not oi.empty:
-        oi = oi.copy()
-        oi_key = "available_time" if "available_time" in oi.columns else "event_time"
-        # Apply delay: shift the OI availability time forward by delay minutes
-        delay_delta = pd.Timedelta(minutes=delay)
-        oi_delayed = oi.copy()
-        oi_delayed["oi_available_time"] = oi_delayed[oi_key] + delay_delta
-        oi_sorted = oi_delayed.sort_values("oi_available_time")
-        frame = pd.merge_asof(
-            frame,
-            oi_sorted[["open_interest", "oi_available_time"]],
-            left_on="available_time",
-            right_on="oi_available_time",
-            direction="backward",
-        )
-    else:
-        frame["open_interest"] = 0.0
-        frame["oi_available_time"] = frame["available_time"]
 
-    # Compute factors
-    lookups = LOOKBACKS["4h"]  # Default to 4h lookbacks
-    m = lookups["momentum"]
-    r = lookups["reversal"]
-    v = lookups["volatility"]
-    vol = lookups["volume"]
+def compute_dual_horizon_factor_columns(
+    frame: pd.DataFrame, *, interval: str = "4h"
+) -> pd.DataFrame:
+    """Compute the fixed factor map independently inside each asset."""
+    if interval not in LOOKBACKS:
+        raise ValueError(f"unsupported factor interval: {interval}")
+    required = {"asset", "close", "volume"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"factor frame missing columns: {sorted(missing)}")
 
-    # Price-based factors
-    frame["momentum_24"] = momentum(frame["close"], periods=m)
-    frame["reversal_12"] = reversal(frame["close"], periods=r)
-    frame["realized_vol_24"] = realized_volatility(frame["close"], periods=v)
-    frame["volume_surprise_24"] = volume_surprise(frame["volume"], periods=vol)
-    frame["amihud_24"] = amihud_illiquidity(frame["close"], frame["volume"], periods=vol)
-
-    # Funding-based factor
-    if "funding_rate" in frame.columns:
-        funding_mean = frame["funding_rate"].rolling(24, min_periods=1).mean()
-        funding_std = frame["funding_rate"].rolling(24, min_periods=1).std()
-        frame["funding_zscore"] = (frame["funding_rate"] - funding_mean) / funding_std.replace(
+    lookups = LOOKBACKS[interval]
+    output: list[pd.DataFrame] = []
+    sort_columns = ["available_time"] if "available_time" in frame else []
+    for _asset, asset_frame in frame.groupby("asset", sort=True):
+        work = asset_frame.sort_values(sort_columns).copy() if sort_columns else asset_frame.copy()
+        if "funding_rate" not in work:
+            work["funding_rate"] = np.nan
+        if "open_interest" not in work:
+            work["open_interest"] = np.nan
+        m = lookups["momentum"]
+        r = lookups["reversal"]
+        v = lookups["volatility"]
+        vol = lookups["volume"]
+        work["momentum_24"] = momentum(work["close"], periods=m)
+        work["reversal_12"] = reversal(work["close"], periods=r)
+        work["realized_vol_24"] = realized_volatility(work["close"], periods=v)
+        work["volume_surprise_24"] = volume_surprise(work["volume"], periods=vol)
+        work["amihud_24"] = amihud_illiquidity(work["close"], work["volume"], periods=vol)
+        funding_mean = work["funding_rate"].rolling(m, min_periods=1).mean()
+        funding_std = work["funding_rate"].rolling(m, min_periods=1).std()
+        work["funding_zscore"] = (work["funding_rate"] - funding_mean) / funding_std.replace(
             0.0, np.nan
         )
-    else:
-        frame["funding_zscore"] = 0.0
-
-    # OI-based factor
-    if "open_interest" in frame.columns:
-        frame["oi_change"] = frame["open_interest"].pct_change(24)
-    else:
-        frame["oi_change"] = 0.0
-
-    # Leverage crowding
-    frame["leverage_crowding"] = frame["oi_change"] * frame["funding_zscore"]
-
-    return frame
-
-
-@dataclass
-class DualHorizonScreeningResult:
-    """Result of dual-horizon factor screening."""
-
-    engineering_status: str  # "passed" or "failed"
-    candidate_factor_ids: tuple[str, ...] = ()
-    factor_evaluations: list[dict[str, Any]] = field(default_factory=list)
-    artifact_path: Path | None = None
-
-
-def run_dual_horizon_screening(
-    frame: pd.DataFrame,
-    *,
-    config: dict[str, Any] | None = None,
-) -> DualHorizonScreeningResult:
-    """Run dual-horizon factor screening on the development window only.
-
-    A zero-candidate run is completed (status "passed"), not failed.
-    """
-    # Determine which factors have sufficient non-NaN values
-    factor_columns = [
-        "momentum_24",
-        "reversal_12",
-        "realized_vol_24",
-        "volume_surprise_24",
-        "amihud_24",
-        "funding_zscore",
-        "oi_change",
-        "leverage_crowding",
-    ]
-
-    available = [col for col in factor_columns if col in frame.columns]
-    candidate_ids: list[str] = []
-
-    for col in available:
-        series = frame[col].dropna()
-        if len(series) < 30:
-            continue
-        # Simple check: non-zero variance
-        if series.std() > 0:
-            candidate_ids.append(col)
-
-    return DualHorizonScreeningResult(
-        engineering_status="passed",
-        candidate_factor_ids=tuple(candidate_ids),
+        work["oi_change"] = work["open_interest"].pct_change(m, fill_method=None)
+        work["leverage_crowding"] = work["oi_change"] * work["funding_zscore"]
+        output.append(work)
+    if not output:
+        return frame.copy()
+    return (
+        pd.concat(output, ignore_index=True)
+        .sort_values(["asset", *sort_columns])
+        .reset_index(drop=True)
     )
+
+
+def _availability_delay_minutes(value: object) -> int:
+    match = re.search(r"DELAY_(\d+)M", str(value).upper())
+    return int(match.group(1)) if match else 0
+
+
+def _interval_timedelta(interval: str) -> pd.Timedelta:
+    return pd.Timedelta(hours=4 if interval == "4h" else 1)

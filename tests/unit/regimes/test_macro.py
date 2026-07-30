@@ -84,6 +84,17 @@ class TestClassifyMacroHistory:
         # Subsequent thresholds use expanding window
         assert evidence.threshold_history[1]["fit_through_idx"] == 250
 
+    def test_final_partial_block_reports_only_strictly_prior_thresholds(self):
+        frame = _make_synthetic_frame(475)
+        evidence = classify_macro_history(frame, initial_train=200, refit_every=50)
+
+        assert evidence.threshold_history[-1]["fit_through_idx"] == 450
+        assert evidence.current.thresholds_fitted_through < evidence.current.decision_time
+        assert all(
+            decision.thresholds_fitted_through < decision.decision_time
+            for decision in evidence.decisions
+        )
+
     def test_transitions_detected(self):
         frame = _make_synthetic_frame(500)
         evidence = classify_macro_history(frame, initial_train=200, refit_every=50)
@@ -153,6 +164,8 @@ class TestWriteMacroEvidence:
         assert "label" in data["current"]
         assert "transitions" in data
         assert "state_summaries" in data
+        assert "decisions" in data
+        assert "threshold_history" in data
 
     def test_markdown_has_current_state(self, tmp_path):
         frame = _make_synthetic_frame(500)
@@ -162,3 +175,20 @@ class TestWriteMacroEvidence:
         assert "Macro Regime Evidence" in content
         assert evidence.current.label in content
         assert "State Summaries" in content
+        assert "Reason codes" in content
+        assert "Threshold History" in content
+        assert "Transitions" in content
+        assert "Trailing illiquidity" in content
+
+    def test_existing_evidence_cannot_be_rewritten(self, tmp_path):
+        frame = _make_synthetic_frame(500)
+        evidence = classify_macro_history(frame, initial_train=200, refit_every=50)
+        artifact_dir = tmp_path / "evidence"
+        json_path, md_path = write_macro_evidence(evidence, artifact_dir)
+        original_json = json_path.read_bytes()
+        original_markdown = md_path.read_bytes()
+
+        with pytest.raises(FileExistsError, match="already exists"):
+            write_macro_evidence(evidence, artifact_dir)
+        assert json_path.read_bytes() == original_json
+        assert md_path.read_bytes() == original_markdown

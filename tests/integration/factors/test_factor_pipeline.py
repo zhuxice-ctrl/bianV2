@@ -86,6 +86,15 @@ def test_factor_pipeline_e2e(tmp_path: Path) -> None:
     # Artifacts should be persisted
     assert result.artifact_path is not None
     assert result.artifact_path.exists()
+    development_path = config.artifact_dir / f"{result.run_id}.development.json"
+    assert development_path.exists()
+    assert development_path != result.artifact_path
+    import json
+
+    development_payload = json.loads(development_path.read_text(encoding="utf-8"))
+    lifecycle_payload = json.loads(result.artifact_path.read_text(encoding="utf-8"))
+    assert development_payload["lifecycle_states"] == {}
+    assert lifecycle_payload["lifecycle_states"] == {"price.momentum": "observed"}
 
     # Completed evidence automatically records the factor as OBSERVED.
     assert registry.state("price.momentum", "1.0.0") == FactorState.OBSERVED
