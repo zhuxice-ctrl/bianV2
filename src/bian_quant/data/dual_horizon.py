@@ -224,7 +224,7 @@ def _quality_report(
     metrics_right_closed = False
     if source.dataset == SourceDataset.METRICS_OI and source.granularity.value == "daily":
         right_closed = (frame["event_time"] > source.period_start) & (
-            frame["event_time"] <= natural_end
+            frame["event_time"] <= natural_end + timedelta(seconds=1)
         )
         if int(right_closed.sum()) > int(left_closed.sum()):
             source_mask = right_closed

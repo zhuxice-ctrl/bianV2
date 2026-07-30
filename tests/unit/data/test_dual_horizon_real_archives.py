@@ -42,6 +42,37 @@ def test_shifted_daily_metrics_grid_accepts_next_midnight_endpoint() -> None:
     assert report.findings == ()
 
 
+def test_shifted_daily_metrics_grid_accepts_one_second_endpoint_drift() -> None:
+    config = DualHorizonAcquisition.from_yaml(CONFIG)
+    source = next(
+        item
+        for item in build_source_plan(config)
+        if item.identity_key == "metrics_oi|BTCUSDT|native|daily|2025-06-14T00:00:00+00:00"
+    )
+    times = pd.date_range(
+        source.period_start + timedelta(minutes=5),
+        periods=288,
+        freq="5min",
+    )
+    times = times.to_series(index=range(len(times)))
+    times.iloc[-1] += timedelta(seconds=1)
+    frame = pd.DataFrame(
+        {
+            "asset": "BTCUSDT",
+            "event_time": times,
+            "available_time": times + timedelta(minutes=5),
+            "sum_open_interest": 100.0,
+            "sum_open_interest_value": 200.0,
+        }
+    )
+
+    report = _quality_report(source, frame, config)
+
+    assert report.observed_rows == 288
+    assert report.expected_rows == 288
+    assert report.findings == ()
+
+
 def test_cutoff_day_ignores_expected_archive_tail_after_cutoff() -> None:
     config = DualHorizonAcquisition.from_yaml(CONFIG)
     source = next(
