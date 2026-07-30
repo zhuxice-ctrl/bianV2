@@ -283,8 +283,13 @@ def write_canonical_partition(frame: pd.DataFrame, path: Path) -> str:
     content_hash = dataframe_content_hash(frame, sort_by=["asset", "event_time"])
 
     if path.exists():
-        # Idempotent: same content hash means the file is already correct
-        return content_hash
+        existing = pd.read_parquet(path)
+        existing_hash = dataframe_content_hash(existing, sort_by=["asset", "event_time"])
+        if existing_hash != content_hash:
+            raise ValueError(
+                "CANONICAL_PARTITION_CONFLICT: existing partition has different content"
+            )
+        return existing_hash
 
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(path, engine="pyarrow", compression="zstd", index=False)

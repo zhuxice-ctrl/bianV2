@@ -64,15 +64,9 @@ def download_verified(
     Retries 429/5xx/timeout/URL errors at most *attempts* times.
     Never leaves a partial target or sidecar after a failed attempt.
     """
-    if identity is not None:
-        try:
-            return reuse_verified_artifact(path, expected=identity)
-        except ValueError as exc:
-            if "RAW_IDENTITY_MISMATCH" in str(exc):
-                raise
-            # RAW_ARTIFACT_INCOMPLETE — proceed to download
-        except FileExistsError:
-            raise
+    manifest_path = path.with_suffix(f"{path.suffix}.manifest.json")
+    if path.exists() or manifest_path.exists():
+        return reuse_verified_artifact(path, expected=identity)
 
     reader = byte_reader or _fetch_bytes
     last_error: Exception | None = None

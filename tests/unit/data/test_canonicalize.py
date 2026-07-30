@@ -138,6 +138,10 @@ def test_write_canonical_partition_refuses_overwrite_different(tmp_path: Path) -
     # Writing the same content again should be idempotent
     result = write_canonical_partition(frame, path)
     assert len(result) == 64
+    changed = frame.copy()
+    changed.loc[0, "close"] += 1.0
+    with pytest.raises(ValueError, match="CANONICAL_PARTITION_CONFLICT"):
+        write_canonical_partition(changed, path)
 
 
 def test_ohlcv_schema_change_rejected(tmp_path: Path) -> None:

@@ -256,7 +256,7 @@ def _make_monthly_ohlcv(
         granularity=SourceGranularity.MONTHLY,
         period_start=period_start,
         url=archive_url(asset, interval, year, month),
-        relative_path=raw_root / "ohlcv" / asset / interval / f"{stamp}.zip",
+        relative_path=Path("ohlcv") / asset / interval / f"{stamp}.zip",
     )
 
 
@@ -271,7 +271,7 @@ def _make_daily_ohlcv(asset: str, interval: str, day: datetime, raw_root: Path) 
         granularity=SourceGranularity.DAILY,
         period_start=day,
         url=daily_archive_url(asset, interval, day.date()),
-        relative_path=raw_root / "ohlcv" / asset / interval / f"{stamp}.zip",
+        relative_path=Path("ohlcv") / asset / interval / f"{stamp}.zip",
     )
 
 
@@ -287,7 +287,7 @@ def _make_monthly_funding(asset: str, year: int, month: int, raw_root: Path) -> 
         granularity=SourceGranularity.MONTHLY,
         period_start=period_start,
         url=funding_url(asset, year, month),
-        relative_path=raw_root / "funding" / asset / "native" / f"{stamp}.zip",
+        relative_path=Path("funding") / asset / "native" / f"{stamp}.zip",
     )
 
 
@@ -302,7 +302,7 @@ def _make_daily_funding(asset: str, day: datetime, raw_root: Path) -> SourceObje
         granularity=SourceGranularity.DAILY,
         period_start=day,
         url=daily_funding_url(asset, day),
-        relative_path=raw_root / "funding" / asset / "native" / f"{stamp}.zip",
+        relative_path=Path("funding") / asset / "native" / f"{stamp}.zip",
     )
 
 
@@ -317,7 +317,7 @@ def _make_daily_metrics(asset: str, day: datetime, raw_root: Path) -> SourceObje
         granularity=SourceGranularity.DAILY,
         period_start=day,
         url=metrics_url(asset, day),
-        relative_path=raw_root / "metrics_oi" / asset / "native" / f"{stamp}.zip",
+        relative_path=Path("metrics_oi") / asset / "native" / f"{stamp}.zip",
     )
 
 

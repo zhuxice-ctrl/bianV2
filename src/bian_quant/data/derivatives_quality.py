@@ -7,6 +7,7 @@ filled or zero-filled.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 import pandas as pd
@@ -131,6 +132,14 @@ def inspect_funding(
 
     # Expected rows from archived interval
     interval_hours = int(frame["funding_interval_hours"].iloc[0])
+    if interval_hours <= 0 or not frame["funding_interval_hours"].isin([1, 4, 8]).all():
+        findings.append(
+            QualityFinding(
+                code="FUNDING_INTERVAL_INVALID",
+                severity=QualitySeverity.BLOCKING,
+                message="funding interval must be one of 1, 4, or 8 hours",
+            )
+        )
     duration = period_end - period_start
     expected = max(1, round(duration.total_seconds() / 3600 / interval_hours))
 
@@ -179,13 +188,23 @@ def inspect_metrics(
         )
 
     # Check non-negative OI
-    bad_oi = (frame["sum_open_interest"] < 0).sum()
+    bad_oi = ((frame["sum_open_interest"] < 0) | (frame["sum_open_interest_value"] < 0)).sum()
     if bad_oi > 0:
         findings.append(
             QualityFinding(
                 code="METRICS_NEGATIVE_OI",
                 severity=QualitySeverity.BLOCKING,
                 message=f"{bad_oi} rows with negative sum_open_interest",
+            )
+        )
+
+    duplicate_count = frame.duplicated(["asset", "event_time"]).sum()
+    if duplicate_count > 0:
+        findings.append(
+            QualityFinding(
+                code="METRICS_DUPLICATE",
+                severity=QualitySeverity.BLOCKING,
+                message=f"{duplicate_count} duplicate metrics records found",
             )
         )
 
@@ -201,9 +220,9 @@ def inspect_metrics(
         )
 
     observed = len(frame)
-    # Hourly cadence expected for metrics
+    # Binance USD-M metrics archives have native five-minute cadence.
     duration = period_end - period_start
-    expected = max(1, int(duration.total_seconds() / 3600))
+    expected = max(1, math.ceil(duration.total_seconds() / 300))
     coverage = observed / expected if expected > 0 else 1.0
 
     excluded: tuple[str, ...] = ()

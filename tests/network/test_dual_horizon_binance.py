@@ -58,7 +58,7 @@ def test_fixed_binance_objects_verify_and_parse(tmp_path: Path) -> None:
 
     for source in selected:
         result = download_verified(
-            tmp_path / source.relative_path.name,
+            tmp_path / source.relative_path,
             url=source.url,
             identity=source.raw_identity,
             attempts=3,

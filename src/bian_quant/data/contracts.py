@@ -61,7 +61,12 @@ class DatasetManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_event_range(self) -> "DatasetManifest":
-        for value in (self.min_event_time, self.max_event_time):
+        for value in (
+            self.min_event_time,
+            self.max_event_time,
+            self.min_available_time,
+            self.max_available_time,
+        ):
             if value is not None and value.tzinfo is None:
                 raise ValueError("manifest timestamps must be timezone-aware")
         if (
@@ -72,6 +77,12 @@ class DatasetManifest(BaseModel):
             raise ValueError("min_event_time must not follow max_event_time")
         if self.snapshot_id in self.parent_snapshot_ids:
             raise ValueError("a snapshot cannot be its own parent")
+        if (
+            self.min_available_time is not None
+            and self.max_available_time is not None
+            and self.min_available_time > self.max_available_time
+        ):
+            raise ValueError("min_available_time must not follow max_available_time")
         return self
 
 

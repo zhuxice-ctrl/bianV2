@@ -27,6 +27,15 @@ def test_4h_ohlcv_is_not_requested_twice() -> None:
     assert len(keys) == len(set(keys))
 
 
+def test_all_raw_targets_are_unique_and_relative_to_raw_root() -> None:
+    config = DualHorizonAcquisition.from_yaml(CONFIG)
+    plan = build_source_plan(config)
+    paths = [item.relative_path for item in plan]
+    assert len(paths) == len(set(paths)) == 3192
+    assert all(not path.is_absolute() for path in paths)
+    assert all(path.parts[0] in {"ohlcv", "funding", "metrics_oi"} for path in paths)
+
+
 def test_partial_month_uses_daily_tail_only() -> None:
     config = DualHorizonAcquisition.from_yaml(CONFIG)
     july = [

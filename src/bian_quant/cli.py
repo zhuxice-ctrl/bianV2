@@ -148,6 +148,7 @@ def prepare_dual_horizon(
     import json as _json
 
     from bian_quant.data.acquisition import DualHorizonAcquisition
+    from bian_quant.data.dual_horizon import BinanceDownloader
     from bian_quant.data.dual_horizon import prepare_dual_horizon as _prepare
 
     cfg = DualHorizonAcquisition.from_yaml(config)
@@ -157,14 +158,19 @@ def prepare_dual_horizon(
         typer.echo(_json.dumps(dry_result, indent=2, default=str))
         return
 
-    _ = download
-    result = _prepare(cfg, code_sha=code_sha)
+    result = _prepare(
+        cfg,
+        code_sha=code_sha,
+        downloader=BinanceDownloader() if download else None,
+    )
 
     typer.echo(result.run_id)
     typer.echo(str(result.acquisition_artifact))
     typer.echo(str(result.quality_artifact))
     for snap in result.snapshots:
         typer.echo(snap.snapshot_id)
+    if result.status != "passed":
+        raise typer.Exit(code=1)
 
 
 @app.command("analyze-dual-horizon")
