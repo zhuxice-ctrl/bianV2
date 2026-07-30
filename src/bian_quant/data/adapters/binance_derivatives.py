@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import zipfile
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +37,8 @@ def funding_url(asset: str, year: int, month: int) -> str:
     return f"{FUNDING_BASE}/{asset}/{filename}"
 
 
-def daily_funding_url(asset: str, day) -> str:
-    stamp = day.strftime("%Y-%m-%d") if isinstance(day, datetime) else day.isoformat()
+def daily_funding_url(asset: str, day: date) -> str:
+    stamp = day.isoformat()
     filename = f"{asset}-fundingRate-{stamp}.zip"
     return f"{DAILY_FUNDING_BASE}/{asset}/{filename}"
 
@@ -125,18 +125,14 @@ def parse_metrics(
     return result
 
 
-def download_funding(
-    path: Path, *, asset: str, year: int, month: int
-) -> AcquisitionObjectResult:
+def download_funding(path: Path, *, asset: str, year: int, month: int) -> AcquisitionObjectResult:
     identity = RawSourceIdentity(
         asset=asset, dataset="funding", interval="native", source_period=f"{year:04d}-{month:02d}"
     )
     return download_verified(path, url=funding_url(asset, year, month), identity=identity)
 
 
-def download_metrics(
-    path: Path, *, asset: str, date: datetime
-) -> AcquisitionObjectResult:
+def download_metrics(path: Path, *, asset: str, date: datetime) -> AcquisitionObjectResult:
     identity = RawSourceIdentity(
         asset=asset,
         dataset="metrics_oi",

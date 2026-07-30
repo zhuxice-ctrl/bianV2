@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bian_quant.reporting.artifacts import ArtifactWriter, RunDirectory
+from bian_quant.reporting.artifacts import ArtifactWriter
 
 
 class TestArtifactWriter:

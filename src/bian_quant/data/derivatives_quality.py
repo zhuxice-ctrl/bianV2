@@ -45,10 +45,7 @@ def inspect_coverage(
     For metrics_oi, a below-threshold month is *excluded* rather than blocking.
     For ohlcv and funding, below-threshold is blocking.
     """
-    if expected <= 0:
-        coverage = 1.0
-    else:
-        coverage = observed / expected
+    coverage = 1.0 if expected <= 0 else observed / expected
 
     findings: list[QualityFinding] = []
     excluded: tuple[str, ...] = ()
@@ -72,8 +69,7 @@ def inspect_coverage(
                     code="DATA_COVERAGE_BLOCKED",
                     severity=QualitySeverity.BLOCKING,
                     message=(
-                        f"{dataset} coverage {coverage:.4f} below {threshold} "
-                        f"for {source_period}"
+                        f"{dataset} coverage {coverage:.4f} below {threshold} for {source_period}"
                     ),
                 )
             )

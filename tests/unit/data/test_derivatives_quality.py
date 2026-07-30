@@ -5,14 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
-import pytest
 
 from bian_quant.data.derivatives_quality import (
-    CoverageReport,
     inspect_coverage,
     inspect_funding,
     inspect_metrics,
-    inspect_ohlcv_coverage,
 )
 
 
@@ -85,13 +82,15 @@ def funding_fixture(interval_hours: int = 8, rows: int = 3) -> pd.DataFrame:
     records = []
     for i in range(rows):
         t = base + timedelta(hours=interval_hours * i)
-        records.append({
-            "asset": "BTCUSDT",
-            "event_time": t,
-            "available_time": t,
-            "funding_interval_hours": interval_hours,
-            "funding_rate": 0.0001,
-        })
+        records.append(
+            {
+                "asset": "BTCUSDT",
+                "event_time": t,
+                "available_time": t,
+                "funding_interval_hours": interval_hours,
+                "funding_rate": 0.0001,
+            }
+        )
     return pd.DataFrame(records)
 
 
@@ -100,11 +99,13 @@ def metrics_fixture(negative_oi: bool = False) -> pd.DataFrame:
     records = []
     for i in range(3):
         t = base + timedelta(hours=i)
-        records.append({
-            "asset": "BTCUSDT",
-            "event_time": t,
-            "available_time": t + timedelta(minutes=5),
-            "sum_open_interest": -1.0 if negative_oi else 100000.0,
-            "sum_open_interest_value": 5000000000.0,
-        })
+        records.append(
+            {
+                "asset": "BTCUSDT",
+                "event_time": t,
+                "available_time": t + timedelta(minutes=5),
+                "sum_open_interest": -1.0 if negative_oi else 100000.0,
+                "sum_open_interest_value": 5000000000.0,
+            }
+        )
     return pd.DataFrame(records)

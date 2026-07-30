@@ -11,7 +11,6 @@ import pandas as pd
 import pytest
 
 from bian_quant.regimes.macro import (
-    ComparableEpisodeSummary,
     MacroRegimeEvidence,
     MacroState,
     classify_macro_history,
@@ -27,24 +26,21 @@ def _make_synthetic_frame(n: int = 500, seed: int = 42) -> pd.DataFrame:
     close = [100.0]
     volume = [1000.0]
     for i in range(1, n):
-        if i % 100 < 50:
-            # Trending period
-            ret = rng.normal(0.002, 0.01)
-        else:
-            # Ranging period
-            ret = rng.normal(0.0, 0.005)
+        ret = rng.normal(0.002, 0.01) if i % 100 < 50 else rng.normal(0.0, 0.005)
         close.append(close[-1] * (1 + ret))
         volume.append(rng.lognormal(6, 0.5))
 
     dates = pd.date_range("2020-01-01", periods=n, freq="4h", tz="UTC")
-    return pd.DataFrame({
-        "event_time": dates,
-        "open": close,
-        "high": [c * 1.001 for c in close],
-        "low": [c * 0.999 for c in close],
-        "close": close,
-        "volume": volume,
-    })
+    return pd.DataFrame(
+        {
+            "event_time": dates,
+            "open": close,
+            "high": [c * 1.001 for c in close],
+            "low": [c * 0.999 for c in close],
+            "close": close,
+            "volume": volume,
+        }
+    )
 
 
 class TestClassifyMacroHistory:
@@ -70,10 +66,12 @@ class TestClassifyMacroHistory:
         """Appending bars must not change existing labels."""
         frame = _make_synthetic_frame(500)
         evidence_full = classify_macro_history(frame, initial_train=200, refit_every=50)
-        evidence_prefix = classify_macro_history(frame.iloc[:450], initial_train=200, refit_every=50)
+        evidence_prefix = classify_macro_history(
+            frame.iloc[:450], initial_train=200, refit_every=50
+        )
         # Labels for the first 250 bars should be identical
         prefix_labels = evidence_prefix.labels.values
-        full_labels = evidence_full.labels.values[:len(prefix_labels)]
+        full_labels = evidence_full.labels.values[: len(prefix_labels)]
         np.testing.assert_array_equal(prefix_labels, full_labels)
 
     def test_thresholds_fitted_causally(self):
@@ -129,6 +127,7 @@ class TestSummarizeComparableEpisodes:
         labeled = pd.DataFrame({"label": ["trend_low_vol"] * 50})
         result = summarize_comparable_episodes(labeled, minimum_rows=30)
         from bian_quant.regimes.classifier import REGIME_LABELS
+
         for label in REGIME_LABELS:
             assert label in result
 
@@ -148,6 +147,7 @@ class TestWriteMacroEvidence:
         evidence = classify_macro_history(frame, initial_train=200, refit_every=50)
         json_path, _ = write_macro_evidence(evidence, tmp_path / "evidence")
         import json
+
         data = json.loads(json_path.read_text())
         assert "current" in data
         assert "label" in data["current"]
@@ -158,7 +158,7 @@ class TestWriteMacroEvidence:
         frame = _make_synthetic_frame(500)
         evidence = classify_macro_history(frame, initial_train=200, refit_every=50)
         _, md_path = write_macro_evidence(evidence, tmp_path / "evidence")
-        content = md_path.read_text()
+        content = md_path.read_text(encoding="utf-8")
         assert "Macro Regime Evidence" in content
         assert evidence.current.label in content
         assert "State Summaries" in content

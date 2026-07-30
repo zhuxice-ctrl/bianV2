@@ -38,10 +38,22 @@ def test_ohlcv_frame_has_required_columns() -> None:
         ingested_at=datetime(2026, 7, 30, tzinfo=UTC),
     )
     required = {
-        "asset", "event_time", "available_time", "ingested_at", "source",
-        "open", "high", "low", "close", "volume",
-        "source_open_time", "source_close_time",
-        "quote_volume", "trades", "taker_buy_base", "taker_buy_quote",
+        "asset",
+        "event_time",
+        "available_time",
+        "ingested_at",
+        "source",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "source_open_time",
+        "source_close_time",
+        "quote_volume",
+        "trades",
+        "taker_buy_base",
+        "taker_buy_quote",
     }
     assert required <= set(frame.columns)
 
@@ -63,9 +75,7 @@ def test_metrics_delay_is_explicit() -> None:
         ingested_at=datetime(2026, 7, 30, tzinfo=UTC),
         publication_delay=timedelta(minutes=10),
     )
-    assert (frame["available_time"] - frame["event_time"]).unique() == [
-        pd.Timedelta(minutes=10)
-    ]
+    assert (frame["available_time"] - frame["event_time"]).unique() == [pd.Timedelta(minutes=10)]
     assert set(frame["availability_assumption"]) == {"BINANCE_METRICS_DELAY_10M"}
 
 
@@ -135,10 +145,7 @@ def test_ohlcv_schema_change_rejected(tmp_path: Path) -> None:
     import io
     import zipfile
 
-    csv_bytes = (
-        b"wrong_header,open\n"
-        b"1753756800000,50000.0\n"
-    )
+    csv_bytes = b"wrong_header,open\n1753756800000,50000.0\n"
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("BTCUSDT-1h-2026-07-29.csv", csv_bytes)

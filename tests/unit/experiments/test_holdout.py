@@ -179,5 +179,7 @@ class TestPartitionDualHorizonWindows:
     def test_no_overlap_between_windows(self) -> None:
         index = pd.date_range("2025-12-30", "2026-02-01", freq="4h", tz="UTC")
         windows = partition_dual_horizon_windows(index, locked_factor_protocol())
-        all_indices = list(windows.development) + list(windows.alignment_buffer) + list(windows.holdout)
+        all_indices = (
+            list(windows.development) + list(windows.alignment_buffer) + list(windows.holdout)
+        )
         assert len(all_indices) == len(set(all_indices))

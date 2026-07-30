@@ -5,12 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from bian_quant.data.acquisition import DualHorizonAcquisition
 from bian_quant.data.dual_horizon import (
-    FixtureDownloader,
     DualHorizonStatus,
+    FixtureDownloader,
     prepare_dual_horizon,
 )
 

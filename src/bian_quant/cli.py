@@ -153,14 +153,12 @@ def prepare_dual_horizon(
     cfg = DualHorizonAcquisition.from_yaml(config)
 
     if dry_run:
-        result = _prepare(cfg, code_sha=code_sha, dry_run=True)
-        typer.echo(_json.dumps(result, indent=2, default=str))
+        dry_result = _prepare(cfg, code_sha=code_sha, dry_run=True)
+        typer.echo(_json.dumps(dry_result, indent=2, default=str))
         return
 
-    if download:
-        result = _prepare(cfg, code_sha=code_sha)
-    else:
-        result = _prepare(cfg, code_sha=code_sha)
+    _ = download
+    result = _prepare(cfg, code_sha=code_sha)
 
     typer.echo(result.run_id)
     typer.echo(str(result.acquisition_artifact))
@@ -175,7 +173,6 @@ def analyze_dual_horizon(
     code_sha: Annotated[str, typer.Option("--code-sha")],
 ) -> None:
     """Analyze cataloged dual-horizon snapshots and produce decision packet."""
-    import json as _json
 
     from bian_quant.data.acquisition import DualHorizonAcquisition
     from bian_quant.reporting.decision import (
@@ -192,7 +189,7 @@ def analyze_dual_horizon(
 
     if run_dir.exists():
         typer.echo(f"Run directory already exists: {run_dir}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     run_dir.mkdir(parents=True)
 
@@ -235,4 +232,4 @@ def evaluate_holdout(
         typer.echo("Holdout evaluation requires cataloged holdout snapshots.")
     except PermissionError as exc:
         typer.echo(f"Denied: {exc}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None

@@ -73,28 +73,39 @@ def dual_horizon_factor_specs(primary_interval: str = "4h") -> tuple[FactorSpec,
             factor_id="momentum_24",
             formula=f"close / close.shift({m}) - 1",
             direction="positive",
-            hypothesis=f"persistent medium-horizon price movement over {m} bars may continue into the next bar",
+            hypothesis=(
+                f"persistent medium-horizon price movement over {m} bars "
+                "may continue into the next bar"
+            ),
             required_columns=["close"],
         ),
         build(
             factor_id="reversal_12",
             formula=f"-(close / close.shift({r}) - 1)",
             direction="positive",
-            hypothesis=f"short-horizon price dislocations over {r} bars may mean-revert during the next bar",
+            hypothesis=(
+                f"short-horizon price dislocations over {r} bars "
+                "may mean-revert during the next bar"
+            ),
             required_columns=["close"],
         ),
         build(
             factor_id="realized_vol_24",
             formula=f"std(log_return, {v})",
             direction="two_sided",
-            hypothesis=f"recent realized volatility over {v} bars may condition the magnitude of the next return",
+            hypothesis=(
+                f"recent realized volatility over {v} bars may condition "
+                "the magnitude of the next return"
+            ),
             required_columns=["close"],
         ),
         build(
             factor_id="volume_surprise_24",
             formula=f"zscore(volume, {vol})",
             direction="two_sided",
-            hypothesis=f"unusual trading activity over {vol} bars may reveal short-lived information flow",
+            hypothesis=(
+                f"unusual trading activity over {vol} bars may reveal short-lived information flow"
+            ),
             required_columns=["volume"],
         ),
         build(
@@ -108,7 +119,9 @@ def dual_horizon_factor_specs(primary_interval: str = "4h") -> tuple[FactorSpec,
             factor_id="funding_zscore",
             formula="zscore(funding_rate, 24)",
             direction="two_sided",
-            hypothesis="extreme funding rates may signal crowded positioning and subsequent reversal",
+            hypothesis=(
+                "extreme funding rates may signal crowded positioning and subsequent reversal"
+            ),
             required_columns=["funding_rate"],
         ),
         build(
@@ -155,7 +168,9 @@ def build_derivatives_factor_frame(
         frame = frame.sort_values("available_time")
         frame = pd.merge_asof(
             frame,
-            funding_sorted[["funding_rate", funding_key]].rename(columns={funding_key: "funding_available_time"}),
+            funding_sorted[["funding_rate", funding_key]].rename(
+                columns={funding_key: "funding_available_time"}
+            ),
             left_on="available_time",
             right_on="funding_available_time",
             direction="backward",
@@ -202,7 +217,9 @@ def build_derivatives_factor_frame(
     if "funding_rate" in frame.columns:
         funding_mean = frame["funding_rate"].rolling(24, min_periods=1).mean()
         funding_std = frame["funding_rate"].rolling(24, min_periods=1).std()
-        frame["funding_zscore"] = (frame["funding_rate"] - funding_mean) / funding_std.replace(0.0, np.nan)
+        frame["funding_zscore"] = (frame["funding_rate"] - funding_mean) / funding_std.replace(
+            0.0, np.nan
+        )
     else:
         frame["funding_zscore"] = 0.0
 

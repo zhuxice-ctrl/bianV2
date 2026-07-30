@@ -5,48 +5,44 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol, overload
 
 import pandas as pd
 
 from bian_quant.data.acquisition import (
-    DualHorizonAcquisition,
     DiskBudget,
     DiskStatus,
+    DualHorizonAcquisition,
     SourceDataset,
-    SourceGranularity,
+    SourceObject,
     build_source_plan,
     check_disk_budget,
     source_plan_payload,
 )
 from bian_quant.data.adapters.binance_archive import download_verified
+from bian_quant.data.adapters.raw import (
+    AcquisitionObjectResult,
+    AcquisitionObjectStatus,
+    RawSourceManifest,
+)
 from bian_quant.data.canonicalize import (
     canonicalize_funding_zip,
     canonicalize_metrics_zip,
     canonicalize_ohlcv_zip,
-    write_canonical_partition,
 )
 from bian_quant.data.catalog import DatasetCatalog
 from bian_quant.data.contracts import DatasetManifest
-from bian_quant.data.derivatives_quality import (
-    inspect_funding,
-    inspect_metrics,
-    inspect_ohlcv_coverage,
-)
 from bian_quant.data.snapshots import (
-    SnapshotSpec,
     build_delay_views,
     build_macro_snapshots,
     build_micro_snapshots,
-    publish_snapshot,
 )
-from bian_quant.experiments.models import LockedHoldout, RunManifest, RunStatus
+from bian_quant.experiments.models import RunManifest, RunStatus
 from bian_quant.experiments.registry import ExperimentRegistry
-from bian_quant.data.contracts import DatasetLayer
 
 
 class DualHorizonStatus(StrEnum):
@@ -69,14 +65,17 @@ class DualHorizonResult:
 
 
 class Downloader(Protocol):
-    def acquire(self, source: "SourceObject", config: DualHorizonAcquisition) -> "AcquisitionObjectResult": ...
+    def acquire(
+        self, source: SourceObject, config: DualHorizonAcquisition
+    ) -> AcquisitionObjectResult: ...
 
 
 class BinanceDownloader:
     """Default downloader using Binance public archives."""
 
-    def acquire(self, source, config: DualHorizonAcquisition):
-        from bian_quant.data.adapters.raw import AcquisitionObjectResult, AcquisitionObjectStatus
+    def acquire(
+        self, source: SourceObject, config: DualHorizonAcquisition
+    ) -> AcquisitionObjectResult:
         target = config.raw_root / source.relative_path.name
         return download_verified(
             target,
@@ -92,12 +91,9 @@ class FixtureDownloader:
     def __init__(self, fixtures_dir: Path) -> None:
         self._fixtures = fixtures_dir
 
-    def acquire(self, source, config: DualHorizonAcquisition):
-        from bian_quant.data.adapters.raw import (
-            AcquisitionObjectResult,
-            AcquisitionObjectStatus,
-            RawSourceManifest,
-        )
+    def acquire(
+        self, source: SourceObject, config: DualHorizonAcquisition
+    ) -> AcquisitionObjectResult:
         fixture_map = {
             SourceDataset.OHLCV: self._fixtures / "ohlcv-mini.zip",
             SourceDataset.FUNDING: self._fixtures / "funding-mini.zip",
@@ -126,7 +122,7 @@ class FixtureDownloader:
         )
 
 
-def _source_plan_hash(plan) -> str:
+def _source_plan_hash(plan: tuple[SourceObject, ...]) -> str:
     payload = json.dumps([obj.identity_key for obj in plan], sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -137,13 +133,33 @@ def _directory_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+@overload
+def prepare_dual_horizon(
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    downloader: Downloader | None = None,
+    dry_run: Literal[True],
+) -> dict[str, object]: ...
+
+
+@overload
+def prepare_dual_horizon(
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    downloader: Downloader | None = None,
+    dry_run: Literal[False] = False,
+) -> DualHorizonResult: ...
+
+
 def prepare_dual_horizon(
     config: DualHorizonAcquisition,
     *,
     code_sha: str,
     downloader: Downloader | None = None,
     dry_run: bool = False,
-) -> DualHorizonResult | dict:
+) -> DualHorizonResult | dict[str, object]:
     """Execute the dual-horizon acquisition and snapshot build pipeline.
 
     If *dry_run* is True, returns a JSON-safe dict without network access.
@@ -205,24 +221,28 @@ def prepare_dual_horizon(
     baseline_free = shutil.disk_usage(config.raw_root).free
     peak_reduction = 0
 
-    acquisition_results = []
-    blocked_periods = []
+    acquisition_results: list[dict[str, object]] = []
+    blocked_periods: list[str] = []
 
     for source in plan:
         try:
             result = downloader.acquire(source, config)
-            acquisition_results.append({
-                "identity_key": source.identity_key,
-                "status": result.status,
-                "content_sha256": result.manifest.content_sha256,
-                "byte_count": result.manifest.byte_count,
-            })
+            acquisition_results.append(
+                {
+                    "identity_key": source.identity_key,
+                    "status": result.status,
+                    "content_sha256": result.manifest.content_sha256,
+                    "byte_count": result.manifest.byte_count,
+                }
+            )
         except Exception as exc:
-            acquisition_results.append({
-                "identity_key": source.identity_key,
-                "status": "failed",
-                "error": str(exc),
-            })
+            acquisition_results.append(
+                {
+                    "identity_key": source.identity_key,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
             blocked_periods.append(source.raw_identity.source_period)
 
         # Track peak working bytes
@@ -235,9 +255,9 @@ def prepare_dual_horizon(
     snapshots: list[DatasetManifest] = []
 
     # Parse OHLCV
-    ohlcv_frames = []
-    funding_frames = []
-    metrics_frames = []
+    ohlcv_frames: list[pd.DataFrame] = []
+    funding_frames: list[pd.DataFrame] = []
+    metrics_frames: list[pd.DataFrame] = []
 
     for source in plan:
         raw_path = config.raw_root / source.relative_path.name
@@ -246,19 +266,25 @@ def prepare_dual_horizon(
         try:
             if source.dataset == SourceDataset.OHLCV:
                 frame = canonicalize_ohlcv_zip(
-                    raw_path, asset=source.asset, interval=source.interval,
+                    raw_path,
+                    asset=source.asset,
+                    interval=source.interval,
                     ingested_at=datetime.now(UTC),
                 )
                 ohlcv_frames.append(frame)
             elif source.dataset == SourceDataset.FUNDING:
                 frame = canonicalize_funding_zip(
-                    raw_path, asset=source.asset, ingested_at=datetime.now(UTC),
+                    raw_path,
+                    asset=source.asset,
+                    ingested_at=datetime.now(UTC),
                 )
                 funding_frames.append(frame)
             elif source.dataset == SourceDataset.METRICS_OI:
                 from datetime import timedelta
+
                 frame = canonicalize_metrics_zip(
-                    raw_path, ingested_at=datetime.now(UTC),
+                    raw_path,
+                    ingested_at=datetime.now(UTC),
                     publication_delay=timedelta(minutes=5),
                 )
                 metrics_frames.append(frame)
@@ -270,7 +296,8 @@ def prepare_dual_horizon(
         ohlcv_combined = pd.concat(ohlcv_frames, ignore_index=True)
         macro_intervals = config.macro_intervals
         macro_snaps = build_macro_snapshots(
-            ohlcv_combined, None,
+            ohlcv_combined,
+            None,
             intervals=macro_intervals,
             root=config.research_root,
             catalog=catalog,
@@ -279,7 +306,9 @@ def prepare_dual_horizon(
 
         micro_intervals = config.micro_intervals
         micro_snaps = build_micro_snapshots(
-            ohlcv_combined, None, None,
+            ohlcv_combined,
+            None,
+            None,
             intervals=micro_intervals,
             root=config.research_root,
             catalog=catalog,
@@ -293,7 +322,7 @@ def prepare_dual_horizon(
             metrics_combined,
             delays=config.oi_delay_minutes,
             root=config.research_root,
-            parent_snapshot_ids=[s.snapshot_id for s in snapshots],
+            parent_snapshot_ids=tuple(s.snapshot_id for s in snapshots),
         )
 
     # Write artifacts
@@ -306,14 +335,16 @@ def prepare_dual_horizon(
         "results": acquisition_results,
         "blocked_periods": blocked_periods,
     }
-    acquisition_artifact.write_text(json.dumps(acquisition_data, indent=2, default=str))
+    acquisition_artifact.write_text(
+        json.dumps(acquisition_data, indent=2, default=str), encoding="utf-8"
+    )
 
     quality_data = {
         "run_id": run_manifest.run_id,
         "coverage_reports": [],
         "blocked_periods": blocked_periods,
     }
-    quality_artifact.write_text(json.dumps(quality_data, indent=2, default=str))
+    quality_artifact.write_text(json.dumps(quality_data, indent=2, default=str), encoding="utf-8")
 
     # Calculate persistent bytes
     persistent = (

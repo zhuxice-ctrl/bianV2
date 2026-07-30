@@ -16,9 +16,7 @@ from bian_quant.data.adapters.raw import (
 )
 
 
-def _source_manifest(
-    path: Path, *, payload: bytes, source_period: str
-) -> RawSourceManifest:
+def _source_manifest(path: Path, *, payload: bytes, source_period: str) -> RawSourceManifest:
     import hashlib
 
     return RawSourceManifest(

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pytest
 from pandas.testing import assert_series_equal
 
 from bian_quant.factors.dual_horizon import (
@@ -22,23 +21,27 @@ def bars_fixture() -> pd.DataFrame:
     n = 200
     dates = pd.date_range("2025-12-01", periods=n, freq="4h", tz="UTC")
     close = 100.0 * np.cumprod(1 + rng.normal(0, 0.01, n))
-    return pd.DataFrame({
-        "event_time": dates,
-        "available_time": dates + pd.Timedelta(minutes=1),
-        "close": close,
-        "volume": rng.lognormal(6, 0.5, n).astype(float),
-    })
+    return pd.DataFrame(
+        {
+            "event_time": dates,
+            "available_time": dates + pd.Timedelta(minutes=1),
+            "close": close,
+            "volume": rng.lognormal(6, 0.5, n).astype(float),
+        }
+    )
 
 
 def funding_fixture() -> pd.DataFrame:
     """Synthetic funding rates every 8h."""
     rng = np.random.default_rng(43)
     dates = pd.date_range("2025-12-01", periods=70, freq="8h", tz="UTC")
-    return pd.DataFrame({
-        "event_time": dates,
-        "available_time": dates + pd.Timedelta(minutes=1),
-        "funding_rate": rng.normal(0.0001, 0.0005, 70),
-    })
+    return pd.DataFrame(
+        {
+            "event_time": dates,
+            "available_time": dates + pd.Timedelta(minutes=1),
+            "funding_rate": rng.normal(0.0001, 0.0005, 70),
+        }
+    )
 
 
 def oi_fixture() -> pd.DataFrame:
@@ -47,25 +50,29 @@ def oi_fixture() -> pd.DataFrame:
     n = 200
     dates = pd.date_range("2025-12-01", periods=n, freq="4h", tz="UTC")
     oi = 1_000_000.0 * np.cumprod(1 + rng.normal(0, 0.02, n))
-    return pd.DataFrame({
-        "event_time": dates,
-        "available_time": dates + pd.Timedelta(minutes=1),
-        "open_interest": oi,
-    })
+    return pd.DataFrame(
+        {
+            "event_time": dates,
+            "available_time": dates + pd.Timedelta(minutes=1),
+            "open_interest": oi,
+        }
+    )
 
 
 def weak_signal_fixture() -> pd.DataFrame:
     """A frame where no factor has sufficient signal."""
     n = 50
     dates = pd.date_range("2025-12-01", periods=n, freq="4h", tz="UTC")
-    return pd.DataFrame({
-        "event_time": dates,
-        "available_time": dates + pd.Timedelta(minutes=1),
-        "close": [100.0] * n,
-        "volume": [1000.0] * n,
-        "funding_rate": [0.0] * n,
-        "open_interest": [1_000_000.0] * n,
-    })
+    return pd.DataFrame(
+        {
+            "event_time": dates,
+            "available_time": dates + pd.Timedelta(minutes=1),
+            "close": [100.0] * n,
+            "volume": [1000.0] * n,
+            "funding_rate": [0.0] * n,
+            "open_interest": [1_000_000.0] * n,
+        }
+    )
 
 
 def screening_config(tmp_path: Path) -> dict:

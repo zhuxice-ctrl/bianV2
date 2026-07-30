@@ -22,12 +22,8 @@ def test_locked_windows_are_explicit_and_timezone_aware() -> None:
     assert config.as_of == datetime(2026, 7, 26, 19, 59, 59, 999000, tzinfo=UTC)
     assert config.oi_delay_minutes == (5, 10, 15)
     assert config.parent_snapshot_ids == ()
-    assert config.factor_protocol.development_end_exclusive == datetime(
-        2026, 1, 1, tzinfo=UTC
-    )
-    assert config.factor_protocol.holdout_start == datetime(
-        2026, 1, 26, 20, tzinfo=UTC
-    )
+    assert config.factor_protocol.development_end_exclusive == datetime(2026, 1, 1, tzinfo=UTC)
+    assert config.factor_protocol.holdout_start == datetime(2026, 1, 26, 20, tzinfo=UTC)
 
 
 def test_calendar_months_do_not_include_partial_end_month() -> None:

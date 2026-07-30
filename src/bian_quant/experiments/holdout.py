@@ -128,7 +128,7 @@ class HoldoutLedger:
         factor_version: str,
         factor_state: FactorState,
         access_run_id: str,
-    ) -> dict:
+    ) -> dict[str, str]:
         """Authorize holdout access for a candidate factor.
 
         Raises ``PermissionError`` if the factor is not CANDIDATE or if
@@ -180,7 +180,7 @@ class HoldoutLedger:
             "accessed_at": accessed_at,
         }
 
-    def history(self) -> list[dict]:
+    def history(self) -> list[dict[str, str]]:
         """Return all access records for audit."""
         conn = self._connection()
         rows = conn.execute(

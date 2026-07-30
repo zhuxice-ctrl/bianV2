@@ -10,14 +10,12 @@ import pytest
 
 from bian_quant.data.catalog import DatasetCatalog
 from bian_quant.data.contracts import DatasetLayer
+from bian_quant.data.resample import resample_point_in_time
 from bian_quant.data.snapshots import (
     SnapshotSpec,
     build_delay_views,
-    build_macro_snapshots,
-    build_micro_snapshots,
     publish_snapshot,
 )
-from bian_quant.data.resample import resample_point_in_time
 
 
 def test_causal_aggregate_uses_max_available_time() -> None:
@@ -50,8 +48,12 @@ def test_snapshot_id_rebuild_is_deterministic(tmp_path: Path) -> None:
         interval="1d",
         horizon="macro",
     )
-    first = publish_snapshot(fixture, spec, tmp_path / "one", DatasetCatalog(tmp_path / "cat1.sqlite"))
-    second = publish_snapshot(fixture, spec, tmp_path / "two", DatasetCatalog(tmp_path / "cat2.sqlite"))
+    first = publish_snapshot(
+        fixture, spec, tmp_path / "one", DatasetCatalog(tmp_path / "cat1.sqlite")
+    )
+    second = publish_snapshot(
+        fixture, spec, tmp_path / "two", DatasetCatalog(tmp_path / "cat2.sqlite")
+    )
     assert first.snapshot_id == second.snapshot_id
     assert first.content_sha256 == second.content_sha256
 
@@ -88,15 +90,17 @@ def metrics_fixture() -> pd.DataFrame:
     records = []
     for i in range(3):
         t = base + timedelta(minutes=15 * i)
-        records.append({
-            "asset": "BTCUSDT",
-            "event_time": t,
-            "available_time": t + timedelta(minutes=5),
-            "ingested_at": datetime(2026, 7, 30, tzinfo=UTC),
-            "source": "binance_metrics_archive",
-            "sum_open_interest": 100000.0 + i,
-            "sum_open_interest_value": 5000000000.0,
-        })
+        records.append(
+            {
+                "asset": "BTCUSDT",
+                "event_time": t,
+                "available_time": t + timedelta(minutes=5),
+                "ingested_at": datetime(2026, 7, 30, tzinfo=UTC),
+                "source": "binance_metrics_archive",
+                "sum_open_interest": 100000.0 + i,
+                "sum_open_interest_value": 5000000000.0,
+            }
+        )
     return pd.DataFrame(records)
 
 
@@ -105,16 +109,18 @@ def ohlcv_fixture() -> pd.DataFrame:
     records = []
     for i in range(3):
         t = base + timedelta(hours=i)
-        records.append({
-            "asset": "BTCUSDT",
-            "event_time": t,
-            "available_time": t + timedelta(hours=1),
-            "ingested_at": datetime(2026, 7, 30, tzinfo=UTC),
-            "source": "binance_ohlcv_archive",
-            "open": 50000.0 + i,
-            "high": 50100.0,
-            "low": 49900.0,
-            "close": 50050.0,
-            "volume": 100.5,
-        })
+        records.append(
+            {
+                "asset": "BTCUSDT",
+                "event_time": t,
+                "available_time": t + timedelta(hours=1),
+                "ingested_at": datetime(2026, 7, 30, tzinfo=UTC),
+                "source": "binance_ohlcv_archive",
+                "open": 50000.0 + i,
+                "high": 50100.0,
+                "low": 49900.0,
+                "close": 50050.0,
+                "volume": 100.5,
+            }
+        )
     return pd.DataFrame(records)

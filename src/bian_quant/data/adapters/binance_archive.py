@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
@@ -45,7 +47,7 @@ def verify_checksum(payload: bytes, checksum_payload: bytes) -> str:
 
 def _fetch_bytes(url: str, *, timeout: int = 60) -> bytes:
     with urlopen(url, timeout=timeout) as response:
-        return response.read()
+        return cast(bytes, response.read())
 
 
 def download_verified(
@@ -54,7 +56,7 @@ def download_verified(
     url: str,
     identity: RawSourceIdentity | None = None,
     attempts: int = 3,
-    byte_reader=None,
+    byte_reader: Callable[[str], bytes] | None = None,
 ) -> AcquisitionObjectResult:
     """Download a Binance archive with checksum verification and resumability.
 

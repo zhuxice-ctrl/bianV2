@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from bian_quant.regimes.classifier import (
@@ -56,7 +55,7 @@ class MacroRegimeEvidence:
     current: MacroState
     transitions: list[tuple[datetime, str, str]] = field(default_factory=list)
     state_summaries: dict[str, ComparableEpisodeSummary] = field(default_factory=dict)
-    threshold_history: list[dict] = field(default_factory=list)
+    threshold_history: list[dict[str, float | int]] = field(default_factory=list)
 
 
 def classify_macro_history(
@@ -75,7 +74,7 @@ def classify_macro_history(
         raise ValueError("insufficient data for initial training window")
 
     labels: list[str] = []
-    threshold_history: list[dict] = []
+    threshold_history: list[dict[str, float | int]] = []
     last_thresholds: RegimeThresholds | None = None
     fit_through_idx = 0
 
@@ -84,12 +83,14 @@ def classify_macro_history(
     thresholds = fit_regime_thresholds(train_frame)
     last_thresholds = thresholds
     fit_through_idx = initial_train
-    threshold_history.append({
-        "fit_through_idx": initial_train,
-        "vol_48_q75": thresholds.vol_48_q75,
-        "trend_q60": thresholds.trend_q60,
-        "illiquidity_q95": thresholds.illiquidity_q95,
-    })
+    threshold_history.append(
+        {
+            "fit_through_idx": initial_train,
+            "vol_48_q75": thresholds.vol_48_q75,
+            "trend_q60": thresholds.trend_q60,
+            "illiquidity_q95": thresholds.illiquidity_q95,
+        }
+    )
 
     # Classify in blocks, refitting every `refit_every` rows
     idx = initial_train
@@ -103,15 +104,17 @@ def classify_macro_history(
         train_frame = frame.iloc[:block_end]
         last_thresholds = fit_regime_thresholds(train_frame)
         fit_through_idx = block_end
-        threshold_history.append({
-            "fit_through_idx": block_end,
-            "vol_48_q75": last_thresholds.vol_48_q75,
-            "trend_q60": last_thresholds.trend_q60,
-            "illiquidity_q95": last_thresholds.illiquidity_q95,
-        })
+        threshold_history.append(
+            {
+                "fit_through_idx": block_end,
+                "vol_48_q75": last_thresholds.vol_48_q75,
+                "trend_q60": last_thresholds.trend_q60,
+                "illiquidity_q95": last_thresholds.illiquidity_q95,
+            }
+        )
         idx = block_end
 
-    label_series = pd.Series(labels, index=frame.index[initial_train:initial_train + len(labels)])
+    label_series = pd.Series(labels, index=frame.index[initial_train : initial_train + len(labels)])
 
     # Compute current state
     current_label = labels[-1] if labels else "unknown"
@@ -123,14 +126,22 @@ def classify_macro_history(
             break
 
     # Trailing metrics
-    tail = frame.tail(48)
-    from bian_quant.regimes.classifier import _rolling_volatility, _trend_strength, _illiquidity
+    from bian_quant.regimes.classifier import _illiquidity, _rolling_volatility, _trend_strength
+
     trailing_vol = float(_rolling_volatility(frame["close"]).iloc[-1]) if len(frame) > 48 else 0.0
     trailing_trend = float(_trend_strength(frame["close"]).iloc[-1]) if len(frame) > 48 else 0.0
-    trailing_illiq = float(_illiquidity(frame["close"], frame["volume"]).iloc[-1]) if len(frame) > 48 else 0.0
+    trailing_illiq = (
+        float(_illiquidity(frame["close"], frame["volume"]).iloc[-1]) if len(frame) > 48 else 0.0
+    )
 
-    decision_time = frame["event_time"].iloc[-1] if "event_time" in frame.columns else datetime.now(UTC)
-    fit_through_time = frame["event_time"].iloc[fit_through_idx - 1] if "event_time" in frame.columns and fit_through_idx <= len(frame) else datetime.now(UTC)
+    decision_time = (
+        frame["event_time"].iloc[-1] if "event_time" in frame.columns else datetime.now(UTC)
+    )
+    fit_through_time = (
+        frame["event_time"].iloc[fit_through_idx - 1]
+        if "event_time" in frame.columns and fit_through_idx <= len(frame)
+        else datetime.now(UTC)
+    )
 
     current = MacroState(
         label=current_label,
@@ -151,7 +162,11 @@ def classify_macro_history(
     transitions: list[tuple[datetime, str, str]] = []
     for i in range(1, len(labels)):
         if labels[i] != labels[i - 1]:
-            t = frame["event_time"].iloc[initial_train + i] if "event_time" in frame.columns else datetime.now(UTC)
+            t = (
+                frame["event_time"].iloc[initial_train + i]
+                if "event_time" in frame.columns
+                else datetime.now(UTC)
+            )
             transitions.append((t, labels[i - 1], labels[i]))
 
     # State summaries
@@ -217,12 +232,16 @@ def write_macro_evidence(
     json_data = {
         "current": {
             "label": evidence.current.label,
-            "decision_time": evidence.current.decision_time.isoformat() if isinstance(evidence.current.decision_time, datetime) else str(evidence.current.decision_time),
+            "decision_time": evidence.current.decision_time.isoformat()
+            if isinstance(evidence.current.decision_time, datetime)
+            else str(evidence.current.decision_time),
             "duration_bars": evidence.current.duration_bars,
             "trailing_volatility": evidence.current.trailing_volatility,
             "trailing_trend": evidence.current.trailing_trend,
             "trailing_illiquidity": evidence.current.trailing_illiquidity,
-            "thresholds_fitted_through": evidence.current.thresholds_fitted_through.isoformat() if isinstance(evidence.current.thresholds_fitted_through, datetime) else str(evidence.current.thresholds_fitted_through),
+            "thresholds_fitted_through": evidence.current.thresholds_fitted_through.isoformat()
+            if isinstance(evidence.current.thresholds_fitted_through, datetime)
+            else str(evidence.current.thresholds_fitted_through),
             "threshold_values": evidence.current.threshold_values,
         },
         "transitions": [

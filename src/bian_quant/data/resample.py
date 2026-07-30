@@ -38,15 +38,18 @@ def resample_point_in_time(
     for asset, group in frame.groupby("asset", sort=True):
         indexed = group.copy()
         indexed.index = pd.to_datetime(indexed.pop("event_time"), utc=True)
-        result = indexed.resample(rule, label="left", closed="left").agg(all_aggs)
+        result = indexed.resample(rule, label="left", closed="left").agg(
+            {column: [aggregation] for column, aggregation in all_aggs.items()}
+        )
+        result.columns = result.columns.get_level_values(0)
         result.insert(0, "asset", asset)
         results.append(
-            result.dropna(subset=["available_time"])
-            .rename_axis("event_time")
-            .reset_index()
+            result.dropna(subset=["available_time"]).rename_axis("event_time").reset_index()
         )
     if not results:
-        return pd.DataFrame(columns=["event_time", *sorted(_REQUIRED_AUDIT_COLUMNS - {"event_time"})])
+        return pd.DataFrame(
+            columns=["event_time", *sorted(_REQUIRED_AUDIT_COLUMNS - {"event_time"})]
+        )
     return pd.concat(results, ignore_index=True).sort_values(["asset", "event_time"])
 
 

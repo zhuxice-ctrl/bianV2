@@ -260,9 +260,7 @@ def _make_monthly_ohlcv(
     )
 
 
-def _make_daily_ohlcv(
-    asset: str, interval: str, day: datetime, raw_root: Path
-) -> SourceObject:
+def _make_daily_ohlcv(asset: str, interval: str, day: datetime, raw_root: Path) -> SourceObject:
     from bian_quant.data.adapters.binance_archive import daily_archive_url
 
     stamp = day.strftime("%Y-%m-%d")
@@ -277,9 +275,7 @@ def _make_daily_ohlcv(
     )
 
 
-def _make_monthly_funding(
-    asset: str, year: int, month: int, raw_root: Path
-) -> SourceObject:
+def _make_monthly_funding(asset: str, year: int, month: int, raw_root: Path) -> SourceObject:
     from bian_quant.data.adapters.binance_derivatives import funding_url
 
     period_start = datetime(year, month, 1, tzinfo=UTC)
@@ -346,29 +342,23 @@ def build_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...
     all_intervals = sorted(macro_set | set(config.micro_intervals))
 
     # Monthly OHLCV from macro_start
-    for interval in sorted(macro_set):
+    for macro_interval in sorted(macro_set):
         for asset in config.assets:
             for year, month in calendar_months(config.macro_start, config.as_of):
-                objects.append(
-                    _make_monthly_ohlcv(asset, interval, year, month, raw_root)
-                )
+                objects.append(_make_monthly_ohlcv(asset, macro_interval, year, month, raw_root))
 
     # Monthly OHLCV from micro_start (micro-only intervals)
-    for interval in sorted(micro_only):
+    for micro_interval in sorted(micro_only):
         for asset in config.assets:
             for year, month in calendar_months(config.micro_start, config.as_of):
-                objects.append(
-                    _make_monthly_ohlcv(asset, interval, year, month, raw_root)
-                )
+                objects.append(_make_monthly_ohlcv(asset, micro_interval, year, month, raw_root))
 
     # Daily OHLCV for partial month (month of as_of)
-    partial_start = config.as_of.replace(
-        day=1, hour=0, minute=0, second=0, microsecond=0
-    )
-    for interval in all_intervals:
+    partial_start = config.as_of.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    for daily_interval in all_intervals:
         for asset in config.assets:
             for day in calendar_days(partial_start, config.as_of):
-                objects.append(_make_daily_ohlcv(asset, interval, day, raw_root))
+                objects.append(_make_daily_ohlcv(asset, daily_interval, day, raw_root))
 
     # Monthly Funding from macro_start
     for asset in config.assets:
@@ -385,13 +375,11 @@ def build_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...
         for day in calendar_days(config.micro_start, config.as_of):
             objects.append(_make_daily_metrics(asset, day, raw_root))
 
-    objects.sort(
-        key=lambda o: (o.dataset.value, o.asset, o.interval, o.period_start)
-    )
+    objects.sort(key=lambda o: (o.dataset.value, o.asset, o.interval, o.period_start))
     return tuple(objects)
 
 
-def source_plan_payload(config: DualHorizonAcquisition) -> dict:
+def source_plan_payload(config: DualHorizonAcquisition) -> dict[str, object]:
     """Return a JSON-safe dry-run summary of the source plan.
 
     Does not access the network or filesystem beyond reading the config.
@@ -401,9 +389,7 @@ def source_plan_payload(config: DualHorizonAcquisition) -> dict:
     counts_by_dataset: dict[str, int] = {}
     counts_by_granularity: dict[str, int] = {}
     for obj in plan:
-        counts_by_dataset[obj.dataset.value] = (
-            counts_by_dataset.get(obj.dataset.value, 0) + 1
-        )
+        counts_by_dataset[obj.dataset.value] = counts_by_dataset.get(obj.dataset.value, 0) + 1
         counts_by_granularity[obj.granularity.value] = (
             counts_by_granularity.get(obj.granularity.value, 0) + 1
         )

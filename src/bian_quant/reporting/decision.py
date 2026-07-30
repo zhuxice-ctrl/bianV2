@@ -89,40 +89,26 @@ def write_decision_packet(
     paths: list[Path] = []
 
     # data-acquisition.json
-    paths.append(
-        writer.write_json(run, "data-acquisition.json", evidence.acquisition)
-    )
+    paths.append(writer.write_json(run, "data-acquisition.json", evidence.acquisition))
 
     # data-quality.json
-    paths.append(
-        writer.write_json(run, "data-quality.json", evidence.quality)
-    )
+    paths.append(writer.write_json(run, "data-quality.json", evidence.quality))
 
     # macro-regime.json
-    paths.append(
-        writer.write_json(run, "macro-regime.json", evidence.macro_regime)
-    )
+    paths.append(writer.write_json(run, "macro-regime.json", evidence.macro_regime))
 
     # macro-regime.md
-    paths.append(
-        writer.write_text(run, "macro-regime.md", evidence.macro_regime_md)
-    )
+    paths.append(writer.write_text(run, "macro-regime.md", evidence.macro_regime_md))
 
     # factor-screening.json
-    paths.append(
-        writer.write_json(run, "factor-screening.json", evidence.factor_screening)
-    )
+    paths.append(writer.write_json(run, "factor-screening.json", evidence.factor_screening))
 
     # factor-screening.md
-    paths.append(
-        writer.write_text(run, "factor-screening.md", evidence.factor_screening_md)
-    )
+    paths.append(writer.write_text(run, "factor-screening.md", evidence.factor_screening_md))
 
     # decision-summary.md
     summary = _render_decision_summary(evidence)
-    paths.append(
-        writer.write_text(run, "decision-summary.md", summary)
-    )
+    paths.append(writer.write_text(run, "decision-summary.md", summary))
 
     return paths
 
@@ -154,23 +140,26 @@ def _render_decision_summary(evidence: DecisionEvidence) -> str:
     else:
         lines.append("- None")
 
-    lines.extend([
-        "",
-        "## Current Regime and Evidence",
-        "",
-        f"Current regime: {evidence.current_regime}",
-        "",
-        "## Factor Results",
-        "",
-        f"Passed: {', '.join(evidence.passed_factors) if evidence.passed_factors else 'None'}",
-        f"Failed: {', '.join(evidence.failed_factors) if evidence.failed_factors else 'None'}",
-        f"Observed: {', '.join(evidence.observed_factors) if evidence.observed_factors else 'None'}",
-        f"Candidate factors: {len(evidence.candidate_factor_ids)}",
-        "",
-        "## Requested Human Decision",
-        "",
-        evidence.human_decision,
-        "",
-    ])
+    observed = ", ".join(evidence.observed_factors) if evidence.observed_factors else "None"
+    lines.extend(
+        [
+            "",
+            "## Current Regime and Evidence",
+            "",
+            f"Current regime: {evidence.current_regime}",
+            "",
+            "## Factor Results",
+            "",
+            f"Passed: {', '.join(evidence.passed_factors) if evidence.passed_factors else 'None'}",
+            f"Failed: {', '.join(evidence.failed_factors) if evidence.failed_factors else 'None'}",
+            f"Observed: {observed}",
+            f"Candidate factors: {len(evidence.candidate_factor_ids)}",
+            "",
+            "## Requested Human Decision",
+            "",
+            evidence.human_decision,
+            "",
+        ]
+    )
 
     return "\n".join(lines)

@@ -11,12 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict
 
 from bian_quant.data.catalog import DatasetCatalog
 from bian_quant.data.contracts import DatasetLayer, DatasetManifest
@@ -68,8 +67,6 @@ def publish_snapshot(
 
     min_event = frame["event_time"].min() if not frame.empty else None
     max_event = frame["event_time"].max() if not frame.empty else None
-    min_avail = frame["available_time"].min() if not frame.empty else None
-    max_avail = frame["available_time"].max() if not frame.empty else None
 
     manifest = DatasetManifest(
         snapshot_id=snapshot_id,
