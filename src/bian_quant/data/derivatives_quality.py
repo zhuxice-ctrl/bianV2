@@ -172,6 +172,7 @@ def inspect_metrics(
     period_start: datetime,
     period_end: datetime,
     threshold: float,
+    expected_rows: int | None = None,
 ) -> CoverageReport:
     """Inspect metrics/OI data for coverage, non-negative OI, and causality."""
     source_period = period_start.strftime("%Y-%m")
@@ -222,7 +223,11 @@ def inspect_metrics(
     observed = len(frame)
     # Binance USD-M metrics archives have native five-minute cadence.
     duration = period_end - period_start
-    expected = max(1, math.ceil(duration.total_seconds() / 300))
+    expected = (
+        max(1, math.ceil(duration.total_seconds() / 300))
+        if expected_rows is None
+        else expected_rows
+    )
     coverage = observed / expected if expected > 0 else 1.0
 
     excluded: tuple[str, ...] = ()

@@ -237,6 +237,9 @@ def canonicalize_metrics_zip(
     delay_minutes = int(publication_delay.total_seconds() // 60)
     assumption_label = f"BINANCE_METRICS_DELAY_{delay_minutes}M"
 
+    def optional_float(value: str) -> float:
+        return float(value) if value.strip() else float("nan")
+
     records: list[dict[str, Any]] = []
     for row in rows:
         event_time = datetime.strptime(row["create_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
@@ -248,16 +251,18 @@ def canonicalize_metrics_zip(
                 "ingested_at": ingested_at,
                 "source": "binance_metrics_archive",
                 "availability_assumption": assumption_label,
-                "sum_open_interest": float(row["sum_open_interest"]),
-                "sum_open_interest_value": float(row["sum_open_interest_value"]),
-                "top_trader_account_long_short_ratio": float(
+                "sum_open_interest": optional_float(row["sum_open_interest"]),
+                "sum_open_interest_value": optional_float(row["sum_open_interest_value"]),
+                "top_trader_account_long_short_ratio": optional_float(
                     row["count_toptrader_long_short_ratio"]
                 ),
-                "top_trader_position_long_short_ratio": float(
+                "top_trader_position_long_short_ratio": optional_float(
                     row["sum_toptrader_long_short_ratio"]
                 ),
-                "global_account_long_short_ratio": float(row["count_long_short_ratio"]),
-                "taker_long_short_volume_ratio": float(row["sum_taker_long_short_vol_ratio"]),
+                "global_account_long_short_ratio": optional_float(row["count_long_short_ratio"]),
+                "taker_long_short_volume_ratio": optional_float(
+                    row["sum_taker_long_short_vol_ratio"]
+                ),
                 "source_timestamp": row["create_time"],
             }
         )

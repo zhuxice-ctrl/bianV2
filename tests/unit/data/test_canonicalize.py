@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -88,6 +90,31 @@ def test_metrics_default_delay_is_5m() -> None:
     assert set(frame["availability_assumption"]) == {"BINANCE_METRICS_DELAY_5M"}
 
 
+def test_metrics_blank_ratios_remain_missing(tmp_path: Path) -> None:
+    csv_bytes = (
+        b"create_time,symbol,sum_open_interest,sum_open_interest_value,"
+        b"count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,"
+        b"count_long_short_ratio,sum_taker_long_short_vol_ratio\n"
+        b"2024-08-12 09:00:00,BTCUSDT,100,200,,,,1.2\n"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("BTCUSDT-metrics-2024-08-12.csv", csv_bytes)
+    path = tmp_path / "metrics-with-blanks.zip"
+    path.write_bytes(buffer.getvalue())
+
+    frame = canonicalize_metrics_zip(
+        path,
+        ingested_at=datetime(2026, 7, 30, tzinfo=UTC),
+        publication_delay=timedelta(minutes=5),
+    )
+
+    assert pd.isna(frame.loc[0, "top_trader_account_long_short_ratio"])
+    assert pd.isna(frame.loc[0, "top_trader_position_long_short_ratio"])
+    assert pd.isna(frame.loc[0, "global_account_long_short_ratio"])
+    assert frame.loc[0, "taker_long_short_volume_ratio"] == 1.2
+
+
 def test_partition_path_is_dataset_asset_year_month() -> None:
     path = canonical_partition_path(
         Path("var/canonical"),
@@ -146,9 +173,6 @@ def test_write_canonical_partition_refuses_overwrite_different(tmp_path: Path) -
 
 def test_ohlcv_schema_change_rejected(tmp_path: Path) -> None:
     """A ZIP with wrong columns must raise OHLCV_SCHEMA_CHANGED."""
-    import io
-    import zipfile
-
     csv_bytes = b"wrong_header,open\n1753756800000,50000.0\n"
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

@@ -200,13 +200,16 @@ def _directory_size(path: Path) -> int:
 
 
 def _period_end(source: SourceObject, as_of: datetime) -> datetime:
-    if source.granularity.value == "daily":
-        natural_end = source.period_start + timedelta(days=1)
-    elif source.period_start.month == 12:
-        natural_end = source.period_start.replace(year=source.period_start.year + 1, month=1)
-    else:
-        natural_end = source.period_start.replace(month=source.period_start.month + 1)
+    natural_end = _natural_period_end(source)
     return min(natural_end, as_of + timedelta(microseconds=1))
+
+
+def _natural_period_end(source: SourceObject) -> datetime:
+    if source.granularity.value == "daily":
+        return source.period_start + timedelta(days=1)
+    if source.period_start.month == 12:
+        return source.period_start.replace(year=source.period_start.year + 1, month=1)
+    return source.period_start.replace(month=source.period_start.month + 1)
 
 
 def _quality_report(
@@ -214,13 +217,21 @@ def _quality_report(
     frame: pd.DataFrame,
     config: DualHorizonAcquisition,
 ) -> CoverageReport:
+    natural_end = _natural_period_end(source)
     period_end = _period_end(source, config.as_of)
-    in_period = frame.loc[
-        (frame["event_time"] >= source.period_start)
-        & (frame["event_time"] < period_end)
-        & (frame["event_time"] <= config.as_of)
-    ]
-    outside_rows = len(frame) - len(in_period)
+    left_closed = (frame["event_time"] >= source.period_start) & (frame["event_time"] < natural_end)
+    source_mask = left_closed
+    metrics_right_closed = False
+    if source.dataset == SourceDataset.METRICS_OI and source.granularity.value == "daily":
+        right_closed = (frame["event_time"] > source.period_start) & (
+            frame["event_time"] <= natural_end
+        )
+        if int(right_closed.sum()) > int(left_closed.sum()):
+            source_mask = right_closed
+            metrics_right_closed = True
+    source_frame = frame.loc[source_mask]
+    in_period = source_frame.loc[source_frame["event_time"] <= config.as_of]
+    outside_rows = len(frame) - len(source_frame)
     if source.dataset == SourceDataset.OHLCV:
         seconds = {"1h": 3600, "4h": 4 * 3600, "1d": 24 * 3600}[source.interval]
         expected = max(
@@ -273,11 +284,19 @@ def _quality_report(
             threshold=config.coverage.funding,
         )
     else:
+        expected_rows = None
+        if metrics_right_closed:
+            effective_end = min(natural_end, config.as_of)
+            expected_rows = max(
+                0,
+                math.floor((effective_end - source.period_start).total_seconds() / 300),
+            )
         report = inspect_metrics(
             in_period,
             period_start=source.period_start,
             period_end=period_end,
             threshold=config.coverage.metrics_oi,
+            expected_rows=expected_rows,
         )
     if outside_rows:
         finding = QualityFinding(
