@@ -8,7 +8,7 @@ import json
 import math
 import shutil
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -428,36 +428,44 @@ def prepare_dual_horizon(
         except Exception as exc:
             return source, None, str(exc)
 
-    # executor.map preserves source-plan order in the persisted artifact while
-    # limiting concurrent public downloads to the locked configuration value.
+    completed_outcomes: dict[
+        int, tuple[SourceObject, AcquisitionObjectResult | None, str | None]
+    ] = {}
     with ThreadPoolExecutor(max_workers=config.max_workers) as executor:
-        outcomes = executor.map(acquire_one, plan)
-        for source, result, error in outcomes:
-            if result is not None:
-                acquired[source.identity_key] = result
-                acquisition_results.append(
-                    {
-                        "identity_key": source.identity_key,
-                        "status": result.status,
-                        "content_sha256": result.manifest.content_sha256,
-                        "byte_count": result.manifest.byte_count,
-                    }
-                )
-            else:
-                acquisition_results.append(
-                    {
-                        "identity_key": source.identity_key,
-                        "status": "failed",
-                        "error": error or "RAW_DOWNLOAD_FAILED",
-                    }
-                )
-                blocked_periods.append(source.identity_key)
-
-            # Track peak working bytes after each completed plan object.
+        indexed_futures = {
+            executor.submit(acquire_one, source): index for index, source in enumerate(plan)
+        }
+        for future in as_completed(indexed_futures):
+            outcome = future.result()
+            # Sample immediately in completion order, independently of the
+            # deterministic source-plan order used to persist outcomes below.
             current_free = shutil.disk_usage(config.raw_root).free
             reduction = baseline_free - current_free
             if reduction > peak_reduction:
                 peak_reduction = reduction
+            completed_outcomes[indexed_futures[future]] = outcome
+
+    for index in range(len(plan)):
+        source, result, error = completed_outcomes[index]
+        if result is not None:
+            acquired[source.identity_key] = result
+            acquisition_results.append(
+                {
+                    "identity_key": source.identity_key,
+                    "status": result.status,
+                    "content_sha256": result.manifest.content_sha256,
+                    "byte_count": result.manifest.byte_count,
+                }
+            )
+        else:
+            acquisition_results.append(
+                {
+                    "identity_key": source.identity_key,
+                    "status": "failed",
+                    "error": error or "RAW_DOWNLOAD_FAILED",
+                }
+            )
+            blocked_periods.append(source.identity_key)
 
     # Canonicalize verified objects and persist immutable partitions.
     snapshots: list[DatasetManifest] = []
@@ -606,6 +614,19 @@ def prepare_dual_horizon(
     )
 
     status = DualHorizonStatus.BLOCKED if blocking else DualHorizonStatus.PASSED
+    result_status_order = {
+        AcquisitionObjectStatus.DOWNLOADED: 0,
+        AcquisitionObjectStatus.SKIPPED: 0,
+        "failed": 0,
+        "parse_failed": 1,
+    }
+    acquisition_results.sort(
+        key=lambda item: (
+            str(item["identity_key"]),
+            result_status_order.get(str(item["status"]), 2),
+            str(item["status"]),
+        )
+    )
     acquisition_data: dict[str, object] = {
         "run_id": run_manifest.run_id,
         "status": status.value,

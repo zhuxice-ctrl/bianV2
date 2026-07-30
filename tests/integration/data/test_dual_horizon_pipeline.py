@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from bian_quant.data.acquisition import DualHorizonAcquisition
+from bian_quant.data.acquisition import DualHorizonAcquisition, build_source_plan
 from bian_quant.data.dual_horizon import (
     DualHorizonStatus,
     FixtureDownloader,
@@ -101,22 +102,44 @@ def test_local_only_pipeline_blocks_with_exact_missing_objects(tmp_path: Path) -
 
 def test_acquisition_honors_locked_worker_bound_and_persists_plan_order(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     config = _miniature_config(tmp_path).model_copy(update={"max_workers": 4})
+    first_identity = build_source_plan(config)[0].identity_key
     inner = FixtureDownloader(FIXTURES)
     lock = threading.Lock()
+    first_started = threading.Event()
+    later_completed = threading.Event()
+    later_completion_sampled = threading.Event()
+    first_observed_completion_sample = False
     active = 0
     peak = 0
+    real_disk_usage = shutil.disk_usage
+
+    def recording_disk_usage(path):
+        usage = real_disk_usage(path)
+        if later_completed.is_set():
+            later_completion_sampled.set()
+        return usage
+
+    monkeypatch.setattr("bian_quant.data.dual_horizon.shutil.disk_usage", recording_disk_usage)
 
     class RecordingDownloader:
         def acquire(self, source, current_config):
-            nonlocal active, peak
+            nonlocal active, first_observed_completion_sample, peak
             with lock:
                 active += 1
                 peak = max(peak, active)
             try:
+                if source.identity_key == first_identity:
+                    first_started.set()
+                    first_observed_completion_sample = later_completion_sampled.wait(timeout=5)
+                    return inner.acquire(source, current_config)
+                assert first_started.wait(timeout=5)
                 time.sleep(0.01)
-                return inner.acquire(source, current_config)
+                result = inner.acquire(source, current_config)
+                later_completed.set()
+                return result
             finally:
                 with lock:
                     active -= 1
@@ -128,6 +151,53 @@ def test_acquisition_honors_locked_worker_bound_and_persists_plan_order(
     )
     assert result.status == DualHorizonStatus.PASSED
     assert 1 < peak <= config.max_workers
+    assert first_observed_completion_sample
     payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
     identity_keys = [item["identity_key"] for item in payload["results"]]
     assert identity_keys == sorted(identity_keys)
+
+
+def test_worker_bound_parse_failure_is_blocked_and_persists_sorted_results(
+    tmp_path: Path,
+) -> None:
+    config = _miniature_config(tmp_path).model_copy(update={"max_workers": 4})
+    failed_identity = build_source_plan(config)[0].identity_key
+    inner = FixtureDownloader(FIXTURES)
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    class ParseFailingDownloader:
+        def acquire(self, source, current_config):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                time.sleep(0.01)
+                result = inner.acquire(source, current_config)
+                if source.identity_key == failed_identity:
+                    result.path.write_bytes(b"not-a-zip")
+                return result
+            finally:
+                with lock:
+                    active -= 1
+
+    result = prepare_dual_horizon(
+        config,
+        code_sha="d" * 40,
+        downloader=ParseFailingDownloader(),
+    )
+    assert result.status == DualHorizonStatus.BLOCKED
+    assert result.blocked_periods == (failed_identity,)
+    assert 1 < peak <= config.max_workers
+
+    payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    assert payload["status"] == DualHorizonStatus.BLOCKED.value
+    assert payload["blocked_periods"] == [failed_identity]
+    result_keys = [(item["identity_key"], item["status"]) for item in payload["results"]]
+    assert result_keys == sorted(result_keys)
+    failed_results = [
+        item for item in payload["results"] if item["identity_key"] == failed_identity
+    ]
+    assert [item["status"] for item in failed_results] == ["downloaded", "parse_failed"]
