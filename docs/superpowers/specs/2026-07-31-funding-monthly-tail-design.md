@@ -1,7 +1,6 @@
 # Funding Monthly-Tail Acquisition Design
 
-**Status:** Approved conceptually in conversation on 2026-07-31; written-spec
-review pending
+**Status:** Approved in conversation on 2026-07-31
 
 **Phase:** Plan 03.5 amendment
 
@@ -118,6 +117,16 @@ registered in the catalog. The raw ZIP remains complete. The acquisition and
 quality artifacts record `post_cutoff_rows_excluded`, the earliest excluded
 timestamp, and the latest excluded timestamp. A nonzero expected tail is not a
 warning or failure.
+
+Amended canonical partitions live below `canonical_root`, followed by a
+`plan=` directory named with the first 16 source-plan hash characters and then
+the source object's relative path with a Parquet suffix. Prior blocked runs
+already created untrimmed canonical files at the legacy paths; the new namespace
+keeps those diagnostic files immutable and prevents a different clipped frame
+from overwriting the same path. The namespace is deterministic and is included
+in catalog path evidence. The same source-plan hash also participates in the
+canonical manifest ID, so an unchanged historical partition can be registered
+at the amended path without colliding with its legacy catalog identity.
 
 Rows outside the source calendar month, rows with availability before event
 time, and unexpected timestamp grids remain blocking findings. Cutoff clipping
