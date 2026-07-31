@@ -53,6 +53,13 @@ def test_disk_budget_warns_below_ten_gb_and_blocks_below_five() -> None:
     assert check_disk_budget(Path("var"), budget, free_bytes=4 * 1024**3).value == "blocked"
 
 
+def test_funding_tail_strategy_is_locked() -> None:
+    config = DualHorizonAcquisition.from_yaml(
+        Path("configs/experiments/dual_horizon_derivatives.yaml")
+    )
+    assert config.funding_tail_strategy == "monthly_archive_after_period_close"
+
+
 def test_naive_or_inverted_window_is_rejected() -> None:
     payload = DualHorizonAcquisition.from_yaml(
         Path("configs/experiments/dual_horizon_derivatives.yaml")

@@ -5,6 +5,7 @@ as_of: 2026-07-26T19:59:59.999Z
 macro_intervals: [1d, 4h]
 micro_intervals: [1h, 4h]
 oi_delay_minutes: [5, 10, 15]
+funding_tail_strategy: monthly_archive_after_period_close
 parent_snapshot_ids: []
 raw_root: var/lake/raw/binance-futures-um
 canonical_root: var/lake/canonical/binance-futures-um

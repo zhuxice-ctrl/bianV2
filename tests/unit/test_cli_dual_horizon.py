@@ -31,3 +31,8 @@ def test_prepare_dual_horizon_dry_run_is_network_free(monkeypatch) -> None:
     payload = json.loads(result.stdout)
     assert payload["as_of"] == "2026-07-26T19:59:59.999000+00:00"
     assert payload["network_access"] is False
+    assert payload["counts"]["total"] == 3117
+    assert payload["counts"]["by_dataset"]["funding"] == 183
+    assert payload["config_identity"]["funding_tail_strategy"] == (
+        "monthly_archive_after_period_close"
+    )

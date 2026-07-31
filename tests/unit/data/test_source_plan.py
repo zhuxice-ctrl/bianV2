@@ -31,21 +31,63 @@ def test_all_raw_targets_are_unique_and_relative_to_raw_root() -> None:
     config = DualHorizonAcquisition.from_yaml(CONFIG)
     plan = build_source_plan(config)
     paths = [item.relative_path for item in plan]
-    assert len(paths) == len(set(paths)) == 3192
+    assert len(paths) == len(set(paths)) == 3117
     assert all(not path.is_absolute() for path in paths)
     assert all(path.parts[0] in {"ohlcv", "funding", "metrics_oi"} for path in paths)
 
 
-def test_partial_month_uses_daily_tail_only() -> None:
+def test_locked_plan_uses_monthly_funding_tail() -> None:
+    config = DualHorizonAcquisition.from_yaml(CONFIG)
+    plan = build_source_plan(config)
+    funding = [item for item in plan if item.dataset == SourceDataset.FUNDING]
+    cutoff_month = [
+        item for item in funding if (item.period_start.year, item.period_start.month) == (2026, 7)
+    ]
+
+    assert len(plan) == 3117
+    assert len(funding) == 183
+    assert all(item.granularity == SourceGranularity.MONTHLY for item in funding)
+    assert {item.asset for item in cutoff_month} == {
+        "BTCUSDT",
+        "ETHUSDT",
+        "BNBUSDT",
+    }
+    assert len(cutoff_month) == 3
+    assert not [
+        item
+        for item in plan
+        if item.dataset == SourceDataset.FUNDING and item.granularity == SourceGranularity.DAILY
+    ]
+
+
+def test_locked_plan_counts_are_exact() -> None:
+    payload = source_plan_payload(DualHorizonAcquisition.from_yaml(CONFIG))
+    assert payload["counts"] == {
+        "total": 3117,
+        "by_dataset": {"funding": 183, "metrics_oi": 2268, "ohlcv": 666},
+        "by_granularity": {"daily": 2502, "monthly": 615},
+    }
+    assert payload["config_identity"]["funding_tail_strategy"] == (
+        "monthly_archive_after_period_close"
+    )
+
+
+def test_partial_month_keeps_only_supported_daily_datasets() -> None:
     config = DualHorizonAcquisition.from_yaml(CONFIG)
     july = [
         item
         for item in build_source_plan(config)
-        if item.period_start.year == 2026 and item.period_start.month == 7
+        if (item.period_start.year, item.period_start.month) == (2026, 7)
     ]
-    assert july
-    assert all(item.granularity == SourceGranularity.DAILY for item in july)
-    assert max(item.period_start.day for item in july) == 26
+    assert any(
+        item.dataset == SourceDataset.FUNDING and item.granularity == SourceGranularity.MONTHLY
+        for item in july
+    )
+    assert all(
+        item.granularity == SourceGranularity.DAILY
+        for item in july
+        if item.dataset != SourceDataset.FUNDING
+    )
 
 
 def test_plan_is_deterministically_sorted() -> None:

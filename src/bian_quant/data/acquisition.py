@@ -80,6 +80,7 @@ class DualHorizonAcquisition(BaseModel):
     macro_intervals: tuple[Literal["1d", "4h"], ...]
     micro_intervals: tuple[Literal["1h", "4h"], ...]
     oi_delay_minutes: tuple[Literal[5], Literal[10], Literal[15]]
+    funding_tail_strategy: Literal["monthly_archive_after_period_close"]
     parent_snapshot_ids: tuple[str, ...] = ()
     raw_root: Path
     canonical_root: Path
@@ -152,6 +153,19 @@ def calendar_months(start: datetime, end: datetime) -> tuple[tuple[int, int], ..
             month = 1
             year += 1
     return tuple(result)
+
+
+def funding_months_through_cutoff(start: datetime, as_of: datetime) -> tuple[tuple[int, int], ...]:
+    """Return (year, month) tuples from *start* through the month containing *as_of*.
+
+    Unlike :func:`calendar_months`, the cutoff month is included so the official
+    monthly archive can be acquired after the source month closes.
+    """
+    months = list(calendar_months(start, as_of))
+    cutoff_month = (as_of.year, as_of.month)
+    if cutoff_month not in months:
+        months.append(cutoff_month)
+    return tuple(months)
 
 
 def calendar_days(start: datetime, end: datetime) -> tuple[datetime, ...]:
@@ -360,15 +374,10 @@ def build_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...
             for day in calendar_days(partial_start, config.as_of):
                 objects.append(_make_daily_ohlcv(asset, daily_interval, day, raw_root))
 
-    # Monthly Funding from macro_start
+    # Monthly Funding from macro_start through the cutoff month (inclusive)
     for asset in config.assets:
-        for year, month in calendar_months(config.macro_start, config.as_of):
+        for year, month in funding_months_through_cutoff(config.macro_start, config.as_of):
             objects.append(_make_monthly_funding(asset, year, month, raw_root))
-
-    # Daily Funding for partial month
-    for asset in config.assets:
-        for day in calendar_days(partial_start, config.as_of):
-            objects.append(_make_daily_funding(asset, day, raw_root))
 
     # Daily Metrics/OI from micro_start
     for asset in config.assets:
@@ -405,6 +414,7 @@ def source_plan_payload(config: DualHorizonAcquisition) -> dict[str, object]:
             "as_of": config.as_of.isoformat(),
             "macro_intervals": list(config.macro_intervals),
             "micro_intervals": list(config.micro_intervals),
+            "funding_tail_strategy": config.funding_tail_strategy,
         },
         "counts": {
             "total": len(plan),
