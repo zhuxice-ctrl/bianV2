@@ -79,7 +79,7 @@ Record each approved deviation from the implementation plans here with date, tas
 
 ## 2026-08-02 Plan 03.5 verified real run
 
-- Acquisition run `fb292e14-6df2-4d94-88e2-57dddb2ce1ef` verified all 3,117 planned objects with the locked cutoff and monthly Funding-tail strategy.
+- Acquisition run `2bc5d08d-0614-464f-8cf4-567b41cda5b2` verified all 3,117 planned objects with the locked cutoff and monthly Funding-tail strategy.
 - Resumability completed with all 3,117 objects skipped; source-plan hash, coverage, cutoff evidence, and snapshot content were reproducible.
-- Analysis run `d6ed4e97-2e14-4a67-a7f7-68853618d722` completed with zero Candidate factors; holdout was not opened.
+- Analysis run `9eb6d9d1-df5f-471f-a49c-2398638f8375` completed with zero Candidate factors; holdout was not opened.
 - Current Macro state is `range_low_vol` with thresholds fitted through `2026-07-25T16:00:00+00:00`.

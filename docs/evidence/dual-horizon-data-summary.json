@@ -1,15 +1,20 @@
 {
-  "code_sha": "2a669e0797574ff70b9edc5190a60d19fd027e7a",
-  "acquisition_run_id": "fb292e14-6df2-4d94-88e2-57dddb2ce1ef",
+  "code_sha": "49479f0a085d0f384c389559a5a123e2e0c6736c",
+  "acquisition_run_id": "2bc5d08d-0614-464f-8cf4-567b41cda5b2",
   "source_plan_hash": "97cac10cfcf37b657b4b332f1b1c34a0724b410cade5c45a6f9e1b5532e33aa0",
   "as_of": "2026-07-26T19:59:59.999Z",
   "funding_tail_strategy": "monthly_archive_after_period_close",
   "planned_objects": 3117,
   "snapshot_ids": {
-    "macro-1d": "macro-1d-df213e552ecc35b9-44d112625aad",
-    "macro-4h": "macro-4h-9b77accab70825f4-55c18ac1a8a5",
-    "micro-1h": "micro-1h-afec0c0a0bbb22c8-f74e9d203299",
-    "micro-4h": "micro-4h-edcb3c3821078b0f-8b704caa2ef6"
+    "macro-1d": "macro-1d-df213e552ecc35b9-92dbcccb7ae0",
+    "macro-4h": "macro-4h-9b77accab70825f4-148dd37e9c2b",
+    "micro-1h": "micro-1h-afec0c0a0bbb22c8-42ab700b4ae3",
+    "micro-4h": "micro-4h-edcb3c3821078b0f-c3bb09052a27"
+  },
+  "delay_snapshot_ids": {
+    "5": "metrics-oi-delay-5m-7e1951fce70e28d5-44d42f24f7f6",
+    "10": "metrics-oi-delay-10m-35f5dfb1d69cc0b6-061f23ba9e2b",
+    "15": "metrics-oi-delay-15m-f8e5c0833d521b5f-68e35476f36c"
   },
   "coverage": {
     "funding": [
@@ -735,10 +740,10 @@
       },
       {
         "asset": "BNBUSDT",
-        "coverage": 1.0129870129870129,
+        "coverage": 1.0,
         "dataset": "funding",
         "excluded_periods": [],
-        "expected_rows": 77,
+        "expected_rows": 78,
         "findings": [],
         "identity_key": "funding|BNBUSDT|native|monthly|2026-07-01T00:00:00+00:00",
         "observed_rows": 78,
@@ -1467,10 +1472,10 @@
       },
       {
         "asset": "BTCUSDT",
-        "coverage": 1.0129870129870129,
+        "coverage": 1.0,
         "dataset": "funding",
         "excluded_periods": [],
-        "expected_rows": 77,
+        "expected_rows": 78,
         "findings": [],
         "identity_key": "funding|BTCUSDT|native|monthly|2026-07-01T00:00:00+00:00",
         "observed_rows": 78,
@@ -2199,10 +2204,10 @@
       },
       {
         "asset": "ETHUSDT",
-        "coverage": 1.0129870129870129,
+        "coverage": 1.0,
         "dataset": "funding",
         "excluded_periods": [],
-        "expected_rows": 77,
+        "expected_rows": 78,
         "findings": [],
         "identity_key": "funding|ETHUSDT|native|monthly|2026-07-01T00:00:00+00:00",
         "observed_rows": 78,
@@ -68596,8 +68601,8 @@
     }
   ],
   "excluded_periods": [],
-  "persistent_bytes": 760698935,
-  "peak_working_bytes": 0,
+  "persistent_bytes": 906320203,
+  "peak_working_bytes": 32768,
   "funding_status": "real",
   "oi_status": "real"
 }

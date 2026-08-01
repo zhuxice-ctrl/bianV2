@@ -1,6 +1,6 @@
 # Dual-Horizon Factor Summary
 
-- Analysis run: `d6ed4e97-2e14-4a67-a7f7-68853618d722`
+- Analysis run: `9eb6d9d1-df5f-471f-a49c-2398638f8375`
 - Engineering status: **completed**
 - Current Macro state: **range_low_vol**
 - Macro thresholds fitted through: `2026-07-25T16:00:00+00:00`
@@ -8,4 +8,4 @@
 - Candidate factors: **0**
 - Holdout accessed: **False**
 
-Gate reasons for every factor and the complete lifecycle state mapping are preserved in the JSON companion. Promotion status remains separate from engineering completion; no factor reached Candidate or Approved, so the holdout boundary remained protected.
+No factor reached Candidate or Approved, so the holdout boundary remained protected. All factor gate reasons are preserved in the JSON companion.
