@@ -63,3 +63,16 @@ Record each approved deviation from the implementation plans here with date, tas
 - Task 9: `reporting/artifacts.py` (ArtifactWriter with exclusive run dirs, atomic JSON writes, finite-value check) and `reporting/decision.py` (write_decision_packet with 7 required artifacts, 4 status types, zero-candidate = NO_PROMOTION). 14 tests pass.
 **Impact:** Complete dual-horizon pipeline from data acquisition through factor screening to decision packet generation. All 71 Plan 03.5 tests pass.
 **Consequence:** Tasks 10-11 (real data acquisition, cross-platform gates) are BLOCKED by sandbox network and TLS limitations. Patch file generated for application on the target environment.
+
+## 2026-07-31 Funding monthly-tail amendment
+
+- The evidence cutoff remains `2026-07-26T19:59:59.999Z`.
+- Funding now uses monthly archives through the cutoff month; the source plan
+  contains 3,117 objects and no Funding daily objects.
+- A cutoff-month HTTP 404 is persisted as
+  `FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE` and is resumable.
+- Canonical outputs are clipped by both event and availability time and live
+  below a `plan=` directory named by the first 16 source-plan hash characters;
+  prior blocked canonical files remain immutable.
+- REST Funding, imputation, changed assets, changed windows, and changed holdout
+  boundaries remain out of scope.
