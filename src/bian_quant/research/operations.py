@@ -422,15 +422,16 @@ def _resolve_delay_entries(
         matches = catalog.find_by_name(name)
         if not matches:
             raise AnalysisBlocked(f"OI_DELAY_SNAPSHOT_MISSING:{delay}")
-        if len(matches) != 1:
+        lineage_matches = [
+            entry
+            for entry in matches
+            if entry.manifest.layer == DatasetLayer.RESEARCH
+            and set(entry.manifest.parent_snapshot_ids) == required_parent_ids
+            and entry.path.is_file()
+        ]
+        if len(lineage_matches) != 1:
             raise AnalysisBlocked(f"OI_DELAY_SNAPSHOT_AMBIGUOUS:{delay}")
-        entry = matches[0]
-        if (
-            entry.manifest.layer != DatasetLayer.RESEARCH
-            or set(entry.manifest.parent_snapshot_ids) != required_parent_ids
-            or not entry.path.is_file()
-        ):
-            raise AnalysisBlocked(f"OI_DELAY_LINEAGE_INVALID:{delay}")
+        entry = lineage_matches[0]
         result[delay] = entry
     return result
 
