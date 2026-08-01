@@ -82,10 +82,7 @@ def dual_horizon_factor_specs(primary_interval: str = "4h") -> tuple[FactorSpec,
             factor_id="momentum_24",
             formula=f"close / close.shift({m}) - 1",
             direction="positive",
-            hypothesis=(
-                f"persistent medium-horizon price movement over {m} bars "
-                "may continue into the next bar"
-            ),
+            hypothesis="persistent medium-horizon price movement may continue into the next bar",
             required_columns=["close"],
         ),
         build(
