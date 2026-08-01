@@ -106,8 +106,7 @@ def test_metrics_row_unavailable_at_cutoff_is_not_observed() -> None:
     source = next(
         item
         for item in build_source_plan(config)
-        if item.identity_key
-        == "metrics_oi|BTCUSDT|native|daily|2026-07-26T00:00:00+00:00"
+        if item.identity_key == "metrics_oi|BTCUSDT|native|daily|2026-07-26T00:00:00+00:00"
     )
     times = pd.date_range(source.period_start, periods=240, freq="5min")
     frame = pd.DataFrame(

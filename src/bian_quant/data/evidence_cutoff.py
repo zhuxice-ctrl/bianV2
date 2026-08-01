@@ -35,8 +35,9 @@ class CutoffSlice:
 def _optional_time(frame: pd.DataFrame, column: str, operation: str) -> datetime | None:
     if frame.empty:
         return None
-    value = getattr(pd.to_datetime(frame[column], utc=True), operation)()
-    return value.to_pydatetime()
+    values = pd.to_datetime(frame[column], utc=True)
+    value = values.min() if operation == "min" else values.max()
+    return pd.Timestamp(value).to_pydatetime()
 
 
 def clip_to_evidence_cutoff(

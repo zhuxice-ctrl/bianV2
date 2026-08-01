@@ -78,23 +78,16 @@ def test_offline_pipeline_builds_cataloged_macro_and_micro_snapshots(tmp_path: P
     quality = json.loads(result.quality_artifact.read_text(encoding="utf-8"))
     assert quality["coverage_reports"]
     acquisition = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
-    assert acquisition["funding_tail_strategy"] == (
-        "monthly_archive_after_period_close"
-    )
+    assert acquisition["funding_tail_strategy"] == ("monthly_archive_after_period_close")
     assert acquisition["cutoff_evidence"] == quality["cutoff_evidence"]
     assert all(item["asset"] for item in quality["coverage_reports"])
     assert all(item["identity_key"] for item in quality["coverage_reports"])
     assert any(
-        item["dataset"] == "funding"
-        and item["post_cutoff_rows_excluded"] > 0
+        item["dataset"] == "funding" and item["post_cutoff_rows_excluded"] > 0
         for item in acquisition["cutoff_evidence"]
     )
-    assert all(
-        manifest.max_event_time <= config.as_of for manifest in result.snapshots
-    )
-    assert all(
-        manifest.max_available_time <= config.as_of for manifest in result.snapshots
-    )
+    assert all(manifest.max_event_time <= config.as_of for manifest in result.snapshots)
+    assert all(manifest.max_available_time <= config.as_of for manifest in result.snapshots)
 
     resumed = prepare_dual_horizon(
         config,
@@ -246,9 +239,7 @@ def test_cutoff_month_funding_404_persists_temporary_error(tmp_path: Path) -> No
     payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
     failed = [item for item in payload["results"] if item["status"] == "failed"]
     assert len(failed) == 3
-    assert {item["error_code"] for item in failed} == {
-        "FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"
-    }
+    assert {item["error_code"] for item in failed} == {"FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"}
     assert all(item["http_status"] == 404 for item in failed)
     assert all(item["attempt_count"] == 1 for item in failed)
     assert all(item["temporary"] is True for item in failed)

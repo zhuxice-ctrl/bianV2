@@ -303,9 +303,7 @@ def _quality_report(
             threshold=config.coverage.funding,
         )
     else:
-        metrics_event_cutoff = config.as_of - timedelta(
-            minutes=min(config.oi_delay_minutes)
-        )
+        metrics_event_cutoff = config.as_of - timedelta(minutes=min(config.oi_delay_minutes))
         metrics_period_end = min(
             natural_end,
             metrics_event_cutoff + timedelta(microseconds=1),
@@ -315,8 +313,7 @@ def _quality_report(
             expected_rows = max(
                 0,
                 math.floor(
-                    (min(natural_end, metrics_event_cutoff) - source.period_start)
-                    .total_seconds()
+                    (min(natural_end, metrics_event_cutoff) - source.period_start).total_seconds()
                     / 300
                 ),
             )
@@ -334,9 +331,7 @@ def _quality_report(
             message=f"{outside_rows} rows fall outside {source.identity_key}",
         )
         report = report.model_copy(update={"findings": (*report.findings, finding)})
-    return report.model_copy(
-        update={"asset": source.asset, "identity_key": source.identity_key}
-    )
+    return report.model_copy(update={"asset": source.asset, "identity_key": source.identity_key})
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -509,6 +504,7 @@ def prepare_dual_horizon(
                 }
             )
         else:
+            assert error is not None
             failure = classify_acquisition_failure(source, config, error)
             acquisition_failures.append(failure)
             acquisition_results.append(
@@ -700,11 +696,11 @@ def prepare_dual_horizon(
         item.model_dump(mode="json")
         for item in sorted(cutoff_evidence, key=lambda item: item.identity_key)
     ]
-    temporary_only = bool(acquisition_failures) and all(
-        item.temporary for item in acquisition_failures
-    ) and set(blocked_periods) == {
-        item.identity_key for item in acquisition_failures
-    }
+    temporary_only = (
+        bool(acquisition_failures)
+        and all(item.temporary for item in acquisition_failures)
+        and set(blocked_periods) == {item.identity_key for item in acquisition_failures}
+    )
     run_error_code = (
         "FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"
         if temporary_only and not any(report.blocking for report in coverage_reports)
