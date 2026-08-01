@@ -101,6 +101,66 @@ def test_cutoff_day_ignores_expected_archive_tail_after_cutoff() -> None:
     assert report.findings == ()
 
 
+def test_unclosed_daily_bar_has_zero_expected_rows() -> None:
+    config = DualHorizonAcquisition.from_yaml(CONFIG)
+    source = next(
+        item
+        for item in build_source_plan(config)
+        if item.identity_key == "ohlcv|BTCUSDT|1d|daily|2026-07-26T00:00:00+00:00"
+    )
+    frame = pd.DataFrame(
+        {
+            "asset": "BTCUSDT",
+            "event_time": pd.to_datetime([source.period_start], utc=True),
+            "available_time": pd.to_datetime(
+                [source.period_start + timedelta(days=1) - timedelta(milliseconds=1)],
+                utc=True,
+            ),
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+            "volume": 1.0,
+        }
+    )
+
+    report = _quality_report(source, frame, config)
+
+    assert report.observed_rows == 0
+    assert report.expected_rows == 0
+    assert report.findings == ()
+
+
+def test_closed_daily_bar_has_one_expected_row() -> None:
+    config = DualHorizonAcquisition.from_yaml(CONFIG)
+    source = next(
+        item
+        for item in build_source_plan(config)
+        if item.identity_key == "ohlcv|BTCUSDT|1d|daily|2026-07-25T00:00:00+00:00"
+    )
+    frame = pd.DataFrame(
+        {
+            "asset": "BTCUSDT",
+            "event_time": pd.to_datetime([source.period_start], utc=True),
+            "available_time": pd.to_datetime(
+                [source.period_start + timedelta(days=1) - timedelta(milliseconds=1)],
+                utc=True,
+            ),
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+            "volume": 1.0,
+        }
+    )
+
+    report = _quality_report(source, frame, config)
+
+    assert report.observed_rows == 1
+    assert report.expected_rows == 1
+    assert report.findings == ()
+
+
 def test_metrics_row_unavailable_at_cutoff_is_not_observed() -> None:
     config = DualHorizonAcquisition.from_yaml(CONFIG)
     source = next(

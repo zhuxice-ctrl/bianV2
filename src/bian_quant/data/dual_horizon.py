@@ -253,9 +253,24 @@ def _quality_report(
     outside_rows = len(frame) - len(source_frame)
     if source.dataset == SourceDataset.OHLCV:
         seconds = {"1h": 3600, "4h": 4 * 3600, "1d": 24 * 3600}[source.interval]
-        expected = max(
-            1,
-            math.ceil((period_end - source.period_start).total_seconds() / seconds),
+        available_event_cutoff = config.as_of - timedelta(seconds=seconds) + timedelta(
+            milliseconds=1
+        )
+        latest_eligible_event = min(
+            natural_end - timedelta(microseconds=1), available_event_cutoff
+        )
+        expected = (
+            max(
+                0,
+                math.floor(
+                    (latest_eligible_event - source.period_start)
+                    .total_seconds()
+                    / seconds
+                )
+                + 1,
+            )
+            if available_event_cutoff >= source.period_start
+            else 0
         )
         report = inspect_ohlcv_coverage(
             observed=in_period["event_time"].nunique(),
@@ -555,6 +570,8 @@ def prepare_dual_horizon(
             cutoff_evidence.append(cutoff_slice.evidence)
             eligible_frame = cutoff_slice.eligible
             if eligible_frame.empty:
+                if report.expected_rows == 0 and source.dataset == SourceDataset.OHLCV:
+                    continue
                 raise ValueError(
                     f"EVIDENCE_CUTOFF_VIOLATION: no eligible rows for {source.identity_key}"
                 )
