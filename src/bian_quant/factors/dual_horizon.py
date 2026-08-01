@@ -89,29 +89,21 @@ def dual_horizon_factor_specs(primary_interval: str = "4h") -> tuple[FactorSpec,
             factor_id="reversal_12",
             formula=f"-(close / close.shift({r}) - 1)",
             direction="positive",
-            hypothesis=(
-                f"short-horizon price dislocations over {r} bars "
-                "may mean-revert during the next bar"
-            ),
+            hypothesis="short-horizon price dislocations may mean-revert during the next bar",
             required_columns=["close"],
         ),
         build(
             factor_id="realized_vol_24",
             formula=f"std(log_return, {v})",
             direction="two_sided",
-            hypothesis=(
-                f"recent realized volatility over {v} bars may condition "
-                "the magnitude of the next return"
-            ),
+            hypothesis="recent realized volatility may condition the magnitude of the next return",
             required_columns=["close"],
         ),
         build(
             factor_id="volume_surprise_24",
             formula=f"zscore(volume, {vol})",
             direction="two_sided",
-            hypothesis=(
-                f"unusual trading activity over {vol} bars may reveal short-lived information flow"
-            ),
+            hypothesis="unusual trading activity may reveal short-lived information flow",
             required_columns=["volume"],
         ),
         build(
