@@ -1,7 +1,334 @@
 {
-  "code_sha": "bf4013c335d168b5698600aff4fa7e43e06384ea",
-  "status": "NOT_RUN",
-  "note": "Factor screening not executed in this run. Pipeline ready - run analyze-dual-horizon CLI on target environment.",
-  "factors": [],
-  "candidates": 0
+  "analysis_run_id": "d6ed4e97-2e14-4a67-a7f7-68853618d722",
+  "code_sha": "2a669e0797574ff70b9edc5190a60d19fd027e7a",
+  "status": "completed",
+  "macro_state": {
+    "decision_time": "2026-07-26T16:00:00+00:00",
+    "duration_bars": 26,
+    "label": "range_low_vol",
+    "reason_codes": [
+      "TREND_AT_OR_BELOW_Q60",
+      "VOLATILITY_AT_OR_BELOW_Q75"
+    ],
+    "threshold_values": {
+      "illiquidity_q95": 1.104432958132589e-12,
+      "trend_q60": 5.687805785309788,
+      "vol_48_q75": 0.01238555184828013
+    },
+    "thresholds_fitted_through": "2026-07-25T16:00:00+00:00",
+    "trailing_illiquidity": 3.2549924792465463e-13,
+    "trailing_trend": 0.5968779145624143,
+    "trailing_volatility": 0.0049602427685833846
+  },
+  "macro_fit_through": "2026-07-25T16:00:00+00:00",
+  "lifecycle_counts": {
+    "researching": 0,
+    "observed": 28,
+    "candidate": 0,
+    "approved": 0
+  },
+  "factor_gate_reasons": {
+    "amihud_24": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.1807b0e318f17095": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.3aa0d0651a34910a": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ],
+    "candidate.4e0318baa41c3645": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ],
+    "candidate.56feff19f8aaec1a": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.58be5d94c02113dd": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.5a0a67e5868aa3f2": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ],
+    "candidate.5e419acd14aa6282": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ],
+    "candidate.67bc4e119cc999d7": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.726f0ae75b87d097": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.72884a2dd0566b9e": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.7ebd57fa326ea02d": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ],
+    "candidate.9466e2c839a0d46b": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ],
+    "candidate.a244e2ba192cfa77": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.b3c1c10df4555f31": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.b48f9d1b306371e7": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.de187bd870068e04": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.f3b13d25716925ac": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.f7e72d0fc19e4d6a": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.fc7843a6bace93e6": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "candidate.feca6f6a5a402b68": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ],
+    "funding_zscore": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "leverage_crowding": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_SENSITIVITY_UNAVAILABLE",
+      "OI_DELAY_DIRECTION_UNSTABLE"
+    ],
+    "momentum_24": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ],
+    "oi_change": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_SENSITIVITY_UNAVAILABLE",
+      "OI_DELAY_DIRECTION_UNSTABLE"
+    ],
+    "realized_vol_24": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "reversal_12": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "ASSETS_LT_2",
+      "REDUNDANT_NON_REPRESENTATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT"
+    ],
+    "volume_surprise_24": [
+      "BH_SURVIVING_SLICES_LT_2",
+      "INDEPENDENT_SLICES_LT_2",
+      "DIRECTION_AGREEMENT_LT_60PCT",
+      "ASSETS_LT_2",
+      "FINAL_FOLD_5BPS_NON_POSITIVE",
+      "TEN_BPS_NEGATIVE",
+      "ASSET_SUPPORT_CONCENTRATION_GT_50PCT",
+      "REGIME_SUPPORT_CONCENTRATION_GT_50PCT",
+      "ONE_HOUR_DIRECTION_UNSTABLE"
+    ]
+  },
+  "planned_lifecycle_states": {
+    "amihud_24": "observed",
+    "candidate.1807b0e318f17095": "observed",
+    "candidate.3aa0d0651a34910a": "observed",
+    "candidate.4e0318baa41c3645": "observed",
+    "candidate.56feff19f8aaec1a": "observed",
+    "candidate.58be5d94c02113dd": "observed",
+    "candidate.5a0a67e5868aa3f2": "observed",
+    "candidate.5e419acd14aa6282": "observed",
+    "candidate.67bc4e119cc999d7": "observed",
+    "candidate.726f0ae75b87d097": "observed",
+    "candidate.72884a2dd0566b9e": "observed",
+    "candidate.7ebd57fa326ea02d": "observed",
+    "candidate.9466e2c839a0d46b": "observed",
+    "candidate.a244e2ba192cfa77": "observed",
+    "candidate.b3c1c10df4555f31": "observed",
+    "candidate.b48f9d1b306371e7": "observed",
+    "candidate.de187bd870068e04": "observed",
+    "candidate.f3b13d25716925ac": "observed",
+    "candidate.f7e72d0fc19e4d6a": "observed",
+    "candidate.fc7843a6bace93e6": "observed",
+    "candidate.feca6f6a5a402b68": "observed",
+    "funding_zscore": "observed",
+    "leverage_crowding": "observed",
+    "momentum_24": "observed",
+    "oi_change": "observed",
+    "realized_vol_24": "observed",
+    "reversal_12": "observed",
+    "volume_surprise_24": "observed"
+  },
+  "holdout_access_history": {
+    "accessed": false,
+    "candidate_factor_ids": []
+  }
 }

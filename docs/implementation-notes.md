@@ -76,3 +76,10 @@ Record each approved deviation from the implementation plans here with date, tas
   prior blocked canonical files remain immutable.
 - REST Funding, imputation, changed assets, changed windows, and changed holdout
   boundaries remain out of scope.
+
+## 2026-08-02 Plan 03.5 verified real run
+
+- Acquisition run `fb292e14-6df2-4d94-88e2-57dddb2ce1ef` verified all 3,117 planned objects with the locked cutoff and monthly Funding-tail strategy.
+- Resumability completed with all 3,117 objects skipped; source-plan hash, coverage, cutoff evidence, and snapshot content were reproducible.
+- Analysis run `d6ed4e97-2e14-4a67-a7f7-68853618d722` completed with zero Candidate factors; holdout was not opened.
+- Current Macro state is `range_low_vol` with thresholds fitted through `2026-07-25T16:00:00+00:00`.
