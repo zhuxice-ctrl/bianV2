@@ -99,3 +99,27 @@ def test_cutoff_day_ignores_expected_archive_tail_after_cutoff() -> None:
     assert report.observed_rows == 20
     assert report.expected_rows == 20
     assert report.findings == ()
+
+
+def test_metrics_row_unavailable_at_cutoff_is_not_observed() -> None:
+    config = DualHorizonAcquisition.from_yaml(CONFIG)
+    source = next(
+        item
+        for item in build_source_plan(config)
+        if item.identity_key
+        == "metrics_oi|BTCUSDT|native|daily|2026-07-26T00:00:00+00:00"
+    )
+    times = pd.date_range(source.period_start, periods=240, freq="5min")
+    frame = pd.DataFrame(
+        {
+            "asset": "BTCUSDT",
+            "event_time": times,
+            "available_time": times + timedelta(minutes=5),
+            "sum_open_interest": 100.0,
+            "sum_open_interest_value": 200.0,
+        }
+    )
+    report = _quality_report(source, frame, config)
+    assert report.observed_rows == 239
+    assert report.expected_rows == 239
+    assert report.findings == ()

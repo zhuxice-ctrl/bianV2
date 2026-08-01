@@ -27,6 +27,8 @@ class CoverageReport(BaseModel):
     threshold: float
     excluded_periods: tuple[str, ...] = ()
     findings: tuple[QualityFinding, ...] = ()
+    asset: str | None = None
+    identity_key: str | None = None
 
     @property
     def blocking(self) -> bool:

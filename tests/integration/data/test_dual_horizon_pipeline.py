@@ -8,6 +8,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.error import HTTPError
 
 from bian_quant.data.acquisition import DualHorizonAcquisition, build_source_plan
 from bian_quant.data.dual_horizon import (
@@ -28,6 +29,7 @@ def _miniature_config(tmp_path: Path) -> DualHorizonAcquisition:
         macro_intervals=("1d", "4h"),
         micro_intervals=("1h", "4h"),
         oi_delay_minutes=(5, 10, 15),
+        funding_tail_strategy="monthly_archive_after_period_close",
         parent_snapshot_ids=(),
         raw_root=tmp_path / "raw",
         canonical_root=tmp_path / "canonical",
@@ -75,6 +77,24 @@ def test_offline_pipeline_builds_cataloged_macro_and_micro_snapshots(tmp_path: P
     }
     quality = json.loads(result.quality_artifact.read_text(encoding="utf-8"))
     assert quality["coverage_reports"]
+    acquisition = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    assert acquisition["funding_tail_strategy"] == (
+        "monthly_archive_after_period_close"
+    )
+    assert acquisition["cutoff_evidence"] == quality["cutoff_evidence"]
+    assert all(item["asset"] for item in quality["coverage_reports"])
+    assert all(item["identity_key"] for item in quality["coverage_reports"])
+    assert any(
+        item["dataset"] == "funding"
+        and item["post_cutoff_rows_excluded"] > 0
+        for item in acquisition["cutoff_evidence"]
+    )
+    assert all(
+        manifest.max_event_time <= config.as_of for manifest in result.snapshots
+    )
+    assert all(
+        manifest.max_available_time <= config.as_of for manifest in result.snapshots
+    )
 
     resumed = prepare_dual_horizon(
         config,
@@ -94,10 +114,10 @@ def test_local_only_pipeline_blocks_with_exact_missing_objects(tmp_path: Path) -
     result = prepare_dual_horizon(config, code_sha="b" * 40)
     assert result.status == DualHorizonStatus.BLOCKED
     assert result.snapshots == ()
-    assert len(result.blocked_periods) == 45
+    assert len(result.blocked_periods) == 39
     payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
-    assert payload["planned_objects"] == 45
-    assert len([item for item in payload["results"] if item["status"] == "failed"]) == 45
+    assert payload["planned_objects"] == 39
+    assert len([item for item in payload["results"] if item["status"] == "failed"]) == 39
 
 
 def test_acquisition_honors_locked_worker_bound_and_persists_plan_order(
@@ -201,3 +221,35 @@ def test_worker_bound_parse_failure_is_blocked_and_persists_sorted_results(
         item for item in payload["results"] if item["identity_key"] == failed_identity
     ]
     assert [item["status"] for item in failed_results] == ["downloaded", "parse_failed"]
+
+
+def test_cutoff_month_funding_404_persists_temporary_error(tmp_path: Path) -> None:
+    config = _miniature_config(tmp_path)
+    inner = FixtureDownloader(FIXTURES)
+
+    class TailUnavailableDownloader:
+        def acquire(self, source, current_config):
+            if (
+                source.dataset.value == "funding"
+                and source.period_start.month == current_config.as_of.month
+            ):
+                raise HTTPError(source.url, 404, "Not Found", hdrs=None, fp=None)
+            return inner.acquire(source, current_config)
+
+    result = prepare_dual_horizon(
+        config,
+        code_sha="e" * 40,
+        downloader=TailUnavailableDownloader(),
+    )
+    assert result.status == DualHorizonStatus.BLOCKED
+    assert result.error_code == "FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"
+    payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    failed = [item for item in payload["results"] if item["status"] == "failed"]
+    assert len(failed) == 3
+    assert {item["error_code"] for item in failed} == {
+        "FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"
+    }
+    assert all(item["http_status"] == 404 for item in failed)
+    assert all(item["attempt_count"] == 1 for item in failed)
+    assert all(item["temporary"] is True for item in failed)
+    assert result.snapshots == ()

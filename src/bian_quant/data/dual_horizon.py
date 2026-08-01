@@ -27,6 +27,10 @@ from bian_quant.data.acquisition import (
     check_disk_budget,
     source_plan_payload,
 )
+from bian_quant.data.acquisition_failures import (
+    AcquisitionFailureEvidence,
+    classify_acquisition_failure,
+)
 from bian_quant.data.adapters.binance_archive import download_verified
 from bian_quant.data.adapters.raw import (
     AcquisitionObjectResult,
@@ -53,6 +57,12 @@ from bian_quant.data.derivatives_quality import (
     inspect_funding,
     inspect_metrics,
     inspect_ohlcv_coverage,
+)
+from bian_quant.data.evidence_cutoff import (
+    CutoffEvidence,
+    canonical_plan_path,
+    canonical_snapshot_id,
+    clip_to_evidence_cutoff,
 )
 from bian_quant.data.snapshots import (
     build_delay_views,
@@ -172,9 +182,15 @@ class FixtureDownloader:
                 )
         elif source.dataset == SourceDataset.FUNDING:
             rows = [header]
-            for index in range(3):
-                event = start + timedelta(hours=8 * index)
+            event = start
+            natural_end = (
+                start.replace(year=start.year + 1, month=1)
+                if start.month == 12
+                else start.replace(month=start.month + 1)
+            )
+            while event < natural_end:
                 rows.append(f"{int(event.timestamp() * 1000)},8,0.0001")
+                event += timedelta(hours=8)
         else:
             rows = [header]
             for index in range(3):
@@ -230,7 +246,10 @@ def _quality_report(
             source_mask = right_closed
             metrics_right_closed = True
     source_frame = frame.loc[source_mask]
-    in_period = source_frame.loc[source_frame["event_time"] <= config.as_of]
+    in_period = source_frame.loc[
+        (source_frame["event_time"] <= config.as_of)
+        & (source_frame["available_time"] <= config.as_of)
+    ]
     outside_rows = len(frame) - len(source_frame)
     if source.dataset == SourceDataset.OHLCV:
         seconds = {"1h": 3600, "4h": 4 * 3600, "1d": 24 * 3600}[source.interval]
@@ -284,17 +303,27 @@ def _quality_report(
             threshold=config.coverage.funding,
         )
     else:
+        metrics_event_cutoff = config.as_of - timedelta(
+            minutes=min(config.oi_delay_minutes)
+        )
+        metrics_period_end = min(
+            natural_end,
+            metrics_event_cutoff + timedelta(microseconds=1),
+        )
         expected_rows = None
         if metrics_right_closed:
-            effective_end = min(natural_end, config.as_of)
             expected_rows = max(
                 0,
-                math.floor((effective_end - source.period_start).total_seconds() / 300),
+                math.floor(
+                    (min(natural_end, metrics_event_cutoff) - source.period_start)
+                    .total_seconds()
+                    / 300
+                ),
             )
         report = inspect_metrics(
             in_period,
             period_start=source.period_start,
-            period_end=period_end,
+            period_end=metrics_period_end,
             threshold=config.coverage.metrics_oi,
             expected_rows=expected_rows,
         )
@@ -305,7 +334,9 @@ def _quality_report(
             message=f"{outside_rows} rows fall outside {source.identity_key}",
         )
         report = report.model_copy(update={"findings": (*report.findings, finding)})
-    return report
+    return report.model_copy(
+        update={"asset": source.asset, "identity_key": source.identity_key}
+    )
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -436,19 +467,20 @@ def prepare_dual_horizon(
     peak_reduction = 0
 
     acquisition_results: list[dict[str, object]] = []
+    acquisition_failures: list[AcquisitionFailureEvidence] = []
     acquired: dict[str, AcquisitionObjectResult] = {}
     blocked_periods: list[str] = []
 
     def acquire_one(
         source: SourceObject,
-    ) -> tuple[SourceObject, AcquisitionObjectResult | None, str | None]:
+    ) -> tuple[SourceObject, AcquisitionObjectResult | None, Exception | None]:
         try:
             return source, downloader.acquire(source, config), None
-        except Exception as exc:
-            return source, None, str(exc)
+        except Exception as error:
+            return source, None, error
 
     completed_outcomes: dict[
-        int, tuple[SourceObject, AcquisitionObjectResult | None, str | None]
+        int, tuple[SourceObject, AcquisitionObjectResult | None, Exception | None]
     ] = {}
     with ThreadPoolExecutor(max_workers=config.max_workers) as executor:
         indexed_futures = {
@@ -477,11 +509,13 @@ def prepare_dual_horizon(
                 }
             )
         else:
+            failure = classify_acquisition_failure(source, config, error)
+            acquisition_failures.append(failure)
             acquisition_results.append(
                 {
                     "identity_key": source.identity_key,
                     "status": "failed",
-                    "error": error or "RAW_DOWNLOAD_FAILED",
+                    **failure.model_dump(mode="json", exclude={"identity_key"}),
                 }
             )
             blocked_periods.append(source.identity_key)
@@ -492,6 +526,7 @@ def prepare_dual_horizon(
     funding_frames: list[pd.DataFrame] = []
     metrics_frames: list[pd.DataFrame] = []
     coverage_reports: list[CoverageReport] = []
+    cutoff_evidence: list[CutoffEvidence] = []
 
     for source in plan:
         acquired_result = acquired.get(source.identity_key)
@@ -506,25 +541,44 @@ def prepare_dual_horizon(
                     interval=source.interval,
                     ingested_at=ingested_at,
                 )
-                ohlcv_frames.append(frame)
             elif source.dataset == SourceDataset.FUNDING:
                 frame = canonicalize_funding_zip(
                     acquired_result.path,
                     asset=source.asset,
                     ingested_at=ingested_at,
                 )
-                funding_frames.append(frame)
             else:
                 frame = canonicalize_metrics_zip(
                     acquired_result.path,
                     ingested_at=ingested_at,
                     publication_delay=timedelta(minutes=5),
                 )
-                metrics_frames.append(frame)
             report = _quality_report(source, frame, config)
             coverage_reports.append(report)
-            canonical_path = config.canonical_root / source.relative_path.with_suffix(".parquet")
-            content_sha = write_canonical_partition(frame, canonical_path)
+            cutoff_slice = clip_to_evidence_cutoff(source, frame, as_of=config.as_of)
+            cutoff_evidence.append(cutoff_slice.evidence)
+            eligible_frame = cutoff_slice.eligible
+            if eligible_frame.empty:
+                raise ValueError(
+                    f"EVIDENCE_CUTOFF_VIOLATION: no eligible rows for {source.identity_key}"
+                )
+            if source.dataset == SourceDataset.OHLCV:
+                ohlcv_frames.append(eligible_frame)
+            elif source.dataset == SourceDataset.FUNDING:
+                funding_frames.append(eligible_frame)
+            else:
+                metrics_frames.append(eligible_frame)
+            canonical_path = canonical_plan_path(
+                config.canonical_root,
+                plan_hash=plan_hash,
+                relative_path=source.relative_path,
+            )
+            content_sha = write_canonical_partition(eligible_frame, canonical_path)
+            canonical_id = canonical_snapshot_id(
+                source,
+                content_sha=content_sha,
+                plan_hash=plan_hash,
+            )
             canonical_config = json.dumps(
                 {
                     "identity_key": source.identity_key,
@@ -534,18 +588,15 @@ def prepare_dual_horizon(
                 separators=(",", ":"),
             )
             canonical_manifest = DatasetManifest(
-                snapshot_id=(
-                    f"canonical-{source.dataset.value}-{content_sha[:16]}-"
-                    f"{hashlib.sha256(source.identity_key.encode()).hexdigest()[:12]}"
-                ),
+                snapshot_id=canonical_id,
                 layer=DatasetLayer.CANONICAL,
                 name=f"canonical-{source.dataset.value}-{source.interval}",
                 content_sha256=content_sha,
-                row_count=len(frame),
-                min_event_time=frame["event_time"].min(),
-                max_event_time=frame["event_time"].max(),
-                min_available_time=frame["available_time"].min(),
-                max_available_time=frame["available_time"].max(),
+                row_count=len(eligible_frame),
+                min_event_time=eligible_frame["event_time"].min(),
+                max_event_time=eligible_frame["event_time"].max(),
+                min_available_time=eligible_frame["available_time"].min(),
+                max_available_time=eligible_frame["available_time"].max(),
                 parent_snapshot_ids=[f"raw-{acquired_result.manifest.content_sha256}"],
                 config_json=canonical_config,
             )
@@ -577,7 +628,6 @@ def prepare_dual_horizon(
         ohlcv_combined = pd.concat(ohlcv_frames, ignore_index=True)
         funding_combined = pd.concat(funding_frames, ignore_index=True)
         metrics_combined = pd.concat(metrics_frames, ignore_index=True)
-        ohlcv_combined = ohlcv_combined.loc[ohlcv_combined["event_time"] <= config.as_of]
         macro_ohlcv = ohlcv_combined.loc[ohlcv_combined["event_time"] >= config.macro_start]
         micro_ohlcv = ohlcv_combined.loc[ohlcv_combined["event_time"] >= config.micro_start]
         raw_hashes = sorted(result.manifest.content_sha256 for result in acquired.values())
@@ -646,6 +696,20 @@ def prepare_dual_horizon(
             str(item["status"]),
         )
     )
+    cutoff_payload = [
+        item.model_dump(mode="json")
+        for item in sorted(cutoff_evidence, key=lambda item: item.identity_key)
+    ]
+    temporary_only = bool(acquisition_failures) and all(
+        item.temporary for item in acquisition_failures
+    ) and set(blocked_periods) == {
+        item.identity_key for item in acquisition_failures
+    }
+    run_error_code = (
+        "FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"
+        if temporary_only and not any(report.blocking for report in coverage_reports)
+        else ("DATA_PIPELINE_BLOCKED" if blocked_periods else None)
+    )
     acquisition_data: dict[str, object] = {
         "run_id": run_manifest.run_id,
         "status": status.value,
@@ -655,12 +719,16 @@ def prepare_dual_horizon(
         "blocked_periods": blocked_periods,
         "persistent_bytes": persistent,
         "peak_working_bytes": peak_reduction,
+        "funding_tail_strategy": config.funding_tail_strategy,
+        "cutoff_evidence": cutoff_payload,
     }
     quality_data: dict[str, object] = {
         "run_id": run_manifest.run_id,
         "status": status.value,
         "coverage_reports": [report.model_dump(mode="json") for report in coverage_reports],
         "blocked_periods": blocked_periods,
+        "funding_tail_strategy": config.funding_tail_strategy,
+        "cutoff_evidence": cutoff_payload,
     }
     _write_json(acquisition_artifact, acquisition_data)
     _write_json(quality_artifact, quality_data)
@@ -678,7 +746,7 @@ def prepare_dual_horizon(
         acquisition_artifact=acquisition_artifact,
         quality_artifact=quality_artifact,
         blocked_periods=tuple(blocked_periods),
-        error_code=None if not blocked_periods else "DATA_PIPELINE_BLOCKED",
+        error_code=run_error_code,
         persistent_bytes=persistent,
         peak_working_bytes=peak_reduction,
     )
