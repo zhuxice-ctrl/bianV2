@@ -35,6 +35,7 @@ def test_delay_views_have_distinct_snapshot_ids(tmp_path: Path) -> None:
         delays=(5, 10, 15),
         root=tmp_path,
         parent_snapshot_ids=["metrics-canonical"],
+        as_of=fixture["available_time"].max() + pd.Timedelta(minutes=15),
     )
     assert set(ids) == {5, 10, 15}
     assert len(set(ids.values())) == 3

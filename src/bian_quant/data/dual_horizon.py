@@ -305,12 +305,19 @@ def _quality_report(
                 )
         report = report.model_copy(update={"findings": tuple(findings)})
     elif source.dataset == SourceDataset.FUNDING:
+        complete_report = inspect_funding(
+            source_frame,
+            period_start=source.period_start,
+            period_end=natural_end,
+            threshold=config.coverage.funding,
+        )
         report = inspect_funding(
             in_period,
             period_start=source.period_start,
             period_end=period_end,
             threshold=config.coverage.funding,
         )
+        report = report.model_copy(update={"findings": complete_report.findings})
     else:
         metrics_event_cutoff = config.as_of - timedelta(minutes=min(config.oi_delay_minutes))
         metrics_period_end = min(
@@ -510,6 +517,7 @@ def prepare_dual_horizon(
                     "status": result.status,
                     "content_sha256": result.manifest.content_sha256,
                     "byte_count": result.manifest.byte_count,
+                    "fetched_at": result.manifest.fetched_at.isoformat(),
                 }
             )
         else:
@@ -674,12 +682,15 @@ def prepare_dual_horizon(
             config_json=snapshot_config,
         )
         snapshots.extend(micro_snaps)
-        build_delay_views(
+        delay_snapshot_ids = build_delay_views(
             metrics_combined,
             delays=config.oi_delay_minutes,
             root=config.research_root,
             parent_snapshot_ids=tuple(s.snapshot_id for s in snapshots),
+            as_of=config.as_of,
         )
+    else:
+        delay_snapshot_ids = {}
 
     # Calculate persistent bytes
     persistent = (
@@ -728,6 +739,8 @@ def prepare_dual_horizon(
         "peak_working_bytes": peak_reduction,
         "funding_tail_strategy": config.funding_tail_strategy,
         "cutoff_evidence": cutoff_payload,
+        "snapshot_ids": [snapshot.snapshot_id for snapshot in snapshots],
+        "delay_snapshot_ids": delay_snapshot_ids,
     }
     quality_data: dict[str, object] = {
         "run_id": run_manifest.run_id,

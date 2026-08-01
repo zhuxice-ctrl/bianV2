@@ -215,6 +215,7 @@ def build_delay_views(
     delays: tuple[int, ...],
     root: Path,
     parent_snapshot_ids: tuple[str, ...],
+    as_of: datetime,
 ) -> dict[int, str]:
     """Build separate delay-scenario views for OI publication delay.
 
@@ -228,6 +229,9 @@ def build_delay_views(
         delay_td = timedelta(minutes=delay_minutes)
         delayed["available_time"] = delayed["event_time"] + delay_td
         delayed["availability_assumption"] = f"BINANCE_METRICS_DELAY_{delay_minutes}M"
+        delayed = delayed.loc[
+            (delayed["event_time"] <= as_of) & (delayed["available_time"] <= as_of)
+        ].copy()
 
         spec = SnapshotSpec(
             name=f"metrics-oi-delay-{delay_minutes}m",

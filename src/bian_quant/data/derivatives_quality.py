@@ -143,7 +143,7 @@ def inspect_funding(
             )
         )
     duration = period_end - period_start
-    expected = max(1, round(duration.total_seconds() / 3600 / interval_hours))
+    expected = max(1, math.ceil(duration.total_seconds() / 3600 / interval_hours))
 
     observed = len(frame)
     coverage = observed / expected if expected > 0 else 1.0
