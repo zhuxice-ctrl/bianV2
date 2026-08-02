@@ -31,8 +31,8 @@ its members.
   trading.
 - No mutation, deletion, or reuse as-if-current of the completed Plan 03.5
   evidence.
-- No REST Funding substitution, missing-value imputation, or relaxed
-  event-time/availability-time cutoff.
+- No REST Funding substitution in research or holdout, missing-value
+  imputation, or relaxed event-time/availability-time cutoff.
 - No holdout evaluation for an observed or researching factor.
 
 ## A. Popular-universe data contract
@@ -139,6 +139,17 @@ after the required inputs become available and uses read-only market-data
 adapters. It never imports or reads exchange API secrets and has no live-order
 adapter.
 
+The paper layer may make authentication-free, read-only requests to Binance
+USD-M market-data endpoints only: `/fapi/v1/klines` for completed four-hour
+bars, `/fapi/v1/exchangeInfo` for contract filters, and `/fapi/v1/fundingRate`
+for settled Funding. Each response is captured before use with request URL,
+request time, server/data timestamp, body SHA-256, and an immutable raw payload
+path. A missing, stale, malformed, future-dated, or rate-limited response blocks
+that scheduled paper decision and records a no-trade artifact. These public
+responses are paper-execution inputs only: they cannot populate canonical
+research data, alter universe membership, change a factor score, enter
+Candidate/Approved evaluation, or be used by `evaluate-holdout`.
+
 The runner must operate for at least 30 consecutive calendar days. It writes
 append-only artifacts for every scheduled decision, including no-trade decisions,
 stale-data blocks, rejected orders, fills, equity, gross/net exposure, fees,
@@ -181,6 +192,9 @@ The plans must include deterministic unit, integration, and contract tests for:
   deterministic next-available-bar execution;
 - paper artifacts for entries, exits, no-trade outcomes, stale-data blocks,
   rejected orders, and exact four-hour schedule continuity;
+- public paper-data capture metadata, stale/malformed/rate-limited response
+  blocks, and a hard boundary preventing captured paper data from entering
+  research or holdout inputs;
 - absence of live-order clients and API-secret reads in the paper execution
   path.
 
