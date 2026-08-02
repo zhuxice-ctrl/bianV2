@@ -36,6 +36,7 @@ SNAPSHOT_COLUMNS = (
     "asset",
     "event_time",
     "available_time",
+    "open",
     "close",
     "high",
     "low",
@@ -139,11 +140,18 @@ def analyze_cataloged_dual_horizon(
         acquisition, quality = _load_acquisition_evidence(config, code_sha=code_sha)
         if acquisition.get("status") != "passed" or quality.get("status") != "passed":
             raise AnalysisBlocked("SOURCE_RUN_BLOCKED")
+        eligibility_frame, universe_artifact_ids = _load_popular_universe_eligibility(
+            snapshots, config
+        )
         manifest = RunManifest.create(
             strategy_name="dual_horizon_analysis",
             code_sha=code_sha,
             dataset_snapshot_ids=list(snapshots.snapshot_ids),
-            config={"as_of": config.as_of.isoformat(), "snapshot_names": REQUIRED_SNAPSHOTS},
+            config={
+                "as_of": config.as_of.isoformat(),
+                "snapshot_names": REQUIRED_SNAPSHOTS,
+                "popular_universe_artifact_ids": universe_artifact_ids,
+            },
             seed=0,
             locked_holdout=LockedHoldout(
                 start=config.factor_protocol.holdout_start,
@@ -177,6 +185,7 @@ def analyze_cataloged_dual_horizon(
         stage_dir = config.artifact_root / "factor-stages"
         screening = run_dual_horizon_screening(
             frames["micro-4h"],
+            eligibility_frame=eligibility_frame,
             config={
                 "run_id": manifest.run_id,
                 "artifact_dir": stage_dir,
@@ -349,6 +358,12 @@ def evaluate_candidate_holdout(
             passed, reasons, metrics = evaluator(holdout, spec)
             if not passed and "FACTOR_PROMOTION_REJECTED" not in reasons:
                 reasons.insert(0, "FACTOR_PROMOTION_REJECTED")
+            holdout_artifact_ids: list[str] = []
+            try:
+                snapshot_identity = json.loads(entry.manifest.config_json)
+                holdout_artifact_ids = snapshot_identity.get("popular_universe_artifact_ids", [])
+            except json.JSONDecodeError:
+                pass
             payload = {
                 "run_id": run_id,
                 "snapshot_id": snapshot_id,
@@ -358,6 +373,7 @@ def evaluate_candidate_holdout(
                 "status": "passed" if passed else "rejected",
                 "reason_codes": reasons,
                 "metrics": metrics,
+                "popular_universe_artifact_ids": holdout_artifact_ids,
             }
             _write_exclusive_json(artifact_path, payload)
             if passed:
@@ -396,6 +412,61 @@ def evaluate_candidate_holdout(
                 },
             )
             raise
+
+
+def _load_popular_universe_eligibility(
+    snapshots: CatalogedSnapshots, config: DualHorizonAcquisition
+) -> tuple[pd.DataFrame | None, list[str]]:
+    """Load popular-universe artifacts referenced by snapshot config.
+
+    Returns (eligibility_frame, artifact_ids).  When no artifacts are
+    referenced, returns (None, []).
+    """
+    artifact_ids: list[str] = []
+    for entry in snapshots.entries.values():
+        try:
+            identity = json.loads(entry.manifest.config_json)
+        except json.JSONDecodeError:
+            continue
+        ids = identity.get("popular_universe_artifact_ids", [])
+        if ids:
+            artifact_ids = ids
+            break
+
+    if not artifact_ids:
+        return None, []
+
+    artifacts_dir = config.artifact_root / "popular-universe"
+    if not artifacts_dir.is_dir():
+        raise AnalysisBlocked("POPULAR_UNIVERSE_DIR_MISSING")
+
+    rows: list[dict[str, Any]] = []
+    found_ids: set[str] = set()
+    for path in sorted(artifacts_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if payload.get("artifact_id") not in artifact_ids:
+            continue
+        found_ids.add(payload["artifact_id"])
+        selection_time = payload["selection_time"]
+        for member in payload.get("members", []):
+            rows.append(
+                {
+                    "asset": member["asset"],
+                    "selection_time": selection_time,
+                    "rank": member["rank"],
+                }
+            )
+
+    missing = set(artifact_ids) - found_ids
+    if missing:
+        raise AnalysisBlocked(f"POPULAR_UNIVERSE_ARTIFACT_MISSING:{','.join(sorted(missing))}")
+
+    if not rows:
+        return None, artifact_ids
+    return pd.DataFrame(rows), artifact_ids
 
 
 def _read_snapshot(entry: CatalogEntry) -> pd.DataFrame:
@@ -629,3 +700,188 @@ def _write_exclusive_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("x", encoding="utf-8") as handle:
         json.dump(payload, handle, sort_keys=True, indent=2, allow_nan=False, default=str)
+
+
+@dataclass(frozen=True)
+class SmallAccountBacktestResult:
+    """Result of a 100 USDT portfolio backtest gated on Approved factor."""
+
+    run_id: str
+    status: str
+    factor_id: str
+    factor_version: str
+    artifact_path: Path
+    trade_count: int
+    final_equity: str
+    maximum_gross: str
+    reason_codes: tuple[str, ...] = ()
+
+
+def run_small_account_backtest(
+    config: DualHorizonAcquisition,
+    *,
+    factor_id: str,
+    factor_version: str,
+    snapshot_id: str,
+    backtest_config_path: Path,
+    run_id: str | None = None,
+) -> SmallAccountBacktestResult:
+    """Run a 100 USDT portfolio backtest gated on an Approved factor.
+
+    Raises PermissionError if the factor is not in APPROVED state.
+    """
+    from decimal import Decimal
+
+    from bian_quant.backtest.events import Bar, SignalEvent
+    from bian_quant.backtest.portfolio import replay_ranked_portfolio
+    from bian_quant.backtest.small_account import ContractRules, SmallAccountLimits
+
+    # Gate: factor must be APPROVED.
+    with FactorRegistry(config.factor_registry_path) as factors:
+        factors.get(factor_id, factor_version)
+        state = factors.state(factor_id, factor_version)
+        if state != FactorState.APPROVED:
+            raise PermissionError(
+                f"BACKTEST_ACCESS_DENIED: factor {factor_id}@{factor_version} "
+                f"is {state.value}, not APPROVED"
+            )
+
+    # Load locked Micro-4h snapshot.
+    entry = DatasetCatalog(config.catalog_path).get(snapshot_id)
+    if entry.manifest.name != "micro-4h" or entry.manifest.layer != DatasetLayer.RESEARCH:
+        raise PermissionError("BACKTEST_ACCESS_DENIED: snapshot is not locked Micro 4h")
+    if not entry.path.is_file():
+        raise PermissionError("BACKTEST_ACCESS_DENIED: snapshot file is missing")
+
+    frame = _read_snapshot(entry)
+    computed = compute_dual_horizon_factor_columns(frame, interval="4h")
+    if factor_id not in computed.columns:
+        raise AnalysisBlocked(f"FACTOR_COLUMN_MISSING:{factor_id}")
+
+    limits = SmallAccountLimits.from_yaml(backtest_config_path)
+
+    # Derive per-asset contract rules with conservative defaults.
+    contract_rules: dict[str, ContractRules] = {}
+    for asset in computed["asset"].unique():
+        contract_rules[str(asset)] = ContractRules(
+            asset=str(asset),
+            min_qty=Decimal("0.001"),
+            step_size=Decimal("0.001"),
+            min_notional=Decimal("5"),
+            tick_size=Decimal("0.01"),
+        )
+
+    # Build a single-timeline bar list (one bar per unique timestamp).
+    # Use the average close across assets as the representative price.
+    timeline = (
+        computed.groupby("available_time", as_index=False)
+        .agg(
+            open=("open", "mean"),
+            high=("high", "max"),
+            low=("low", "min"),
+            close=("close", "mean"),
+            volume=("volume", "sum"),
+        )
+        .sort_values("available_time")
+        .reset_index(drop=True)
+    )
+    bars: list[Bar] = []
+    for row in timeline.to_dict(orient="records"):
+        timestamp = pd.Timestamp(row["available_time"]).to_pydatetime()
+        bars.append(
+            Bar(
+                timestamp=timestamp,
+                open=Decimal(str(row["open"])),
+                high=Decimal(str(row["high"])),
+                low=Decimal(str(row["low"])),
+                close=Decimal(str(row["close"])),
+                volume=Decimal(str(row["volume"])),
+            )
+        )
+
+    # Generate ranked signals from factor values.
+    signals: list[SignalEvent] = []
+    for _timestamp, group in computed.groupby("available_time"):
+        factor_values = group[[factor_id, "asset", "available_time"]].dropna(subset=[factor_id])
+        if factor_values.empty:
+            continue
+        ranked = factor_values.assign(_abs=factor_values[factor_id].abs()).sort_values(
+            "_abs", ascending=False
+        )
+        for rank, row in enumerate(ranked.to_dict(orient="records"), start=1):
+            value = row[factor_id]
+            if value == 0:
+                continue
+            direction = 1 if value > 0 else -1
+            timestamp = pd.Timestamp(row["available_time"]).to_pydatetime()
+            signals.append(
+                SignalEvent(
+                    timestamp=timestamp,
+                    direction=direction,
+                    available_time=timestamp,
+                    asset=str(row["asset"]),
+                    rank=rank,
+                    stop_distance=Decimal("0.02"),
+                    target_distance=Decimal("0.04"),
+                )
+            )
+
+    bt_run_id = run_id or f"backtest-{factor_id}-{factor_version}"
+    result = replay_ranked_portfolio(
+        bars=bars,
+        signals=signals,
+        limits=limits,
+        contract_rules=contract_rules,
+    )
+
+    final_equity = result.equity[-1] if result.equity else limits.initial_equity_usdt
+    artifact_path = config.artifact_root / "backtest" / f"{bt_run_id}.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run_id": bt_run_id,
+        "factor_id": factor_id,
+        "factor_version": factor_version,
+        "snapshot_id": snapshot_id,
+        "status": "completed",
+        "trade_count": len(result.trades),
+        "final_equity": str(final_equity),
+        "maximum_gross": str(result.maximum_gross),
+        "fills": [
+            {
+                "timestamp": fill.timestamp.isoformat(),
+                "direction": fill.direction,
+                "exec_price": str(fill.exec_price),
+                "notional": str(fill.notional),
+                "reason": fill.reason,
+            }
+            for fill in result.fills
+        ],
+        "trades": [
+            {
+                "entry_time": t.entry_time.isoformat(),
+                "exit_time": t.exit_time.isoformat(),
+                "direction": t.direction,
+                "entry_price": str(t.entry_price),
+                "exit_price": str(t.exit_price),
+                "pnl": str(t.pnl),
+                "exit_reason": t.exit_reason,
+            }
+            for t in result.trades
+        ],
+        "rejections": result.rejections,
+        "pause_events": result.pause_events,
+        "daily_attribution": {k: str(v) for k, v in result.daily_attribution.items()},
+    }
+    with artifact_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, indent=2, allow_nan=False, default=str)
+
+    return SmallAccountBacktestResult(
+        run_id=bt_run_id,
+        status="completed",
+        factor_id=factor_id,
+        factor_version=factor_version,
+        artifact_path=artifact_path,
+        trade_count=len(result.trades),
+        final_equity=str(final_equity),
+        maximum_gross=str(result.maximum_gross),
+    )

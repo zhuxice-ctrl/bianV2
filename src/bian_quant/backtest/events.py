@@ -43,6 +43,8 @@ class SignalEvent:
     target: Decimal | None = None
     stop_distance: Decimal | None = None
     target_distance: Decimal | None = None
+    asset: str = ""
+    rank: int = 0
 
     def __post_init__(self) -> None:
         _require_aware(self.timestamp, "signal decision timestamp")

@@ -223,3 +223,90 @@ def evaluate_holdout(
     except (KeyError, PermissionError, ValueError, FileExistsError) as exc:
         typer.echo(f"Denied: {exc}", err=True)
         raise typer.Exit(code=1) from None
+
+
+@app.command("backtest-small-account")
+def backtest_small_account(
+    config: Annotated[Path, typer.Option("--config")],
+    backtest_config: Annotated[Path, typer.Option("--backtest-config")],
+    factor_id: Annotated[str, typer.Option("--factor-id")],
+    factor_version: Annotated[str, typer.Option("--factor-version")],
+    snapshot_id: Annotated[str, typer.Option("--snapshot-id")],
+    run_id: Annotated[str | None, typer.Option("--run-id")] = None,
+) -> None:
+    """Run a 100 USDT portfolio backtest gated on an Approved factor."""
+
+    from bian_quant.data.acquisition import DualHorizonAcquisition
+    from bian_quant.research.operations import run_small_account_backtest
+
+    try:
+        result = run_small_account_backtest(
+            DualHorizonAcquisition.from_yaml(config),
+            factor_id=factor_id,
+            factor_version=factor_version,
+            snapshot_id=snapshot_id,
+            backtest_config_path=backtest_config,
+            run_id=run_id,
+        )
+        typer.echo(result.run_id)
+        typer.echo(str(result.artifact_path))
+        typer.echo(f"trades={result.trade_count} final_equity={result.final_equity}")
+    except (KeyError, PermissionError, ValueError, FileExistsError) as exc:
+        typer.echo(f"Denied: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+
+
+@app.command("run-paper-cycle")
+def run_paper_cycle(
+    config: Annotated[Path, typer.Option("--config")],
+    scheduled_time: Annotated[str, typer.Option("--scheduled-time")],
+) -> None:
+    """Run one four-hour forward paper cycle. No credentials, no orders."""
+    from bian_quant.paper.ledger import PaperLedger
+    from bian_quant.paper.market_data import PublicPaperMarketDataClient, urllib_byte_reader
+    from bian_quant.paper.models import PaperRunConfig
+    from bian_quant.paper.reporting import write_cycle_artifacts
+    from bian_quant.paper.runner import run_paper_cycle as _run
+
+    paper_config = PaperRunConfig.from_yaml(config)
+    when = _parse_aware_datetime(scheduled_time)
+    ledger_path = Path(paper_config.artifact_root) / f"{paper_config.run_id}.sqlite"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    client = PublicPaperMarketDataClient(byte_reader=urllib_byte_reader)
+    with PaperLedger(ledger_path) as ledger:
+        try:
+            decision = _run(
+                paper_config,
+                scheduled_time=when,
+                client=client,
+                ledger=ledger,
+            )
+            cycle_dir = write_cycle_artifacts(paper_config.artifact_root, decision)
+            typer.echo(str(cycle_dir / "decision.json"))
+            typer.echo(decision.status.value)
+            if decision.status.value != "TRADE":
+                typer.echo(decision.reason_code, err=True)
+        except (PermissionError, ValueError) as exc:
+            typer.echo(f"Denied: {exc}", err=True)
+            raise typer.Exit(code=1) from None
+
+
+@app.command("paper-status")
+def paper_status(
+    config: Annotated[Path, typer.Option("--config")],
+) -> None:
+    """Print run id, completed days, missing slots, equity, pause, readiness."""
+    from datetime import UTC, datetime
+
+    from bian_quant.paper.ledger import PaperLedger
+    from bian_quant.paper.models import PaperRunConfig
+    from bian_quant.paper.reporting import build_review_summary, render_review_summary
+
+    paper_config = PaperRunConfig.from_yaml(config)
+    ledger_path = Path(paper_config.artifact_root) / f"{paper_config.run_id}.sqlite"
+    if not ledger_path.exists():
+        typer.echo("No paper ledger found for this run.", err=True)
+        raise typer.Exit(code=1)
+    with PaperLedger(ledger_path) as ledger:
+        summary = build_review_summary(ledger, paper_config, now=datetime.now(UTC))
+    typer.echo(render_review_summary(summary))

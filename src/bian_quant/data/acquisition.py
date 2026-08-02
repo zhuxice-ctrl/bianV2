@@ -81,7 +81,7 @@ class PopularUniversePolicy(BaseModel):
     seed_assets: tuple[str, ...]
 
     @model_validator(mode="after")
-    def validate_seed_assets(self) -> "PopularUniversePolicy":
+    def validate_seed_assets(self) -> PopularUniversePolicy:
         if len(self.seed_assets) != 16 or len(set(self.seed_assets)) != 16:
             raise ValueError("popular universe requires exactly 16 unique seed assets")
         if tuple(sorted(self.seed_assets)) != self.seed_assets:

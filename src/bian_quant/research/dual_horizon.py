@@ -66,6 +66,7 @@ def run_dual_horizon_screening(
     frame: pd.DataFrame,
     *,
     config: dict[str, Any] | None = None,
+    eligibility_frame: pd.DataFrame | None = None,
 ) -> DualHorizonScreeningResult:
     """Screen factors without exposing alignment-buffer or holdout rows.
 
@@ -111,10 +112,25 @@ def run_dual_horizon_screening(
     if development.empty:
         return _blocked("EMPTY_DEVELOPMENT_WINDOW")
 
+    if eligibility_frame is not None:
+        development = _apply_membership_lineage(development, eligibility_frame)
+        if development.empty:
+            return _blocked("EMPTY_AFTER_MEMBERSHIP_FILTER")
+
     # Every auxiliary scenario is also cut at the development boundary before
     # any factor or label operation can observe it.
     sensitivity_source = _development_only_frame(settings.get("sensitivity_frame"), start, end)
     delay_sources = _development_delay_frames(settings.get("oi_delay_frames"), start, end)
+
+    if eligibility_frame is not None:
+        if sensitivity_source is not None and not sensitivity_source.empty:
+            sensitivity_source = _apply_membership_lineage(sensitivity_source, eligibility_frame)
+        for delay_key in list(delay_sources):
+            filtered = _apply_membership_lineage(delay_sources[delay_key], eligibility_frame)
+            if filtered.empty:
+                del delay_sources[delay_key]
+            else:
+                delay_sources[delay_key] = filtered
 
     interval = str(settings.get("interval", "4h"))
     development = compute_dual_horizon_factor_columns(development, interval=interval)
@@ -250,6 +266,56 @@ def run_dual_horizon_screening(
         generated_factor_ids=tuple(generated_ids),
         lifecycle_states=lifecycle_states,
     )
+
+
+def _apply_membership_lineage(frame: pd.DataFrame, eligibility: pd.DataFrame) -> pd.DataFrame:
+    """Filter bars to those with valid popular-universe membership.
+
+    Joins by asset and UTC day of *available_time*.  Requires membership
+    *selection_time* no later than each bar's *available_time*.  Raises on
+    duplicate membership entries for the same asset + UTC day.  Bars whose
+    asset is absent from the universe on that day are silently dropped.
+    """
+    required_cols = {"asset", "selection_time", "rank"}
+    missing = required_cols - set(eligibility.columns)
+    if missing:
+        raise ValueError(f"eligibility_frame missing columns: {','.join(sorted(missing))}")
+
+    work = eligibility.copy()
+    work["selection_time"] = pd.to_datetime(work["selection_time"], utc=True, errors="coerce")
+    if work["selection_time"].isna().any():
+        raise ValueError("eligibility_frame has invalid selection_time values")
+    work["membership_day"] = work["selection_time"].dt.tz_convert("UTC").dt.normalize()
+
+    # Fail on duplicate membership for the same asset + UTC day.
+    dup_counts = work.groupby(["asset", "membership_day"]).size()
+    duplicates = dup_counts[dup_counts > 1]
+    if not duplicates.empty:
+        raise RuntimeError(
+            f"DUPLICATE_MEMBERSHIP: {len(duplicates)} asset-day pairs have multiple entries"
+        )
+
+    # Build lookup: (asset, day) -> (selection_time, rank)
+    membership_map = {
+        (str(row["asset"]), pd.Timestamp(row["membership_day"])): (
+            pd.Timestamp(row["selection_time"]),
+            int(row["rank"]),
+        )
+        for _, row in work.iterrows()
+    }
+
+    dev = frame.copy()
+    dev["bar_day"] = pd.to_datetime(dev["available_time"], utc=True).dt.normalize()
+
+    keep_mask = dev.apply(
+        lambda row: (
+            (row.asset, row.bar_day) in membership_map
+            and membership_map[(row.asset, row.bar_day)][0] <= row.available_time
+        ),
+        axis=1,
+    )
+    dev = dev.loc[keep_mask].drop(columns=["bar_day"]).reset_index(drop=True)
+    return dev
 
 
 def _blocked(reason: str) -> DualHorizonScreeningResult:

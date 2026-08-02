@@ -64,6 +64,7 @@ from bian_quant.data.evidence_cutoff import (
     canonical_snapshot_id,
     clip_to_evidence_cutoff,
 )
+from bian_quant.data.popular_universe import build_popular_universe
 from bian_quant.data.snapshots import (
     build_delay_views,
     build_macro_snapshots,
@@ -363,6 +364,94 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
         )
 
 
+def _derive_listing_metadata(ohlcv: pd.DataFrame) -> pd.DataFrame:
+    """Derive listing metadata from the earliest OHLCV event per asset."""
+    rows = []
+    for asset, group in ohlcv.groupby("asset", sort=True):
+        first = group.sort_values("event_time").iloc[0]
+        rows.append(
+            {
+                "asset": asset,
+                "listing_time": first["event_time"],
+                "listing_available_time": first["available_time"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_popular_universe_artifacts(
+    config: DualHorizonAcquisition,
+    ohlcv: pd.DataFrame,
+    funding: pd.DataFrame,
+    metrics: pd.DataFrame,
+) -> list[dict[str, object]]:
+    """Build one popular-universe artifact per UTC daily boundary.
+
+    Returns a list of dicts with *artifact_id*, *selection_time*, and
+    *selector_config_hash* for each daily boundary from *micro_start* to
+    *as_of* where at least *min_selected* symbols are eligible.
+    """
+    policy = config.universe_policy
+    assert policy is not None
+
+    listing = _derive_listing_metadata(ohlcv)
+
+    start = pd.Timestamp(config.micro_start).tz_convert("UTC")
+    end = pd.Timestamp(config.as_of).tz_convert("UTC")
+
+    artifacts_dir = config.artifact_root / "popular-universe"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    results: list[dict[str, object]] = []
+    current = start
+    while current <= end:
+        selection_time = current.to_pydatetime()
+        try:
+            artifact = build_popular_universe(
+                selection_time=selection_time,
+                listing_metadata=listing,
+                ohlcv=ohlcv,
+                funding=funding,
+                metrics=metrics,
+                policy=policy,
+            )
+        except RuntimeError:
+            current = current + pd.Timedelta(days=1)
+            continue
+
+        artifact_path = artifacts_dir / f"{selection_time:%Y-%m-%dT%H-%M-%S}.json"
+        payload = {
+            "artifact_id": artifact.artifact_id,
+            "selection_time": selection_time.isoformat(),
+            "selector_config_hash": artifact.selector_config_hash,
+            "members": [
+                {
+                    "asset": m.asset,
+                    "rank": m.rank,
+                    "median_quote_volume": m.median_quote_volume,
+                    "median_oi_value": m.median_oi_value,
+                }
+                for m in artifact.members
+            ],
+            "exclusions": [{"asset": e.asset, "reason": e.reason} for e in artifact.exclusions],
+            "source_hashes": artifact.source_hashes,
+        }
+        with artifact_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True, default=str)
+
+        results.append(
+            {
+                "artifact_id": artifact.artifact_id,
+                "selection_time": selection_time.isoformat(),
+                "selector_config_hash": artifact.selector_config_hash,
+                "member_assets": list(artifact.member_assets),
+            }
+        )
+        current = current + pd.Timedelta(days=1)
+
+    return results
+
+
 @overload
 def prepare_dual_horizon(
     config: DualHorizonAcquisition,
@@ -637,27 +726,37 @@ def prepare_dual_horizon(
         blocked_periods.append("required-dataset|metrics_oi")
     blocked_periods = sorted(set(blocked_periods))
     blocking = bool(blocked_periods)
+    popular_universe_artifacts: list[dict[str, object]] = []
 
     # Publish only after every required input and quality gate passes.
     if not blocking and ohlcv_frames and funding_frames and metrics_frames:
         ohlcv_combined = pd.concat(ohlcv_frames, ignore_index=True)
         funding_combined = pd.concat(funding_frames, ignore_index=True)
         metrics_combined = pd.concat(metrics_frames, ignore_index=True)
+        if config.universe_policy is not None:
+            popular_universe_artifacts = _build_popular_universe_artifacts(
+                config, ohlcv_combined, funding_combined, metrics_combined
+            )
         macro_ohlcv = ohlcv_combined.loc[ohlcv_combined["event_time"] >= config.macro_start]
         micro_ohlcv = ohlcv_combined.loc[ohlcv_combined["event_time"] >= config.micro_start]
         raw_hashes = sorted(result.manifest.content_sha256 for result in acquired.values())
         raw_set_sha = hashlib.sha256("".join(raw_hashes).encode()).hexdigest()
         lineage = (f"raw-set-{raw_set_sha}", *config.parent_snapshot_ids)
+        snapshot_config_dict = {
+            "assets": config.assets,
+            "macro_start": config.macro_start.isoformat(),
+            "micro_start": config.micro_start.isoformat(),
+            "as_of": config.as_of.isoformat(),
+            "code_sha": code_sha,
+            "plan_hash": plan_hash,
+            "raw_set_sha256": raw_set_sha,
+        }
+        if popular_universe_artifacts:
+            snapshot_config_dict["popular_universe_artifact_ids"] = [
+                str(item["artifact_id"]) for item in popular_universe_artifacts
+            ]
         snapshot_config = json.dumps(
-            {
-                "assets": config.assets,
-                "macro_start": config.macro_start.isoformat(),
-                "micro_start": config.micro_start.isoformat(),
-                "as_of": config.as_of.isoformat(),
-                "code_sha": code_sha,
-                "plan_hash": plan_hash,
-                "raw_set_sha256": raw_set_sha,
-            },
+            snapshot_config_dict,
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -741,6 +840,7 @@ def prepare_dual_horizon(
         "cutoff_evidence": cutoff_payload,
         "snapshot_ids": [snapshot.snapshot_id for snapshot in snapshots],
         "delay_snapshot_ids": delay_snapshot_ids,
+        "popular_universe_artifacts": popular_universe_artifacts,
     }
     quality_data: dict[str, object] = {
         "run_id": run_manifest.run_id,
@@ -749,6 +849,7 @@ def prepare_dual_horizon(
         "blocked_periods": blocked_periods,
         "funding_tail_strategy": config.funding_tail_strategy,
         "cutoff_evidence": cutoff_payload,
+        "popular_universe_artifacts": popular_universe_artifacts,
     }
     _write_json(acquisition_artifact, acquisition_data)
     _write_json(quality_artifact, quality_data)
