@@ -70,10 +70,30 @@ class FactorProtocolConfig(BaseModel):
         return self
 
 
+class PopularUniversePolicy(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    rule_version: Literal["popular-usdm-v1"]
+    minimum_listing_days: Literal[180]
+    trailing_days: Literal[30]
+    max_selected: Literal[12]
+    min_selected: Literal[8]
+    seed_assets: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def validate_seed_assets(self) -> "PopularUniversePolicy":
+        if len(self.seed_assets) != 16 or len(set(self.seed_assets)) != 16:
+            raise ValueError("popular universe requires exactly 16 unique seed assets")
+        if tuple(sorted(self.seed_assets)) != self.seed_assets:
+            raise ValueError("popular seed assets must be lexicographically sorted")
+        return self
+
+
 class DualHorizonAcquisition(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     assets: tuple[str, ...]
+    universe_policy: PopularUniversePolicy | None = None
     macro_start: datetime
     micro_start: datetime
     as_of: datetime
@@ -105,8 +125,11 @@ class DualHorizonAcquisition(BaseModel):
 
     @model_validator(mode="after")
     def validate_windows(self) -> DualHorizonAcquisition:
-        if self.assets != ("BTCUSDT", "ETHUSDT", "BNBUSDT"):
-            raise ValueError("assets must be exactly BTCUSDT, ETHUSDT, BNBUSDT")
+        if self.universe_policy is None:
+            if self.assets != ("BTCUSDT", "ETHUSDT", "BNBUSDT"):
+                raise ValueError("assets must be exactly BTCUSDT, ETHUSDT, BNBUSDT")
+        elif self.assets != self.universe_policy.seed_assets:
+            raise ValueError("assets must match universe_policy.seed_assets")
         if self.macro_start > self.micro_start:
             raise ValueError("macro_start must not follow micro_start")
         if self.micro_start >= self.as_of:

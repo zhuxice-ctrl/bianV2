@@ -1,0 +1,10 @@
+initial_equity_usdt: 100
+max_gross_notional_usdt: 90
+max_positions: 2
+single_position_risk_usdt: 10
+two_position_risk_usdt: 5
+daily_loss_pause_usdt: 10
+drawdown_pause_usdt: 20
+taker_fee_bps: 4
+slippage_bps: 10
+interval: 4h

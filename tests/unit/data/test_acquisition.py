@@ -60,6 +60,17 @@ def test_funding_tail_strategy_is_locked() -> None:
     assert config.funding_tail_strategy == "monthly_archive_after_period_close"
 
 
+def test_popular_config_locks_seed_pool_and_limits() -> None:
+    config = DualHorizonAcquisition.from_yaml(
+        Path("configs/experiments/popular_universe_100u.yaml")
+    )
+    assert len(config.assets) == 16
+    assert config.universe_policy is not None
+    assert config.universe_policy.max_selected == 12
+    assert config.universe_policy.min_selected == 8
+    assert config.universe_policy.minimum_listing_days == 180
+
+
 def test_naive_or_inverted_window_is_rejected() -> None:
     payload = DualHorizonAcquisition.from_yaml(
         Path("configs/experiments/dual_horizon_derivatives.yaml")
