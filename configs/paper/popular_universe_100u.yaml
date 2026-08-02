@@ -1,0 +1,30 @@
+run_id: popular-universe-100u-paper-v1
+base_url: https://fapi.binance.com
+minimum_calendar_days: 30
+
+initial_equity_usdt: 100
+max_gross_notional_usdt: 90
+max_positions: 2
+single_position_risk_usdt: 10
+two_position_risk_usdt: 5
+daily_loss_pause_usdt: 10
+drawdown_pause_usdt: 20
+
+# Approved Plan-A lineage (filled in once Plan A produces an APPROVED artifact).
+approved_factor_id: momentum-4h-popular-v1
+approved_factor_version: "1.0.0"
+approved_factor_state: APPROVED
+holdout_artifact_path: var/artifacts/dual-horizon-popular-v1/holdout/momentum-4h-popular-v1.json
+small_account_artifact_path: var/artifacts/dual-horizon-popular-v1/backtests/momentum-4h-popular-v1.json
+universe_artifact_id: popular-universe-2026-07-26
+snapshot_ids:
+  - micro-4h-popular-2026-07-26
+  - macro-1d-popular-2026-07-26
+
+decision_assets: [BTCUSDT, ETHUSDT]
+decision_asset: BTCUSDT
+stop_distance_pct: 0.02
+target_distance_pct: 0.04
+kline_limit: 200
+
+artifact_root: var/artifacts/paper

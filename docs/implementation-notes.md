@@ -83,3 +83,34 @@ Record each approved deviation from the implementation plans here with date, tas
 - Resumability completed with all 3,117 objects skipped; source-plan hash, coverage, cutoff evidence, and snapshot content were reproducible.
 - Analysis run `9eb6d9d1-df5f-471f-a49c-2398638f8375` completed with zero Candidate factors; holdout was not opened.
 - Current Macro state is `range_low_vol` with thresholds fitted through `2026-07-25T16:00:00+00:00`.
+
+## 2026-08-03 — Forward paper trading boundary (Plan B)
+
+Plan B (`docs/superpowers/plans/2026-08-03-forward-paper-trading-observability.md`)
+is implemented under `src/bian_quant/paper/`. Operating contract:
+
+- **Public capture-first inputs only.** The paper market-data client
+  (`paper/market_data.py`) issues GET requests to exactly three Binance USD-M
+  public endpoints — `/fapi/v1/klines`, `/fapi/v1/exchangeInfo`,
+  `/fapi/v1/fundingRate` — with no API key, no caller-supplied headers, and no
+  private endpoint. Response bodies are SHA-256 hashed and persisted before
+  parsing; HTTP 429, non-JSON, future-timestamp, and incomplete-bar failures map
+  to stable `PAPER_DATA_*` codes that the runner turns into persisted no-trade
+  decisions.
+- **Isolated from research.** Captured public data is not imported by the
+  `data`, `research`, evaluate-holdout, Candidate generation, or universe
+  selection paths. The runner consumes — but never mutates — an Approved Plan-A
+  holdout artifact, small-account backtest artifact, popular-universe artifact
+  ID, and snapshot IDs.
+- **Cannot place orders.** There is no trading client, no leverage, no
+  websocket, and no order/position/account endpoint. An AST/string boundary
+  test (`tests/unit/paper/test_security_boundary.py`) fails if any paper source
+  references `/fapi/v1/order`, `/fapi/v1/leverage`, `X-MBX-APIKEY`,
+  `api_secret`, `api_key`, `websocket`, or a forbidden live-adapter import.
+- **Append-only state.** The SQLite ledger (`paper/ledger.py`) rejects
+  `UPDATE`/`DELETE` via triggers; decisions are unique by run + scheduled time.
+- **30-day human review.** `review_readiness` is false until 30 consecutive
+  calendar days elapse with no missing four-hour slot, no timing violation, and
+  no risk-limit breach. If Plan A produces no Approved artifact, the runner
+  raises `PAPER_APPROVAL_REQUIRED` before creating a paper run; implementation
+  fixtures remain valid.
