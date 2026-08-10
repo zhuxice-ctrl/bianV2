@@ -22,34 +22,47 @@
 
 ## 设计
 
-### 资产历史可用起点
+### 历史归档可用性清单
 
-新增一份版本化、受证据约束的热门币历史可用起点表。每个资产至少记录：
+新增仓库受控的 YAML 文件 `configs/data/popular_universe_archive_availability.yaml`。清单以 `(asset, dataset, granularity)` 为键，而不是为每个资产设置单一起点。每条记录至少包含：
 
-- `asset`
-- `first_available_time`
-- 支撑该结论的公开归档对象及其 SHA-256
+- `asset`、`dataset` 与 `granularity`；
+- 第一个可请求的归档 period：月度对象使用 `first_available_month`，日度对象使用 `first_available_day`；
+- 该对象的 `identity_key`、公开归档 URL、manifest 的内容 SHA-256；
+- 该归档解析出的 `first_event_time`，仅作审计，不作为月度 URL 的边界。
 
-该表的值来自已成功校验的原始 OHLCV 归档中该资产的最早事件时间；它不是人工估计的上市日期。表随配置和采集 artifact 一起纳入 lineage。
+因此，OHLCV、Funding、Metrics/OI 不假定从同一时刻可用。Metrics/OI 只有日度记录；OHLCV 和 Funding 的月度记录独立冻结。若后续发现某数据集的首个可用 period 与 OHLCV 不同，只更新该数据集的记录，不共用或猜测起点。
+
+清单与主配置一起进入计划 hash；采集 artifact 保存清单内容 hash 和每个证据对象的哈希。
+
+### 清单初始化（bootstrap）
+
+初始化不依赖一份 `passed` 的旧运行，也不访问新网络资源。实现一个本地 bootstrap 命令或受测试的库函数，扫描当前 `var/lake/raw/binance-futures-um-popular-v1`：
+
+1. 对每个已有 zip 与 manifest 调用现有 `reuse_verified_artifact()`，仅接受哈希和身份都匹配的对象。
+2. 按 `(asset, dataset, granularity, source_period)` 排序，选择每类最早的已验证归档对象。
+3. 使用现有 canonicalizer 只读解析该对象，记录 `first_event_time`，并以该对象的月或日 `source_period` 作为清单边界。
+4. 任一资产/数据集/粒度缺少可验证证据时，bootstrap 显式失败；不得写入估计值或以 404 推断上市日期。
+
+被阻断的旧运行可以包含大量独立校验通过的 raw 对象；其整体状态为 `blocked` 不影响这些对象用作 bootstrap 证据。生成的清单必须人工复核后才纳入配置并用于新的 source plan。
 
 ### 资产级计划裁剪
 
-在生成 source plan 时，对每个资产与数据集计算：
-
-`effective_start = max(global_dataset_start, first_available_time)`
+在生成 source plan 时，按对象粒度将全局起点与清单中的首个可请求 period 取较晚者。月度对象比较月度 period，日度对象比较自然日；不将月度归档内的首行事件时间转换为请求边界。
 
 其中：
 
 - OHLCV 的全局起点仍分别是 `macro_start` 或 `micro_start`。
 - Funding 的全局起点仍是 `macro_start`。
 - Metrics/OI 的全局起点仍是 `micro_start`。
-- 月度对象只在其覆盖期间与 `effective_start` 相交时生成；日度对象只在其自然日不早于 `effective_start` 时生成。
+- 月度对象从 `max(global_month, first_available_month)` 开始生成；这允许资产在月中上市时保留其首个实际存在的月度 archive，也避免请求首个实际 archive 之前不存在的月份。
+- 日度对象从 `max(global_day, first_available_day)` 开始生成。
 
 因此，上市前的 URL 不会再进入采集计划；BTC、ETH、BNB 及其他较早可用资产的历史不会被全局缩短。
 
 ### 审计与错误处理
 
-采集 artifact 必须包括资产起点表的内容哈希，以及按资产列出的 `PRE_LISTING_EXCLUDED` 对象数或范围。该记录表示“没有生成请求”，不是下载成功。
+采集 artifact 必须包括可用性清单的内容哈希，以及按资产、数据集、粒度列出的 `PRE_LISTING_EXCLUDED` 对象数或范围。该记录表示“没有生成请求”，不是下载成功。
 
 对于计划内对象，以下情况仍为阻断：
 
@@ -61,6 +74,8 @@
 
 不把计划内的 404 自动豁免为上市前缺失。
 
+`funding_tail_strategy` 与上市前裁剪是两套规则。尚未由上游发布的 cutoff 月 Funding archive 不能被写入 `PRE_LISTING_EXCLUDED`；它仍为阻断，并要求在官方 archive 发布后重新运行。切片 1 的真实验收以 cutoff 月 archive 已可获得为前提。
+
 ### 数据复用和运行方式
 
 既有原始文件及其 manifest 会由现有校验复用逻辑跳过。裁剪后的计划仅包含仍需验证或下载的对象；不会清理 `var/`。
@@ -69,26 +84,26 @@
 
 ```powershell
 $sha = git rev-parse HEAD
-uv run bian-quant prepare-dual-horizon \
-  --config configs/experiments/popular_universe_100u.yaml \
-  --code-sha $sha \
-  --download
+uv run bian-quant prepare-dual-horizon --config configs/experiments/popular_universe_100u.yaml --code-sha $sha --download
 ```
 
 ## 验收标准
 
 1. 真实运行的 acquisition 与 quality artifact 均为 `passed`。
-2. artifact 记录资产历史可用起点及 `PRE_LISTING_EXCLUDED` 审计信息。
+2. artifact 记录数据集级、归档粒度级的可用性清单及 `PRE_LISTING_EXCLUDED` 审计信息。
 3. 四个 snapshot：`macro-1d`、`macro-4h`、`micro-1h`、`micro-4h` 全部存在，且 lineage 一致。
 4. 每日热门池 artifact 全部生成；每一天均有 8–12 个成员，否则以稳定、可解释的错误阻断。
-5. 上市前月份不在 source plan 中；上市后人为模拟的 404 仍使运行阻断。
+5. 上市前月份或日期不在 source plan 中；上市后人为模拟的 404 仍使运行阻断。
 6. 已存在且校验通过的 raw 对象可复用，不产生覆盖写入。
+7. snapshot 可包含各资产不同的最早时间；下游构建与热门池只使用各自可见、满足覆盖率的数据，不要求各资产等长。
 
 ## 验证计划
 
-- 单元测试：资产级起点裁剪、月度边界、日度边界、计划 hash 稳定性。
-- 单元测试：起点表缺失或证据无效时阻断。
+- 单元测试：清单 bootstrap 只接受校验通过的 raw 对象，并为月度和日度对象记录正确的 period 边界。
+- 单元测试：资产/数据集/粒度级裁剪、月度边界、日度边界、计划 hash 稳定性。
+- 单元测试：清单缺失、证据无效或数据集起点不一致时阻断或按数据集独立处理。
 - 集成测试：有效 raw artifact 重跑被跳过；计划内 404 仍 `blocked`。
+- 集成测试：不同资产起点的 snapshot 可发布；未发布的 Funding cutoff archive 仍稳定阻断。
 - 目标测试与静态检查通过后，执行一次真实的 `prepare-dual-horizon --download`，读取全部 artifact 后才宣布切片 1 完成。
 
 ## 非目标
