@@ -173,6 +173,33 @@ def prepare_dual_horizon(
         raise typer.Exit(code=1)
 
 
+@app.command("bootstrap-archive-availability")
+def bootstrap_archive_availability(
+    config: Annotated[Path, typer.Option("--config")],
+    output: Annotated[Path, typer.Option("--output")],
+) -> None:
+    """Build an availability manifest from verified raw artifacts (offline)."""
+    import yaml as _yaml
+
+    from bian_quant.data.acquisition import DualHorizonAcquisition
+    from bian_quant.data.archive_availability import (
+        bootstrap_archive_availability as _bootstrap,
+    )
+
+    cfg = DualHorizonAcquisition.from_yaml(config)
+    if cfg.universe_policy is None:
+        raise typer.BadParameter(
+            "bootstrap-archive-availability requires a popular universe config"
+        )
+    manifest = _bootstrap(cfg.raw_root, assets=cfg.assets)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        _yaml.safe_dump(manifest.model_dump(mode="json"), sort_keys=True),
+        encoding="utf-8",
+    )
+    typer.echo(manifest.content_sha256)
+
+
 @app.command("analyze-dual-horizon")
 def analyze_dual_horizon(
     config: Annotated[Path, typer.Option("--config")],

@@ -6,6 +6,7 @@ universe_policy:
   max_selected: 12
   min_selected: 8
   seed_assets: [ADAUSDT, APTUSDT, AVAXUSDT, BCHUSDT, BNBUSDT, BTCUSDT, DOGEUSDT, ETHUSDT, LINKUSDT, LTCUSDT, NEARUSDT, SOLUSDT, SUIUSDT, TONUSDT, TRXUSDT, XRPUSDT]
+archive_availability_path: configs/data/popular_universe_archive_availability.yaml
 macro_start: 2021-07-01T00:00:00Z
 micro_start: 2024-07-01T00:00:00Z
 as_of: 2026-07-26T19:59:59.999Z

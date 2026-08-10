@@ -10,11 +10,36 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError
 
-from bian_quant.data.acquisition import DualHorizonAcquisition, build_source_plan
+import yaml
+
+from bian_quant.data.acquisition import (
+    DualHorizonAcquisition,
+    SourceDataset,
+    build_source_plan,
+)
 from bian_quant.data.dual_horizon import (
     DualHorizonStatus,
     FixtureDownloader,
     prepare_dual_horizon,
+)
+
+POPULAR_ASSETS = (
+    "ADAUSDT",
+    "APTUSDT",
+    "AVAXUSDT",
+    "BCHUSDT",
+    "BNBUSDT",
+    "BTCUSDT",
+    "DOGEUSDT",
+    "ETHUSDT",
+    "LINKUSDT",
+    "LTCUSDT",
+    "NEARUSDT",
+    "SOLUSDT",
+    "SUIUSDT",
+    "TONUSDT",
+    "TRXUSDT",
+    "XRPUSDT",
 )
 
 FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "binance"
@@ -244,3 +269,133 @@ def test_cutoff_month_funding_404_persists_temporary_error(tmp_path: Path) -> No
     assert all(item["attempt_count"] == 1 for item in failed)
     assert all(item["temporary"] is True for item in failed)
     assert result.snapshots == ()
+
+
+# ---------------------------------------------------------------------------
+# Availability-aware pipeline tests
+# ---------------------------------------------------------------------------
+
+
+def _miniature_popular_config_with_availability(tmp_path: Path) -> DualHorizonAcquisition:
+    """Create a 16-asset popular-universe config with an availability manifest.
+
+    APTUSDT daily entries start on 2026-07-02 so that July 1st daily objects
+    are pre-listing excluded.  All other entries start at 2020-01-01.
+    """
+    entries: list[dict[str, str]] = []
+    for asset in POPULAR_ASSETS:
+        for dataset, granularity in (
+            ("ohlcv", "monthly"),
+            ("ohlcv", "daily"),
+            ("funding", "monthly"),
+            ("metrics_oi", "daily"),
+        ):
+            interval_label = "1d" if dataset == "ohlcv" else "native"
+            if asset == "APTUSDT" and granularity == "daily":
+                period = "2026-07-02T00:00:00+00:00"
+            else:
+                period = "2020-01-01T00:00:00+00:00"
+            entries.append(
+                {
+                    "asset": asset,
+                    "dataset": dataset,
+                    "granularity": granularity,
+                    "first_available_period": period,
+                    "evidence_identity_key": (
+                        f"{dataset}|{asset}|{interval_label}|{granularity}|{period}"
+                    ),
+                    "evidence_url": f"https://example.com/{asset}-{dataset}.zip",
+                    "evidence_content_sha256": "a" * 64,
+                    "first_event_time": period,
+                }
+            )
+
+    manifest_data = {
+        "rule_version": "popular-universe-availability-v1",
+        "entries": entries,
+    }
+    manifest_path = tmp_path / "availability.yaml"
+    manifest_path.write_text(yaml.safe_dump(manifest_data), encoding="utf-8")
+
+    return DualHorizonAcquisition(
+        assets=POPULAR_ASSETS,
+        universe_policy={
+            "rule_version": "popular-usdm-v1",
+            "minimum_listing_days": 180,
+            "trailing_days": 30,
+            "max_selected": 12,
+            "min_selected": 8,
+            "seed_assets": list(POPULAR_ASSETS),
+        },
+        macro_start=datetime(2026, 7, 1, tzinfo=UTC),
+        micro_start=datetime(2026, 7, 1, tzinfo=UTC),
+        as_of=datetime(2026, 7, 3, 23, 59, 59, 999000, tzinfo=UTC),
+        macro_intervals=("1d", "4h"),
+        micro_intervals=("1h", "4h"),
+        oi_delay_minutes=(5, 10, 15),
+        funding_tail_strategy="monthly_archive_after_period_close",
+        parent_snapshot_ids=(),
+        raw_root=tmp_path / "raw",
+        canonical_root=tmp_path / "canonical",
+        research_root=tmp_path / "research",
+        artifact_root=tmp_path / "artifacts",
+        catalog_path=tmp_path / "catalog.sqlite",
+        experiment_registry_path=tmp_path / "experiments.sqlite",
+        factor_registry_path=tmp_path / "factors.sqlite",
+        archive_availability_path=manifest_path,
+        download_attempts=1,
+        max_workers=1,
+        disk_warn_gb=10,
+        disk_block_gb=5,
+        coverage={"ohlcv": 0.01, "funding": 0.01, "metrics_oi": 0.01},
+        factor_protocol={
+            "primary_interval": "4h",
+            "sensitivity_interval": "1h",
+            "development_months": 18,
+            "holdout_months": 6,
+            "development_start": "2026-07-01T00:00:00Z",
+            "development_end_exclusive": "2026-07-02T00:00:00Z",
+            "holdout_start": "2026-07-03T00:00:00Z",
+            "holdout_end": "2026-07-03T23:59:59.999Z",
+            "bh_alpha": 0.05,
+            "minimum_inference_samples": 30,
+            "max_candidates": 20,
+            "cost_bps": [5, 10],
+        },
+    )
+
+
+def test_artifacts_persist_manifest_hash_and_exclusions(tmp_path: Path) -> None:
+    result = prepare_dual_horizon(
+        _miniature_popular_config_with_availability(tmp_path),
+        code_sha="a" * 40,
+        downloader=FixtureDownloader(FIXTURES),
+    )
+    artifact = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    assert artifact["availability_manifest_sha256"]
+    assert {row["reason"] for row in artifact["pre_listing_exclusions"]} == {"PRE_LISTING_EXCLUDED"}
+    quality = json.loads(result.quality_artifact.read_text(encoding="utf-8"))
+    assert quality["availability_manifest_sha256"]
+
+
+class PostBoundary404Downloader:
+    """Fail the first post-boundary OHLCV object with a 404."""
+
+    def __init__(self) -> None:
+        self._inner = FixtureDownloader(FIXTURES)
+        self._failed = False
+
+    def acquire(self, source, config):
+        if not self._failed and source.dataset == SourceDataset.OHLCV:
+            self._failed = True
+            raise HTTPError(source.url, 404, "Not Found", hdrs=None, fp=None)
+        return self._inner.acquire(source, config)
+
+
+def test_post_boundary_404_remains_blocking(tmp_path: Path) -> None:
+    result = prepare_dual_horizon(
+        _miniature_popular_config_with_availability(tmp_path),
+        code_sha="b" * 40,
+        downloader=PostBoundary404Downloader(),
+    )
+    assert result.status == DualHorizonStatus.BLOCKED

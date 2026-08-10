@@ -8,12 +8,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bian_quant.data.adapters.raw import RawSourceIdentity
+
+if TYPE_CHECKING:
+    from bian_quant.data.archive_availability import ArchiveAvailabilityManifest
 
 
 class DiskStatus(StrEnum):
@@ -109,6 +112,7 @@ class DualHorizonAcquisition(BaseModel):
     catalog_path: Path
     experiment_registry_path: Path
     factor_registry_path: Path
+    archive_availability_path: Path | None = None
     download_attempts: int = Field(ge=1, le=3)
     max_workers: int = Field(ge=1, le=8)
     disk_warn_gb: int = Field(ge=10)
@@ -144,6 +148,14 @@ class DualHorizonAcquisition(BaseModel):
             raise ValueError("disk_warn_gb must exceed disk_block_gb")
         if len(set(self.parent_snapshot_ids)) != len(self.parent_snapshot_ids):
             raise ValueError("parent_snapshot_ids must be unique")
+        if self.universe_policy is None and self.archive_availability_path is not None:
+            raise ValueError(
+                "archive_availability_path is only valid for popular universe configurations"
+            )
+        if self.universe_policy is not None and self.archive_availability_path is None:
+            raise ValueError(
+                "archive_availability_path is required for popular universe configurations"
+            )
         return self
 
     @classmethod
@@ -358,7 +370,7 @@ def _make_daily_metrics(asset: str, day: datetime, raw_root: Path) -> SourceObje
     )
 
 
-def build_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...]:
+def _build_unfiltered_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...]:
     """Build the exact, ordered set of source objects to acquire.
 
     Rules:
@@ -411,12 +423,64 @@ def build_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...
     return tuple(objects)
 
 
+@dataclass(frozen=True)
+class SourcePlanAudit:
+    objects: tuple[SourceObject, ...]
+    availability_manifest_sha256: str | None
+    pre_listing_exclusions: tuple[dict[str, object], ...]
+
+
+def _filter_pre_listing_periods(
+    candidates: tuple[SourceObject, ...],
+    manifest: ArchiveAvailabilityManifest,
+) -> tuple[list[SourceObject], list[dict[str, object]]]:
+    """Split candidates into kept and pre-listing-excluded objects."""
+    kept: list[SourceObject] = []
+    excluded: list[dict[str, object]] = []
+    for obj in candidates:
+        entry = manifest.entry_for(obj.asset, obj.dataset, obj.granularity)
+        if obj.period_start < entry.first_available_period:
+            excluded.append(
+                {
+                    "identity_key": obj.identity_key,
+                    "asset": obj.asset,
+                    "dataset": obj.dataset.value,
+                    "granularity": obj.granularity.value,
+                    "reason": "PRE_LISTING_EXCLUDED",
+                }
+            )
+        else:
+            kept.append(obj)
+    return kept, excluded
+
+
+def build_source_plan_audit(config: DualHorizonAcquisition) -> SourcePlanAudit:
+    """Build the source plan with availability-aware filtering."""
+    from bian_quant.data.archive_availability import ArchiveAvailabilityManifest
+
+    candidates = _build_unfiltered_source_plan(config)
+    if config.archive_availability_path is None:
+        return SourcePlanAudit(candidates, None, ())
+    manifest = ArchiveAvailabilityManifest.from_yaml(config.archive_availability_path)
+    # A popular-universe run is fail-closed: every asset/data-set boundary is
+    # required before any pre-listing filtering can take place.
+    manifest.require_expected_keys(assets=config.assets)
+    kept, excluded = _filter_pre_listing_periods(candidates, manifest)
+    return SourcePlanAudit(tuple(kept), manifest.content_sha256, tuple(excluded))
+
+
+def build_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...]:
+    """Build the exact, ordered set of source objects to acquire."""
+    return build_source_plan_audit(config).objects
+
+
 def source_plan_payload(config: DualHorizonAcquisition) -> dict[str, object]:
     """Return a JSON-safe dry-run summary of the source plan.
 
     Does not access the network or filesystem beyond reading the config.
     """
-    plan = build_source_plan(config)
+    audit = build_source_plan_audit(config)
+    plan = audit.objects
 
     counts_by_dataset: dict[str, int] = {}
     counts_by_granularity: dict[str, int] = {}
@@ -458,4 +522,6 @@ def source_plan_payload(config: DualHorizonAcquisition) -> dict[str, object]:
             }
             for obj in plan
         ],
+        "availability_manifest_sha256": audit.availability_manifest_sha256,
+        "pre_listing_exclusions": list(audit.pre_listing_exclusions),
     }

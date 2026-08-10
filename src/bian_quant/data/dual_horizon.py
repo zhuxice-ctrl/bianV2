@@ -23,7 +23,7 @@ from bian_quant.data.acquisition import (
     DualHorizonAcquisition,
     SourceDataset,
     SourceObject,
-    build_source_plan,
+    build_source_plan_audit,
     check_disk_budget,
     source_plan_payload,
 )
@@ -205,8 +205,17 @@ class FixtureDownloader:
         return output.getvalue()
 
 
-def _source_plan_hash(plan: tuple[SourceObject, ...]) -> str:
-    payload = json.dumps([obj.identity_key for obj in plan], sort_keys=True)
+def _source_plan_hash(
+    plan: tuple[SourceObject, ...], *, availability_manifest_sha256: str | None = None
+) -> str:
+    payload = json.dumps(
+        {
+            "availability_manifest_sha256": availability_manifest_sha256,
+            "object_identity_keys": [obj.identity_key for obj in plan],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -492,8 +501,11 @@ def prepare_dual_horizon(
     if downloader is None:
         downloader = VerifiedLocalDownloader()
 
-    plan = build_source_plan(config)
-    plan_hash = _source_plan_hash(plan)
+    plan_audit = build_source_plan_audit(config)
+    plan = plan_audit.objects
+    plan_hash = _source_plan_hash(
+        plan, availability_manifest_sha256=plan_audit.availability_manifest_sha256
+    )
 
     # Register run
     registry_path = config.experiment_registry_path
@@ -532,6 +544,8 @@ def prepare_dual_horizon(
                 "results": [],
                 "persistent_bytes": 0,
                 "peak_working_bytes": 0,
+                "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
+                "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
             },
         )
         _write_json(
@@ -541,6 +555,8 @@ def prepare_dual_horizon(
                 "status": "blocked",
                 "findings": [{"code": "DISK_BLOCKED", "severity": "blocking"}],
                 "coverage_reports": [],
+                "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
+                "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
             },
         )
         with ExperimentRegistry(registry_path) as registry:
@@ -742,7 +758,7 @@ def prepare_dual_horizon(
         raw_hashes = sorted(result.manifest.content_sha256 for result in acquired.values())
         raw_set_sha = hashlib.sha256("".join(raw_hashes).encode()).hexdigest()
         lineage = (f"raw-set-{raw_set_sha}", *config.parent_snapshot_ids)
-        snapshot_config_dict = {
+        snapshot_config_dict: dict[str, object] = {
             "assets": config.assets,
             "macro_start": config.macro_start.isoformat(),
             "micro_start": config.micro_start.isoformat(),
@@ -750,6 +766,7 @@ def prepare_dual_horizon(
             "code_sha": code_sha,
             "plan_hash": plan_hash,
             "raw_set_sha256": raw_set_sha,
+            "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
         }
         if popular_universe_artifacts:
             snapshot_config_dict["popular_universe_artifact_ids"] = [
@@ -841,6 +858,8 @@ def prepare_dual_horizon(
         "snapshot_ids": [snapshot.snapshot_id for snapshot in snapshots],
         "delay_snapshot_ids": delay_snapshot_ids,
         "popular_universe_artifacts": popular_universe_artifacts,
+        "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
+        "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
     }
     quality_data: dict[str, object] = {
         "run_id": run_manifest.run_id,
@@ -850,6 +869,8 @@ def prepare_dual_horizon(
         "funding_tail_strategy": config.funding_tail_strategy,
         "cutoff_evidence": cutoff_payload,
         "popular_universe_artifacts": popular_universe_artifacts,
+        "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
+        "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
     }
     _write_json(acquisition_artifact, acquisition_data)
     _write_json(quality_artifact, quality_data)
