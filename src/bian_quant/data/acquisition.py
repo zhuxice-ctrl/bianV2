@@ -77,10 +77,10 @@ class PopularUniversePolicy(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     rule_version: Literal["popular-usdm-v1"]
-    minimum_listing_days: Literal[180]
-    trailing_days: Literal[30]
-    max_selected: Literal[12]
-    min_selected: Literal[8]
+    minimum_listing_days: int = Field(ge=0, le=365)
+    trailing_days: int = Field(ge=1, le=30)
+    max_selected: int = Field(ge=1, le=16)
+    min_selected: int = Field(ge=8, le=16)
     seed_assets: tuple[str, ...]
 
     @model_validator(mode="after")
@@ -89,6 +89,8 @@ class PopularUniversePolicy(BaseModel):
             raise ValueError("popular universe requires exactly 16 unique seed assets")
         if tuple(sorted(self.seed_assets)) != self.seed_assets:
             raise ValueError("popular seed assets must be lexicographically sorted")
+        if self.min_selected > self.max_selected:
+            raise ValueError("min_selected must not exceed max_selected")
         return self
 
 

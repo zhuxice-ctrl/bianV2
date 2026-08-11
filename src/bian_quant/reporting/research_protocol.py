@@ -58,6 +58,10 @@ class ExclusionReason(StrEnum):
     PRE_LISTING_EXCLUDED = "PRE_LISTING_EXCLUDED"
 
 
+class PartialExclusionReason(StrEnum):
+    TEMPORARY_UPSTREAM_ARCHIVE_UNAVAILABLE = "TEMPORARY_UPSTREAM_ARCHIVE_UNAVAILABLE"
+
+
 class RunInfo(BaseModel):
     """Contract ``run`` block."""
 
@@ -151,6 +155,31 @@ class Exclusion(BaseModel):
     reason: ExclusionReason
 
 
+class PartialAvailabilityExclusion(BaseModel):
+    """Contract ``PartialAvailabilityExclusion``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    identity_key: str
+    asset: str
+    dataset: DatasetName
+    granularity: Granularity
+    period: str
+    reason: PartialExclusionReason
+    error_code: str
+    temporary: bool
+
+
+class PartialAvailabilityImpact(BaseModel):
+    """Contract ``PartialAvailabilityImpact``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    affected_assets: list[str]
+    affected_periods: int
+    affected_selection_days: int
+
+
 class Snapshot(BaseModel):
     """Contract ``Snapshot``."""
 
@@ -177,4 +206,6 @@ class ResearchTerminalResponse(BaseModel):
     coverage: list[CoverageRow]
     blockers: list[Blocker]
     pre_listing_exclusions: list[Exclusion]
+    partial_availability_exclusions: list[PartialAvailabilityExclusion]
+    partial_availability_impact: PartialAvailabilityImpact
     snapshots: list[Snapshot]

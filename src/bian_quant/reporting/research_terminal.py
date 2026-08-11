@@ -4,7 +4,8 @@ Reads the latest ``dual_horizon_derivatives`` run from the experiment registry
 and assembles the contract response from its on-disk artifacts:
 
 * ``data-acquisition.json``  -> planned_objects, manifest sha, pre-listing
-  exclusions, snapshot ids, acquisition failures (blockers).
+  exclusions, snapshot ids, acquisition failures (blockers), partial
+  availability exclusions and impact.
 * ``data-quality.json``      -> coverage reports, blocked periods.
 * ``popular-universe/*.json`` -> latest members + daily counts.
 * dataset catalog            -> the four locked research snapshots.
@@ -19,7 +20,6 @@ on every request.
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,8 +29,8 @@ from pydantic import ValidationError
 from bian_quant.data.acquisition import DualHorizonAcquisition
 from bian_quant.data.catalog import DatasetCatalog
 from bian_quant.data.contracts import DatasetLayer
-from bian_quant.experiments.registry import ExperimentRegistry
 from bian_quant.experiments.models import RunStatus
+from bian_quant.experiments.registry import ExperimentRegistry
 from bian_quant.reporting.research_protocol import (
     Blocker,
     CoverageRow,
@@ -41,6 +41,9 @@ from bian_quant.reporting.research_protocol import (
     ExclusionReason,
     Granularity,
     Kpis,
+    PartialAvailabilityExclusion,
+    PartialAvailabilityImpact,
+    PartialExclusionReason,
     PopularMember,
     PopularUniverse,
     ResearchTerminalResponse,
@@ -53,8 +56,14 @@ from bian_quant.reporting.research_protocol import (
 DERIVATIVES_STRATEGY = "dual_horizon_derivatives"
 _REQUIRED_SNAPSHOT_NAMES = ("macro-1d", "macro-4h", "micro-1h", "micro-4h")
 
+_ZERO_IMPACT = PartialAvailabilityImpact(
+    affected_assets=[],
+    affected_periods=0,
+    affected_selection_days=0,
+)
+
 # Module-level mtime cache for parsed artifact JSON: {path_str: (mtime, data)}
-_json_cache: dict[str, tuple[float, Any]] = {}
+_json_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def build_research_terminal_response(
@@ -116,6 +125,14 @@ def build_research_terminal_response(
     # --- pre-listing exclusions -------------------------------------------
     exclusions = _build_exclusions(pre_listing_exclusions_raw)
 
+    # --- partial availability ---------------------------------------------
+    partial_exclusions = _build_partial_exclusions(
+        acquisition.get("partial_availability_exclusions") or []
+    )
+    partial_impact = _build_partial_impact(
+        acquisition.get("partial_availability_impact")
+    )
+
     # --- kpis --------------------------------------------------------------
     popular_member_count = (
         len(popular_universe.latest_members) if popular_universe.latest_members else None
@@ -139,6 +156,8 @@ def build_research_terminal_response(
         coverage=coverage,
         blockers=blockers,
         pre_listing_exclusions=exclusions,
+        partial_availability_exclusions=partial_exclusions,
+        partial_availability_impact=partial_impact,
         snapshots=snapshots,
     )
 
@@ -171,8 +190,6 @@ def _run_status_to_state(status: RunStatus) -> TerminalState:
         return TerminalState.PASSED
     if status == RunStatus.BLOCKED:
         return TerminalState.BLOCKED
-    # queued / running / failed are not terminal-contract states; a present but
-    # non-passed run is surfaced as blocked (fail-closed).
     return TerminalState.BLOCKED
 
 
@@ -202,6 +219,8 @@ def _empty_response(as_of_iso: str) -> ResearchTerminalResponse:
         coverage=[],
         blockers=[],
         pre_listing_exclusions=[],
+        partial_availability_exclusions=[],
+        partial_availability_impact=_ZERO_IMPACT,
         snapshots=[],
     )
 
@@ -313,11 +332,14 @@ def _build_snapshots(acquisition: dict[str, Any], catalog_path: Path) -> list[Sn
             Snapshot(
                 name=name,
                 id=manifest.snapshot_id,
-                min_event_time=manifest.min_event_time.isoformat() if manifest.min_event_time else "",
-                max_event_time=manifest.max_event_time.isoformat() if manifest.max_event_time else "",
+                min_event_time=(
+                    manifest.min_event_time.isoformat() if manifest.min_event_time else ""
+                ),
+                max_event_time=(
+                    manifest.max_event_time.isoformat() if manifest.max_event_time else ""
+                ),
             )
         )
-    # Keep the canonical order: macro-1d, macro-4h, micro-1h, micro-4h.
     order = {name: i for i, name in enumerate(_REQUIRED_SNAPSHOT_NAMES)}
     snapshots.sort(key=lambda s: order.get(s.name.value, 99))
     return snapshots
@@ -332,7 +354,6 @@ def _build_coverage(quality: dict[str, Any], assets: tuple[str, ...]) -> list[Co
     reports = quality.get("coverage_reports") or []
     if not reports:
         return []
-    # Aggregate per (asset, dataset) the worst status across periods.
     by_asset_dataset: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for report in reports:
         asset = report.get("asset")
@@ -341,7 +362,6 @@ def _build_coverage(quality: dict[str, Any], assets: tuple[str, ...]) -> list[Co
             continue
         by_asset_dataset.setdefault((str(asset), str(dataset)), []).append(report)
 
-    # Only emit rows for assets that have at least one coverage report.
     present_assets = sorted({asset for (asset, _) in by_asset_dataset})
     rows: list[CoverageRow] = []
     for asset in present_assets:
@@ -425,11 +445,52 @@ def _build_exclusions(raw: list[dict[str, Any]]) -> list[Exclusion]:
 
 
 # ---------------------------------------------------------------------------
+# Partial availability exclusions
+# ---------------------------------------------------------------------------
+
+
+def _build_partial_exclusions(raw: list[dict[str, Any]]) -> list[PartialAvailabilityExclusion]:
+    exclusions: list[PartialAvailabilityExclusion] = []
+    for item in raw:
+        try:
+            exclusions.append(
+                PartialAvailabilityExclusion(
+                    identity_key=str(item["identity_key"]),
+                    asset=str(item["asset"]),
+                    dataset=DatasetName(item["dataset"]),
+                    granularity=Granularity(item["granularity"]),
+                    period=str(item["period"]),
+                    reason=PartialExclusionReason(item["reason"]),
+                    error_code=str(item["error_code"]),
+                    temporary=bool(item["temporary"]),
+                )
+            )
+        except (KeyError, ValueError, ValidationError):
+            continue
+    return exclusions
+
+
+def _build_partial_impact(raw: dict[str, Any] | None) -> PartialAvailabilityImpact:
+    if not raw or not isinstance(raw, dict):
+        return _ZERO_IMPACT
+    try:
+        return PartialAvailabilityImpact(
+            affected_assets=[str(a) for a in raw.get("affected_assets", [])],
+            affected_periods=int(raw.get("affected_periods", 0)),
+            affected_selection_days=int(raw.get("affected_selection_days", 0)),
+        )
+    except (KeyError, ValueError, ValidationError):
+        return _ZERO_IMPACT
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _parse_identity_key(identity_key: str) -> tuple[str, str | None, str | None, str | None, str | None]:
+def _parse_identity_key(
+    identity_key: str,
+) -> tuple[str, str | None, str | None, str | None, str | None]:
     """Split ``dataset|asset|interval|granularity|period_start``."""
     parts = identity_key.split("|")
     if len(parts) < 5:
@@ -440,7 +501,6 @@ def _parse_identity_key(identity_key: str) -> tuple[str, str | None, str | None,
 def _period_label(period_start: str | None, granularity: str | None) -> str | None:
     if not period_start:
         return None
-    # period_start is an ISO-8601 timestamp; monthly -> YYYY-MM, daily -> YYYY-MM-DD.
     return period_start[:7] if granularity == "monthly" else period_start[:10]
 
 

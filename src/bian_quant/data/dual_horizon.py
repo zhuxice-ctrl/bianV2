@@ -30,6 +30,7 @@ from bian_quant.data.acquisition import (
 from bian_quant.data.acquisition_failures import (
     AcquisitionFailureEvidence,
     classify_acquisition_failure,
+    is_funding_tail_period,
 )
 from bian_quant.data.adapters.binance_archive import download_verified
 from bian_quant.data.adapters.raw import (
@@ -388,23 +389,83 @@ def _derive_listing_metadata(ohlcv: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _partial_exclusion(source: SourceObject, *, error_code: str) -> dict[str, object]:
+    """Build a run-scoped partial availability exclusion entry."""
+    return {
+        "identity_key": source.identity_key,
+        "asset": source.asset,
+        "dataset": source.dataset.value,
+        "granularity": source.granularity.value,
+        "period": source.raw_identity.source_period,
+        "reason": "TEMPORARY_UPSTREAM_ARCHIVE_UNAVAILABLE",
+        "error_code": error_code,
+        "temporary": True,
+    }
+
+
+def _is_partializable_funding_tail_coverage(
+    source: SourceObject,
+    report: CoverageReport,
+    config: DualHorizonAcquisition,
+) -> bool:
+    """Return whether a tail quality failure is safe to treat as temporary.
+
+    Partial availability is a popular-universe-only concession.  A registered
+    Funding tail may be excluded only for an otherwise clean coverage gap;
+    malformed or causally invalid data always remains a hard blocker.
+    """
+    blocking_codes = {
+        finding.code
+        for finding in report.findings
+        if finding.severity == QualitySeverity.BLOCKING
+    }
+    return (
+        config.universe_policy is not None
+        and is_funding_tail_period(source, config)
+        and blocking_codes == {"DATA_COVERAGE_BLOCKED"}
+    )
+
+
+@dataclass(frozen=True)
+class PopularUniverseBuildResult:
+    artifacts: list[dict[str, object]]
+    shortages: list[dict[str, str]]
+
+
+def _has_funding_days_shortage(
+    artifact: dict[str, object], partial_assets: list[str]
+) -> bool:
+    """Whether a popular-universe artifact excludes a partially available asset."""
+    exclusions = artifact.get("exclusions")
+    if not isinstance(exclusions, list):
+        return False
+    return any(
+        isinstance(row, dict)
+        and str(row.get("asset")) in partial_assets
+        and str(row.get("reason")) == "FUNDING_DAYS_INSUFFICIENT"
+        for row in exclusions
+    )
+
+
 def _build_popular_universe_artifacts(
     config: DualHorizonAcquisition,
     ohlcv: pd.DataFrame,
     funding: pd.DataFrame,
     metrics: pd.DataFrame,
-) -> list[dict[str, object]]:
+) -> PopularUniverseBuildResult:
     """Build one popular-universe artifact per UTC daily boundary.
 
-    Returns a list of dicts with *artifact_id*, *selection_time*, and
-    *selector_config_hash* for each daily boundary from *micro_start* to
-    *as_of* where at least *min_selected* symbols are eligible.
+    Returns a PopularUniverseBuildResult with artifacts and any daily
+    shortages (below min_selected) as hard blockers.
     """
     policy = config.universe_policy
     assert policy is not None
 
     listing = _derive_listing_metadata(ohlcv)
 
+    # Include every configured daily selector boundary, beginning at
+    # micro_start.  Point-in-time filtering in build_popular_universe keeps
+    # same-day rows out until they are actually available.
     start = pd.Timestamp(config.micro_start).tz_convert("UTC")
     end = pd.Timestamp(config.as_of).tz_convert("UTC")
 
@@ -412,6 +473,7 @@ def _build_popular_universe_artifacts(
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[dict[str, object]] = []
+    shortages: list[dict[str, str]] = []
     current = start
     while current <= end:
         selection_time = current.to_pydatetime()
@@ -424,9 +486,17 @@ def _build_popular_universe_artifacts(
                 metrics=metrics,
                 policy=policy,
             )
-        except RuntimeError:
-            current = current + pd.Timedelta(days=1)
-            continue
+        except RuntimeError as exc:
+            if str(exc).startswith("POPULAR_UNIVERSE_INSUFFICIENT:"):
+                shortages.append(
+                    {
+                        "identity_key": f"popular-universe|{selection_time:%Y-%m-%d}",
+                        "message": str(exc),
+                    }
+                )
+                current = current + pd.Timedelta(days=1)
+                continue
+            raise
 
         artifact_path = artifacts_dir / f"{selection_time:%Y-%m-%dT%H-%M-%S}.json"
         payload = {
@@ -454,11 +524,14 @@ def _build_popular_universe_artifacts(
                 "selection_time": selection_time.isoformat(),
                 "selector_config_hash": artifact.selector_config_hash,
                 "member_assets": list(artifact.member_assets),
+                "exclusions": [
+                    {"asset": e.asset, "reason": e.reason} for e in artifact.exclusions
+                ],
             }
         )
         current = current + pd.Timedelta(days=1)
 
-    return results
+    return PopularUniverseBuildResult(artifacts=results, shortages=shortages)
 
 
 @overload
@@ -546,6 +619,13 @@ def prepare_dual_horizon(
                 "peak_working_bytes": 0,
                 "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
                 "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
+                "partial_availability_exclusions": [],
+                "partial_availability_impact": {
+                    "affected_assets": [],
+                    "affected_periods": 0,
+                    "affected_selection_days": 0,
+                },
+                "partial_availability_exclusion_sha256": None,
             },
         )
         _write_json(
@@ -557,6 +637,13 @@ def prepare_dual_horizon(
                 "coverage_reports": [],
                 "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
                 "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
+                "partial_availability_exclusions": [],
+                "partial_availability_impact": {
+                    "affected_assets": [],
+                    "affected_periods": 0,
+                    "affected_selection_days": 0,
+                },
+                "partial_availability_exclusion_sha256": None,
             },
         )
         with ExperimentRegistry(registry_path) as registry:
@@ -586,6 +673,7 @@ def prepare_dual_horizon(
     acquisition_failures: list[AcquisitionFailureEvidence] = []
     acquired: dict[str, AcquisitionObjectResult] = {}
     blocked_periods: list[str] = []
+    partial_exclusions: list[dict[str, object]] = []
 
     def acquire_one(
         source: SourceObject,
@@ -604,8 +692,6 @@ def prepare_dual_horizon(
         }
         for future in as_completed(indexed_futures):
             outcome = future.result()
-            # Sample immediately in completion order, independently of the
-            # deterministic source-plan order used to persist outcomes below.
             current_free = shutil.disk_usage(config.raw_root).free
             reduction = baseline_free - current_free
             if reduction > peak_reduction:
@@ -636,7 +722,16 @@ def prepare_dual_horizon(
                     **failure.model_dump(mode="json", exclude={"identity_key"}),
                 }
             )
-            blocked_periods.append(source.identity_key)
+            if (
+                config.universe_policy is not None
+                and failure.temporary
+                and is_funding_tail_period(source, config)
+            ):
+                partial_exclusions.append(
+                    _partial_exclusion(source, error_code=failure.error_code)
+                )
+            else:
+                blocked_periods.append(source.identity_key)
 
     # Canonicalize verified objects and persist immutable partitions.
     snapshots: list[DatasetManifest] = []
@@ -722,7 +817,14 @@ def prepare_dual_horizon(
             )
             catalog.register(canonical_manifest, path=canonical_path)
             if report.blocking:
-                blocked_periods.append(source.identity_key)
+                if _is_partializable_funding_tail_coverage(source, report, config):
+                    partial_exclusions.append(
+                        _partial_exclusion(
+                            source, error_code="FUNDING_TAIL_COVERAGE_INCOMPLETE"
+                        )
+                    )
+                else:
+                    blocked_periods.append(source.identity_key)
         except Exception as exc:
             blocked_periods.append(source.identity_key)
             acquisition_results.append(
@@ -743,21 +845,62 @@ def prepare_dual_horizon(
     blocked_periods = sorted(set(blocked_periods))
     blocking = bool(blocked_periods)
     popular_universe_artifacts: list[dict[str, object]] = []
+    ohlcv_combined = pd.DataFrame()
+    funding_combined = pd.DataFrame()
+    metrics_combined = pd.DataFrame()
 
-    # Publish only after every required input and quality gate passes.
+    # Pre-check: build popular universe to detect daily shortages.
     if not blocking and ohlcv_frames and funding_frames and metrics_frames:
         ohlcv_combined = pd.concat(ohlcv_frames, ignore_index=True)
         funding_combined = pd.concat(funding_frames, ignore_index=True)
         metrics_combined = pd.concat(metrics_frames, ignore_index=True)
         if config.universe_policy is not None:
-            popular_universe_artifacts = _build_popular_universe_artifacts(
+            popular_build = _build_popular_universe_artifacts(
                 config, ohlcv_combined, funding_combined, metrics_combined
             )
+            popular_universe_artifacts = popular_build.artifacts
+            blocked_periods.extend(
+                shortage["identity_key"] for shortage in popular_build.shortages
+            )
+            blocked_periods = sorted(set(blocked_periods))
+            blocking = bool(blocked_periods)
+
+    # Publish only after every required input and quality gate passes.
+    if not blocking and not ohlcv_combined.empty:
         macro_ohlcv = ohlcv_combined.loc[ohlcv_combined["event_time"] >= config.macro_start]
         micro_ohlcv = ohlcv_combined.loc[ohlcv_combined["event_time"] >= config.micro_start]
         raw_hashes = sorted(result.manifest.content_sha256 for result in acquired.values())
         raw_set_sha = hashlib.sha256("".join(raw_hashes).encode()).hexdigest()
         lineage = (f"raw-set-{raw_set_sha}", *config.parent_snapshot_ids)
+
+    # Deduplicate and sort partial exclusions.
+    seen_keys: set[str] = set()
+    deduped_exclusions: list[dict[str, object]] = []
+    for exclusion in partial_exclusions:
+        key = str(exclusion["identity_key"])
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped_exclusions.append(exclusion)
+    deduped_exclusions.sort(key=lambda item: str(item["identity_key"]))
+
+    partial_exclusion_sha256 = hashlib.sha256(
+        json.dumps(deduped_exclusions, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    # Compute deterministic impact.
+    partial_assets = sorted({str(row["asset"]) for row in deduped_exclusions})
+    affected_selection_days = sum(
+        1
+        for artifact in popular_universe_artifacts
+        if _has_funding_days_shortage(artifact, partial_assets)
+    )
+    partial_impact = {
+        "affected_assets": partial_assets,
+        "affected_periods": len(deduped_exclusions),
+        "affected_selection_days": affected_selection_days,
+    }
+
+    if not blocking and not ohlcv_combined.empty:
         snapshot_config_dict: dict[str, object] = {
             "assets": config.assets,
             "macro_start": config.macro_start.isoformat(),
@@ -767,6 +910,7 @@ def prepare_dual_horizon(
             "plan_hash": plan_hash,
             "raw_set_sha256": raw_set_sha,
             "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
+            "partial_availability_exclusion_sha256": partial_exclusion_sha256,
         }
         if popular_universe_artifacts:
             snapshot_config_dict["popular_universe_artifact_ids"] = [
@@ -834,16 +978,7 @@ def prepare_dual_horizon(
         item.model_dump(mode="json")
         for item in sorted(cutoff_evidence, key=lambda item: item.identity_key)
     ]
-    temporary_only = (
-        bool(acquisition_failures)
-        and all(item.temporary for item in acquisition_failures)
-        and set(blocked_periods) == {item.identity_key for item in acquisition_failures}
-    )
-    run_error_code = (
-        "FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"
-        if temporary_only and not any(report.blocking for report in coverage_reports)
-        else ("DATA_PIPELINE_BLOCKED" if blocked_periods else None)
-    )
+    run_error_code = "DATA_PIPELINE_BLOCKED" if blocked_periods else None
     acquisition_data: dict[str, object] = {
         "run_id": run_manifest.run_id,
         "status": status.value,
@@ -860,6 +995,9 @@ def prepare_dual_horizon(
         "popular_universe_artifacts": popular_universe_artifacts,
         "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
         "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
+        "partial_availability_exclusions": deduped_exclusions,
+        "partial_availability_impact": partial_impact,
+        "partial_availability_exclusion_sha256": partial_exclusion_sha256,
     }
     quality_data: dict[str, object] = {
         "run_id": run_manifest.run_id,
@@ -871,6 +1009,9 @@ def prepare_dual_horizon(
         "popular_universe_artifacts": popular_universe_artifacts,
         "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
         "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
+        "partial_availability_exclusions": deduped_exclusions,
+        "partial_availability_impact": partial_impact,
+        "partial_availability_exclusion_sha256": partial_exclusion_sha256,
     }
     _write_json(acquisition_artifact, acquisition_data)
     _write_json(quality_artifact, quality_data)

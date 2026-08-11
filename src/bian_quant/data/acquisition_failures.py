@@ -25,13 +25,21 @@ class AcquisitionFailureEvidence(BaseModel):
     temporary: bool
 
 
-def is_cutoff_month_funding(source: SourceObject, config: DualHorizonAcquisition) -> bool:
-    return (
-        source.dataset == SourceDataset.FUNDING
-        and source.granularity == SourceGranularity.MONTHLY
-        and (source.period_start.year, source.period_start.month)
-        == (config.as_of.year, config.as_of.month)
+def is_funding_tail_period(source: SourceObject, config: DualHorizonAcquisition) -> bool:
+    """Return True for monthly Funding sources in the two-month tail window.
+
+    The tail covers the cutoff month and the immediately preceding month,
+    matching periods whose ``period_start`` falls on the first day of either.
+    """
+    if source.dataset != SourceDataset.FUNDING or source.granularity != SourceGranularity.MONTHLY:
+        return False
+    cutoff = config.as_of.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    previous = (
+        cutoff.replace(year=cutoff.year - 1, month=12)
+        if cutoff.month == 1
+        else cutoff.replace(month=cutoff.month - 1)
     )
+    return previous <= source.period_start <= cutoff
 
 
 def classify_acquisition_failure(
@@ -41,7 +49,7 @@ def classify_acquisition_failure(
 ) -> AcquisitionFailureEvidence:
     message = str(error)
     http_status = error.code if isinstance(error, HTTPError) else None
-    if http_status == 404 and is_cutoff_month_funding(source, config):
+    if http_status == 404 and is_funding_tail_period(source, config):
         code = "FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"
         temporary = True
         attempts = 1

@@ -76,6 +76,8 @@ type ResearchTerminalResponse = {
   coverage: CoverageRow[];
   blockers: Blocker[];
   pre_listing_exclusions: Exclusion[];
+  partial_availability_exclusions: PartialAvailabilityExclusion[];
+  partial_availability_impact: PartialAvailabilityImpact;
   snapshots: Snapshot[];
 };
 
@@ -110,6 +112,23 @@ type Exclusion = {
   dataset: "ohlcv" | "funding" | "metrics_oi";
   granularity: "monthly" | "daily";
   reason: "PRE_LISTING_EXCLUDED";
+};
+
+type PartialAvailabilityExclusion = {
+  identity_key: string;
+  asset: string;
+  dataset: "ohlcv" | "funding" | "metrics_oi";
+  granularity: "monthly" | "daily";
+  period: string;
+  reason: "TEMPORARY_UPSTREAM_ARCHIVE_UNAVAILABLE";
+  error_code: string;
+  temporary: boolean;
+};
+
+type PartialAvailabilityImpact = {
+  affected_assets: string[];
+  affected_periods: number;
+  affected_selection_days: number;
 };
 
 type Snapshot = {
@@ -175,6 +194,19 @@ type Snapshot = {
 - 四张 snapshot 卡片全部显示 `PUBLISHED`。
 - 不显示阻断警报，但可保留上市前排除计数作为审计信息。
 
+### B2. `passed`（含局部排除警告）
+
+当 Funding 尾部两个月内有临时缺档、但热门池仍有足够资产时，管线以 `passed` 状态发布数据，同时在数据就绪结论下方追加琥珀色局部排除警告。
+
+- 绿色状态灯：`RESEARCH DATA READY`（不变）。
+- 琥珀色警告区域紧跟运行信息之后、热门池之前。
+- 警告标题：`已使用可用数据；部分资产暂时排除`。
+- 影响摘要：`影响：TONUSDT · 2 个归档周期 · 31 个选币日`。
+- 表格列：币种 / 数据类型 / 周期 / 原因 / 错误码。
+- 折叠的技术详情列出原始 identity_key。
+- `partial_availability_exclusions` 非空，`partial_availability_impact.affected_periods > 0`。
+- `blockers` 为空，`blocked_period_count` 为 0。
+
 ### C. `empty`
 
 - 灰色状态灯：`NO RESEARCH RUN`。
@@ -189,6 +221,8 @@ type Snapshot = {
 - `temporary: true` 使用黄色；其他 blocker 使用红色。
 - `PRE_LISTING_EXCLUDED` 是正常审计项，使用青色或暗绿色，绝不使用红色“错误”样式。
 - 表格默认最多显示 20 行，点击 `SHOW ALL` 展开；不需要分页。
+- `partial_availability_exclusions` 非空时，在 `passed` 状态下以琥珀色警告区域渲染，紧跟运行信息之后、热门池之前；在 `blocked` 状态下，阻断表在前、局部排除警告在后。
+- 局部排除是临时上游缺档，使用琥珀色（`--amber`），与红色硬阻断严格区分。
 - 不需要登录、设置页、交易开关、策略参数编辑或任何写操作。
 
 ## 6. Aily 交付检查

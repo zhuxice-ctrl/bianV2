@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import shutil
 import threading
 import time
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError
@@ -13,6 +16,7 @@ from urllib.error import HTTPError
 import yaml
 
 from bian_quant.data.acquisition import (
+    DiskStatus,
     DualHorizonAcquisition,
     SourceDataset,
     build_source_plan,
@@ -136,6 +140,19 @@ def test_local_only_pipeline_blocks_with_exact_missing_objects(tmp_path: Path) -
     payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
     assert payload["planned_objects"] == 39
     assert len([item for item in payload["results"] if item["status"] == "failed"]) == 39
+    assert payload["partial_availability_exclusions"] == []
+    assert payload["partial_availability_exclusion_sha256"] == hashlib.sha256(b"[]").hexdigest()
+
+
+def test_disk_block_keeps_partial_exclusion_hash_null(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "bian_quant.data.dual_horizon.check_disk_budget",
+        lambda *_args, **_kwargs: DiskStatus.BLOCKED,
+    )
+    result = prepare_dual_horizon(_miniature_config(tmp_path), code_sha="z" * 40)
+    payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    assert result.status == DualHorizonStatus.BLOCKED
+    assert payload["partial_availability_exclusion_sha256"] is None
 
 
 def test_acquisition_honors_locked_worker_bound_and_persists_plan_order(
@@ -260,7 +277,7 @@ def test_cutoff_month_funding_404_persists_temporary_error(tmp_path: Path) -> No
         downloader=TailUnavailableDownloader(),
     )
     assert result.status == DualHorizonStatus.BLOCKED
-    assert result.error_code == "FUNDING_TAIL_ARCHIVE_NOT_YET_AVAILABLE"
+    assert result.error_code == "DATA_PIPELINE_BLOCKED"
     payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
     failed = [item for item in payload["results"] if item["status"] == "failed"]
     assert len(failed) == 3
@@ -269,6 +286,12 @@ def test_cutoff_month_funding_404_persists_temporary_error(tmp_path: Path) -> No
     assert all(item["attempt_count"] == 1 for item in failed)
     assert all(item["temporary"] is True for item in failed)
     assert result.snapshots == ()
+    # Ordinary runs retain the legacy fail-closed behavior, even for a
+    # temporary registered Funding-tail archive failure.
+    assert payload["partial_availability_exclusions"] == []
+    assert payload["partial_availability_exclusion_sha256"] == hashlib.sha256(b"[]").hexdigest()
+    assert len(payload["blocked_periods"]) == 3
+    assert all(key.startswith("funding|") for key in payload["blocked_periods"])
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +351,10 @@ def _miniature_popular_config_with_availability(tmp_path: Path) -> DualHorizonAc
             "seed_assets": list(POPULAR_ASSETS),
         },
         macro_start=datetime(2026, 7, 1, tzinfo=UTC),
-        micro_start=datetime(2026, 7, 1, tzinfo=UTC),
+        # The first selector runs at micro_start.  Same-day fixture rows are
+        # safely visible by this end-of-day cutoff, while future rows remain
+        # excluded by point-in-time filtering.
+        micro_start=datetime(2026, 7, 1, 23, 59, 59, 999000, tzinfo=UTC),
         as_of=datetime(2026, 7, 3, 23, 59, 59, 999000, tzinfo=UTC),
         macro_intervals=("1d", "4h"),
         micro_intervals=("1h", "4h"),
@@ -399,3 +425,193 @@ def test_post_boundary_404_remains_blocking(tmp_path: Path) -> None:
         downloader=PostBoundary404Downloader(),
     )
     assert result.status == DualHorizonStatus.BLOCKED
+
+
+# ---------------------------------------------------------------------------
+# Partial availability pipeline tests
+# ---------------------------------------------------------------------------
+
+
+def _popular_config_with_tail_gap(tmp_path: Path) -> DualHorizonAcquisition:
+    """Popular config with relaxed policy for partial-availability testing."""
+    config = _miniature_popular_config_with_availability(tmp_path)
+    return config.model_copy(
+        update={
+            "universe_policy": config.universe_policy.model_copy(
+                update={
+                    "minimum_listing_days": 0,
+                    "trailing_days": 1,
+                }
+            ),
+        }
+    )
+
+
+class TailGapDownloader:
+    """Delegate to FixtureDownloader but 404 TONUSDT monthly Funding in the tail."""
+
+    def __init__(self) -> None:
+        self._inner = FixtureDownloader(FIXTURES)
+
+    def acquire(self, source, config):
+        if (
+            source.dataset == SourceDataset.FUNDING
+            and source.granularity.value == "monthly"
+            and source.asset == "TONUSDT"
+        ):
+            raise HTTPError(source.url, 404, "Not Found", hdrs=None, fp=None)
+        return self._inner.acquire(source, config)
+
+
+def test_partial_funding_tail_passes_with_enough_assets(tmp_path: Path) -> None:
+    config = _popular_config_with_tail_gap(tmp_path)
+    result = prepare_dual_horizon(
+        config,
+        code_sha="f" * 40,
+        downloader=TailGapDownloader(),
+    )
+    assert result.status == DualHorizonStatus.PASSED
+    assert result.blocked_periods == ()
+    assert result.snapshots
+
+    acquisition = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    quality = json.loads(result.quality_artifact.read_text(encoding="utf-8"))
+
+    assert {row["reason"] for row in acquisition["partial_availability_exclusions"]} == {
+        "TEMPORARY_UPSTREAM_ARCHIVE_UNAVAILABLE"
+    }
+    assert (
+        acquisition["partial_availability_exclusions"]
+        == quality["partial_availability_exclusions"]
+    )
+    assert acquisition["partial_availability_impact"]["affected_periods"] > 0
+    assert (
+        acquisition["partial_availability_impact"] == quality["partial_availability_impact"]
+    )
+    assert acquisition["partial_availability_exclusion_sha256"]
+    assert (
+        acquisition["partial_availability_exclusion_sha256"]
+        == quality["partial_availability_exclusion_sha256"]
+    )
+    assert acquisition["popular_universe_artifacts"][0]["selection_time"] == (
+        config.micro_start.isoformat()
+    )
+
+
+class DuplicateTailFundingDownloader:
+    """Inject a duplicate into one popular-universe Funding tail archive."""
+
+    def __init__(self) -> None:
+        self._inner = FixtureDownloader(FIXTURES)
+        self._corrupted = False
+
+    def acquire(self, source, config):
+        result = self._inner.acquire(source, config)
+        if (
+            not self._corrupted
+            and source.dataset == SourceDataset.FUNDING
+            and source.granularity.value == "monthly"
+            and source.asset == "BTCUSDT"
+        ):
+            with zipfile.ZipFile(result.path) as archive:
+                member = archive.namelist()[0]
+                rows = archive.read(member).decode("utf-8").splitlines()
+            rows.append(rows[1])
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(member, "\n".join(rows) + "\n")
+            result.path.write_bytes(payload.getvalue())
+            self._corrupted = True
+        return result
+
+
+class SparseTailFundingDownloader:
+    """Inject a clean but coverage-incomplete popular Funding tail archive."""
+
+    def __init__(self) -> None:
+        self._inner = FixtureDownloader(FIXTURES)
+        self._corrupted = False
+
+    def acquire(self, source, config):
+        result = self._inner.acquire(source, config)
+        if (
+            not self._corrupted
+            and source.dataset == SourceDataset.FUNDING
+            and source.granularity.value == "monthly"
+            and source.asset == "BTCUSDT"
+        ):
+            with zipfile.ZipFile(result.path) as archive:
+                member = archive.namelist()[0]
+                rows = archive.read(member).decode("utf-8").splitlines()
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(member, "\n".join(rows[:2]) + "\n")
+            result.path.write_bytes(payload.getvalue())
+            self._corrupted = True
+        return result
+
+
+def test_popular_clean_tail_coverage_gap_is_partial_availability(tmp_path: Path) -> None:
+    config = _popular_config_with_tail_gap(tmp_path)
+    config = config.model_copy(
+        update={"coverage": config.coverage.model_copy(update={"funding": 0.02})}
+    )
+    result = prepare_dual_horizon(
+        config,
+        code_sha="i" * 40,
+        downloader=SparseTailFundingDownloader(),
+    )
+    assert result.status == DualHorizonStatus.PASSED
+    acquisition = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    assert acquisition["partial_availability_exclusions"] == [
+        {
+            "asset": "BTCUSDT",
+            "dataset": "funding",
+            "error_code": "FUNDING_TAIL_COVERAGE_INCOMPLETE",
+            "granularity": "monthly",
+            "identity_key": "funding|BTCUSDT|native|monthly|2026-07-01T00:00:00+00:00",
+            "period": "2026-07",
+            "reason": "TEMPORARY_UPSTREAM_ARCHIVE_UNAVAILABLE",
+            "temporary": True,
+        }
+    ]
+
+
+def test_popular_tail_duplicate_is_a_hard_block_not_partial_availability(tmp_path: Path) -> None:
+    config = _popular_config_with_tail_gap(tmp_path)
+    result = prepare_dual_horizon(
+        config,
+        code_sha="h" * 40,
+        downloader=DuplicateTailFundingDownloader(),
+    )
+    assert result.status == DualHorizonStatus.BLOCKED
+    assert result.snapshots == ()
+
+    acquisition = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    assert any("funding|BTCUSDT|native|monthly" in key for key in result.blocked_periods)
+    assert acquisition["partial_availability_exclusions"] == []
+    assert acquisition["partial_availability_exclusion_sha256"] == hashlib.sha256(b"[]").hexdigest()
+
+
+def test_partial_funding_tail_blocks_when_min_selected_too_high(tmp_path: Path) -> None:
+    config = _popular_config_with_tail_gap(tmp_path)
+    config = config.model_copy(
+        update={
+            "universe_policy": config.universe_policy.model_copy(
+                update={
+                    "min_selected": 16,
+                    "max_selected": 16,
+                }
+            ),
+        }
+    )
+    result = prepare_dual_horizon(
+        config,
+        code_sha="g" * 40,
+        downloader=TailGapDownloader(),
+    )
+    assert result.status == DualHorizonStatus.BLOCKED
+    assert any(
+        key.startswith("popular-universe|") for key in result.blocked_periods
+    )
+    assert result.snapshots == ()

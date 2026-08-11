@@ -549,6 +549,39 @@ function renderExclusions(data){
     </div>`;
 }
 
+function renderPartialAvailability(data){
+  const exclusions=data.partial_availability_exclusions;
+  if(!exclusions||exclusions.length===0)return '';
+  const impact=data.partial_availability_impact||{affected_assets:[],affected_periods:0,affected_selection_days:0};
+  const assetsStr=impact.affected_assets.length>0?impact.affected_assets.join(' · '):DASH;
+  const LIMIT=20;
+  let truncated=exclusions.length>LIMIT;
+  let display=truncated?exclusions.slice(0,LIMIT):exclusions;
+  let rows=display.map(e=>`
+    <tr>
+      <td style="font-weight:700;color:var(--amber)">${escapeHtml(e.asset)}</td>
+      <td>${escapeHtml(DATASET_LABEL(e.dataset))}</td>
+      <td>${escapeHtml(e.period)}</td>
+      <td>${escapeHtml(e.reason)}</td>
+      <td>${escapeHtml(e.error_code)}</td>
+    </tr>`).join('');
+  return `
+    <div class="sec fadein">
+      <div class="sec-head" style="color:var(--amber);text-shadow:0 0 6px rgba(255,176,0,.3)">局部排除警告 <span class="tag" style="color:var(--muted)">PARTIAL AVAILABILITY · ${exclusions.length}</span></div>
+      <div class="panel" style="border-color:rgba(255,176,0,.2)">
+        <div style="font-size:13px;color:var(--amber);margin-bottom:10px;font-weight:700">已使用可用数据；部分资产暂时排除</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">影响：${escapeHtml(assetsStr)} · ${impact.affected_periods} 个归档周期 · ${impact.affected_selection_days} 个选币日</div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>币种</th><th>数据类型</th><th>周期</th><th>原因</th><th>错误码</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <details class="technical-details"><summary>技术详情（${exclusions.length} 条原始标识）</summary><div class="technical-list">${exclusions.map(e=>`<code>${escapeHtml(e.identity_key)}</code>`).join('')}</div></details>
+      </div>
+    </div>`;
+}
+
 function renderSnapshots(data){
   if(!data.snapshots||data.snapshots.length===0)return '';
   const names={'macro-1d':'宏观日线','macro-4h':'宏观4小时','micro-1h':'微观1小时','micro-4h':'微观4小时'};
@@ -591,12 +624,14 @@ function renderAll(data){
     return html;
   }
 
-  // blocked: 阻断表在热门池之前
+  // partial availability warning: passed 状态紧跟运行信息后；blocked 状态在阻断表后
   if(data.state==='blocked'){
     html+=renderBlockers(data);
+    html+=renderPartialAvailability(data);
     html+=renderPopularUniverse(data);
   }else{
-    // passed: 热门池在前
+    // passed: 局部排除警告 → 热门池 → 阻断（通常为空）
+    html+=renderPartialAvailability(data);
     html+=renderPopularUniverse(data);
     html+=renderBlockers(data);
   }
