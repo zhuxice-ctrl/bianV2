@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRICE_ACTION://RESEARCH_TERMINAL — 热门币研究终端</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://miaoda.feishu.cn/fonts/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap">
+<style>
+:root{
+  --bg:#030704; --raise:#071009; --inset:#040b05;
+  --line:#123a1d; --line-hi:#1f6a32;
+  --green:#00ff41; --green-dim:#00b32d; --green-glow:rgba(0,255,65,.32);
+  --amber:#ffb000; --red:#ff3b4e; --cyan:#29d8ff;
+  --text:#b9f6ca; --muted:#558a64; --faint:#2c4a36;
+  --mono:'JetBrains Mono',ui-monospace,'Cascadia Code','SF Mono',Menlo,Consolas,monospace;
+  /* 状态主色 — 随 state 联动 */
+  --state:#558a64; --state-glow:rgba(85,138,100,.25);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scrollbar-color:var(--line-hi) var(--bg)}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:14px;line-height:1.55;min-height:100vh;padding:12px 18px 56px;overflow-x:hidden}
+::selection{background:var(--green);color:#031007}
+a{color:var(--cyan);text-decoration:none}
+
+/* ===== 环境层：数字雨 + CRT ===== */
+#rain{position:fixed;inset:0;z-index:0;opacity:.06;pointer-events:none}
+.crt{position:fixed;inset:0;z-index:60;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px);
+  mix-blend-mode:multiply}
+.crt::after{content:"";position:absolute;inset:0;
+  background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.45) 100%)}
+main,header.cmdbar,footer.statusbar{position:relative;z-index:2}
+
+/* 点阵网格背景 */
+.grid-bg{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.4;
+  background-image:radial-gradient(circle,rgba(0,255,65,.04) 1px,transparent 1px);
+  background-size:24px 24px}
+
+/* ===== 顶部命令栏 ===== */
+header.cmdbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:rgba(4,10,5,.88);backdrop-filter:blur(8px);
+  border:1px solid var(--line);border-radius:6px;padding:10px 14px;margin-bottom:14px}
+.logo{font-weight:800;font-size:15px;letter-spacing:.5px;color:var(--green);text-shadow:0 0 10px var(--green-glow);white-space:nowrap;display:flex;align-items:center;gap:8px}
+.logo .ring{width:20px;height:20px;border:2px solid var(--green-dim);border-top-color:var(--green);border-radius:50%;display:inline-block;animation:spin 3s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.logo .dim{color:var(--muted);font-weight:500}
+nav.nav{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.nav-btn{background:transparent;border:1px solid var(--line);color:var(--muted);font-family:var(--mono);
+  font-size:12px;padding:6px 12px;border-radius:4px;cursor:pointer;letter-spacing:.5px;transition:all .15s;text-decoration:none;display:inline-block}
+.nav-btn b{color:var(--faint);font-weight:700;margin-right:4px}
+.nav-btn:hover{border-color:var(--line-hi);color:var(--text)}
+.nav-btn:focus-visible{outline:1px solid var(--green);outline-offset:2px}
+.nav-btn.active{border-color:var(--green);color:var(--green);background:rgba(0,255,65,.07);
+  box-shadow:0 0 12px rgba(0,255,65,.12),inset 0 0 8px rgba(0,255,65,.05);text-shadow:0 0 8px var(--green-glow)}
+.nav-btn.active b{color:var(--green-dim)}
+.lights{display:flex;gap:10px;align-items:center;font-size:11px;color:var(--muted);white-space:nowrap}
+.lights i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;vertical-align:1px}
+.lights .on{background:var(--green);box-shadow:0 0 6px var(--green)}
+.lights .off{background:var(--faint)}
+.lights .warn{background:var(--amber);box-shadow:0 0 6px rgba(255,176,0,.6)}
+
+/* ===== 分区标题 ===== */
+.sec{margin-bottom:18px}
+.sec-head{display:flex;align-items:center;gap:10px;color:var(--green-dim);font-size:12px;font-weight:700;
+  letter-spacing:1.5px;margin:18px 0 10px;text-shadow:0 0 6px var(--green-glow)}
+.sec-head::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+.sec-head .tag{color:var(--faint);font-weight:400;letter-spacing:.5px}
+
+/* ===== 玻璃拟态面板 ===== */
+.panel{background:rgba(7,16,9,.72);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:6px;padding:14px;margin-bottom:12px;position:relative}
+.panel.glow{border-color:var(--line-hi);box-shadow:0 0 20px rgba(0,255,65,.04),inset 0 0 12px rgba(0,255,65,.02)}
+.panel h3{color:var(--green-dim);font-size:12px;letter-spacing:1.5px;margin-bottom:10px;font-weight:700}
+.panel h3 .tag{color:var(--faint);font-weight:400;letter-spacing:.3px;margin-left:8px;text-transform:none}
+
+/* 角部切割装饰 */
+.panel::before,.panel::after{content:"";position:absolute;width:10px;height:10px;border:1px solid var(--line-hi);opacity:.5}
+.panel::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
+.panel::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
+
+/* ===== 状态灯 ===== */
+.state-bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px 18px;margin-bottom:14px;
+  background:rgba(7,16,9,.78);backdrop-filter:blur(6px);border:1px solid var(--line-hi);border-radius:6px;position:relative}
+.state-bar::before,.state-bar::after{content:"";position:absolute;width:12px;height:12px;border:1px solid var(--state);opacity:.4}
+.state-bar::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
+.state-bar::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
+.state-light{display:flex;align-items:center;gap:10px}
+.state-light .dot{width:14px;height:14px;border-radius:50%;background:var(--state);box-shadow:0 0 16px var(--state-glow),0 0 4px var(--state);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+.state-light .txt{font-size:16px;font-weight:800;letter-spacing:1px;color:var(--state);text-shadow:0 0 12px var(--state-glow)}
+.state-light .code{margin-top:1px;color:var(--faint);font-size:10px;letter-spacing:.7px}
+.state-msg{font-size:12px;color:var(--muted);flex:1;min-width:200px}
+.refresh-btn{background:transparent;border:1px solid var(--line-hi);color:var(--green-dim);font-family:var(--mono);
+  font-size:12px;padding:6px 14px;border-radius:4px;cursor:pointer;letter-spacing:.5px;transition:all .15s;display:flex;align-items:center;gap:6px}
+.refresh-btn:hover{border-color:var(--green);color:var(--green);box-shadow:0 0 10px rgba(0,255,65,.1)}
+.refresh-btn:active{transform:scale(.96)}
+.refresh-btn.loading .icon{animation:spin .8s linear infinite}
+
+/* ===== KPI 卡片 ===== */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.kpi{background:var(--raise);border:1px solid var(--line);border-radius:5px;padding:10px 12px;position:relative;transition:border-color .15s}
+.kpi:hover{border-color:var(--line-hi)}
+.kpi::before{content:"";position:absolute;top:0;left:0;width:22px;height:2px;background:var(--state);opacity:.7}
+.kpi .label{font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+.kpi .num{font-size:19px;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums;text-shadow:0 0 10px var(--state-glow)}
+.kpi .num.sm{font-size:15px}
+.pos{color:var(--green)} .neg{color:var(--red)} .amb{color:var(--amber)} .cyn{color:var(--cyan)} .mut{color:var(--muted)}
+
+/* ===== 静默指标说明 ===== */
+.term-tip{position:relative;display:inline-flex;vertical-align:middle}
+.term-help{appearance:none;background:none;border:0;color:inherit;font:inherit;letter-spacing:inherit;padding:0;cursor:help;text-align:inherit}
+.term-help:focus-visible{outline:1px solid var(--green);outline-offset:3px}
+.help-mark{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;margin-left:4px;border:1px solid var(--line-hi);border-radius:50%;color:var(--green-dim);font-size:9px;line-height:1;vertical-align:1px}
+.tooltip{position:absolute;z-index:95;left:0;bottom:calc(100% + 8px);width:min(280px,72vw);padding:8px 9px;border:1px solid var(--line-hi);border-radius:4px;background:rgba(3,10,5,.98);color:var(--text);font-size:11px;font-weight:400;line-height:1.55;letter-spacing:0;text-transform:none;box-shadow:0 0 16px rgba(0,255,65,.12);opacity:0;pointer-events:none;transform:translateY(3px);transition:opacity .12s,transform .12s}
+.term-tip:hover .tooltip,.term-tip:focus-within .tooltip,.term-tip.is-open .tooltip{opacity:1;transform:none;pointer-events:auto}
+
+/* ===== 技术详情 ===== */
+.technical-details{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);color:var(--muted);font-size:11px}
+.technical-details summary{color:var(--cyan);cursor:pointer;list-style:none;user-select:none}
+.technical-details summary::-webkit-details-marker{display:none}
+.technical-details summary::before{content:'+';display:inline-block;width:14px;color:var(--green-dim)}
+.technical-details[open] summary::before{content:'-'}
+.technical-grid{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 16px}
+.technical-list{margin-top:10px;display:grid;gap:6px;word-break:break-all;color:var(--faint)}
+.technical-list code{font-family:var(--mono);font-size:10px;color:var(--text)}
+
+/* ===== 运行信息行 ===== */
+.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px 16px;font-size:12px}
+.info-row{display:flex;gap:8px;align-items:baseline;padding:3px 0}
+.info-row .k{color:var(--muted);white-space:nowrap;min-width:90px}
+.info-row .v{color:var(--text);font-variant-numeric:tabular-nums;word-break:break-all}
+.info-row .v.trunc{cursor:help}
+.info-row .v.mono-id{font-size:11px}
+
+/* ===== 表格 ===== */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:5px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--inset);color:var(--muted);font-weight:600;text-align:left;padding:8px 10px;letter-spacing:.5px;
+  border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0}
+td{padding:7px 10px;border-bottom:1px solid var(--inset);font-variant-numeric:tabular-nums;color:var(--text)}
+tr:hover td{background:rgba(0,255,65,.03)}
+.tbl-wrap tr:last-child td{border-bottom:none}
+
+/* 覆盖矩阵状态标签 */
+.cov{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+.cov.passed{color:var(--green);background:rgba(0,255,65,.08);border:1px solid rgba(0,255,65,.2)}
+.cov.blocked{color:var(--red);background:rgba(255,59,78,.08);border:1px solid rgba(255,59,78,.2)}
+.cov.excluded{color:var(--cyan);background:rgba(41,216,255,.08);border:1px solid rgba(41,216,255,.2)}
+.cov.unavailable{color:var(--faint);background:rgba(44,74,54,.08);border:1px solid rgba(44,74,54,.2)}
+.cov .code{display:block;margin-top:1px;color:currentColor;font-size:8px;opacity:.65;letter-spacing:.25px}
+
+/* 阻断标签 */
+.blk-temp{color:var(--amber);border:1px solid rgba(255,176,0,.25);background:rgba(255,176,0,.06);padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700}
+.blk-hard{color:var(--red);border:1px solid rgba(255,59,78,.25);background:rgba(255,59,78,.06);padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700}
+.exc-tag{color:var(--cyan);border:1px solid rgba(41,216,255,.25);background:rgba(41,216,255,.06);padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700}
+
+/* 展开/折叠 */
+.show-all{background:transparent;border:1px solid var(--line-hi);color:var(--green-dim);font-family:var(--mono);
+  font-size:11px;padding:5px 12px;border-radius:3px;cursor:pointer;margin-top:8px;transition:all .12s;letter-spacing:.5px}
+.show-all:hover{border-color:var(--green);color:var(--green)}
+
+/* ===== 快照卡片 ===== */
+.snap-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.snap-card{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:14px;position:relative;transition:all .15s}
+.snap-card:hover{border-color:var(--line-hi)}
+.snap-card::before{content:"";position:absolute;top:0;left:0;width:22px;height:2px;background:var(--green-dim);opacity:.7}
+.snap-card .name{font-size:14px;font-weight:800;color:var(--green);text-shadow:0 0 8px var(--green-glow)}
+.snap-card .id{font-size:10px;color:var(--muted);margin-top:4px;word-break:break-all;cursor:help}
+.snap-card .time{font-size:10px;color:var(--faint);margin-top:4px}
+.snap-card .badge{display:inline-block;margin-top:6px;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;
+  color:var(--green);background:rgba(0,255,65,.08);border:1px solid rgba(0,255,65,.2)}
+
+/* ===== 空态 ===== */
+.empty-state{text-align:center;padding:40px 20px;color:var(--muted)}
+.empty-state .icon{font-size:28px;color:var(--faint);margin-bottom:10px}
+.empty-state .msg{font-size:13px;max-width:400px;margin:0 auto;line-height:1.7}
+
+/* ===== 加载态 ===== */
+.loading{text-align:center;padding:60px 20px;color:var(--muted);font-size:13px}
+.loading .spinner{display:inline-block;width:24px;height:24px;border:2px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:12px}
+
+/* ===== 底部状态栏 ===== */
+footer.statusbar{position:fixed;bottom:0;left:0;right:0;z-index:50;
+  background:rgba(3,7,4,.94);backdrop-filter:blur(4px);border-top:1px solid var(--line);
+  padding:8px 18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+footer.statusbar .sep{color:var(--faint)}
+footer.statusbar .readonly{color:var(--red);font-weight:700;letter-spacing:1px;text-shadow:0 0 6px rgba(255,59,78,.3)}
+footer.statusbar .api-status i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:1px}
+footer.statusbar .api-ok i{background:var(--green);box-shadow:0 0 5px var(--green)}
+footer.statusbar .api-err i{background:var(--red);box-shadow:0 0 5px var(--red)}
+
+/* ===== 扫描线流动 ===== */
+.scanline{position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--state),transparent);opacity:.3;
+  animation:scan 4s linear infinite;pointer-events:none}
+@keyframes scan{0%{transform:translateY(0)}100%{transform:translateY(100vh)}}
+
+/* ===== 响应式 ===== */
+@media(max-width:768px){
+  body{padding:8px 10px 56px;font-size:13px}
+  header.cmdbar{padding:8px 10px;gap:8px}
+  .logo{font-size:13px}
+  .panel{padding:10px}
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .info-grid{grid-template-columns:1fr}
+  .snap-grid{grid-template-columns:repeat(2,1fr)}
+  .term-tip.is-open .tooltip{position:fixed;left:10px;right:10px;bottom:58px;width:auto;max-width:none}
+}
+
+/* ===== 淡入 ===== */
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.fadein{animation:fadein .25s ease}
+</style>
+</head>
+<body>
+<canvas id="rain"></canvas>
+<div class="grid-bg"></div>
+<div class="crt"></div>
+
+<!-- 顶部命令栏 -->
+<header class="cmdbar">
+  <div class="logo">
+    <span class="ring"></span>
+    PRICE_ACTION<span class="dim">://</span>TERMINAL
+  </div>
+  <nav class="nav">
+    <a class="nav-btn" href="/"><b>[01]</b> HOME</a>
+    <a class="nav-btn active" href="/research"><b>[02]</b> RESEARCH</a>
+  </nav>
+  <div class="lights">
+    <span class="on"><i class="on"></i>SYSTEM</span>
+    <span id="api-light"><i class="off"></i>API</span>
+  </div>
+</header>
+
+<!-- 主内容 -->
+<main id="app">
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div>正在请求 /api/research/latest …</div>
+  </div>
+</main>
+
+<!-- 底部状态栏 -->
+<footer class="statusbar">
+  <span class="api-status" id="footer-api"><i></i>API: --</span>
+  <span class="sep">|</span>
+  <span>更新: <span id="footer-time">--</span></span>
+  <span class="sep">|</span>
+  <span style="flex:1"></span>
+  <span class="readonly">READ-ONLY · RESEARCH ONLY · NO LIVE TRADING</span>
+</footer>
+
+<script>
+// ============================================================
+// 数字雨
+// ============================================================
+(function(){
+  const c=document.getElementById('rain'),x=c.getContext('2d');
+  let W,H,cols,drops,fs=14;
+  function rsz(){W=c.width=innerWidth;H=c.height=innerHeight;cols=Math.floor(W/fs);drops=Array(cols).fill(1).map(()=>Math.random()*H/fs);}
+  rsz();addEventListener('resize',rsz);
+  const chars='01ABCDEF{}[]<>$#&%01';
+  function draw(){
+    x.fillStyle='rgba(3,7,4,.06)';x.fillRect(0,0,W,H);
+    x.fillStyle='#00ff41';x.font=fs+'px monospace';
+    for(let i=0;i<cols;i++){
+      const ch=chars[Math.floor(Math.random()*chars.length)];
+      x.fillText(ch,i*fs,drops[i]*fs);
+      if(drops[i]*fs>H&&Math.random()>.975)drops[i]=0;
+      drops[i]++;
+    }
+  }
+  setInterval(draw,50);
+})();
+
+// ============================================================
+// 工具函数
+// ============================================================
+const DASH='—';
+
+function fmtNum(n){
+  if(n===null||n===undefined||n===0)return DASH;
+  return String(n);
+}
+function fmtNumRaw(n){
+  if(n===null||n===undefined)return DASH;
+  return String(n);
+}
+function trunc(s,len=12){
+  if(!s)return DASH;
+  if(s.length<=len)return s;
+  return s.slice(0,len)+'…';
+}
+function fmtTime(iso){
+  if(!iso)return DASH;
+  try{
+    const d=new Date(iso);
+    return d.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})+' UTC';
+  }catch{return iso;}
+}
+function fmtDate(iso){
+  if(!iso)return DASH;
+  return iso;
+}
+function escapeHtml(s){
+  if(s===null||s===undefined)return DASH;
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+const TERM_HELP={
+  '已发布快照':'已校验并固定下来、可供研究使用的数据版本。',
+  '阻断周期':'发现数据缺失或校验失败、因而不能继续研究的时间段。',
+  '临时阻断':'上游数据暂未发布或暂时不可访问，稍后重试可能恢复。',
+  '计划对象':'本次准备并检查的数据文件数量。',
+  '上市前排除':'合约尚未上市时没有数据文件，属于正常排除，不是错误。',
+  '数据覆盖':'每个币的价格、资金费率和持仓量数据是否齐全。'
+};
+function term(label, suffix){
+  const id='tip-'+label.replace(/[^a-zA-Z0-9]/g,'-')+'-'+suffix;
+  const explanation=TERM_HELP[label]||'';
+  return `<span class="term-tip"><button class="term-help" type="button" aria-label="解释：${label}" aria-describedby="${id}">${label}<span class="help-mark">?</span></button><span class="tooltip" role="tooltip" id="${id}">${explanation}</span></span>`;
+}
+const DATASET_LABELS={ohlcv:'价格K线',funding:'资金费率',metrics_oi:'持仓量'};
+const STATUS_LABELS={passed:'已通过',blocked:'阻断',excluded:'上市前无数据',unavailable:'暂无数据'};
+const DATASET_LABEL=(value)=>DATASET_LABELS[value]||value;
+const STATUS_LABEL=(value)=>STATUS_LABELS[value]||value;
+const GRANULARITY_LABEL=(value)=>({monthly:'月度',daily:'日度'}[value]||value);
+
+// 状态颜色映射
+const STATE_COLORS={
+  blocked:{color:'#ff3b4e',glow:'rgba(255,59,78,.28)'},
+  passed:{color:'#00ff41',glow:'rgba(0,255,65,.28)'},
+  empty:{color:'#558a64',glow:'rgba(85,138,100,.25)'}
+};
+const STATE_TEXT={
+  blocked:'PIPELINE BLOCKED',
+  passed:'RESEARCH DATA READY',
+  empty:'NO RESEARCH RUN'
+};
+const STATE_MSG={
+  passed:'数据已就绪：可以进入因子分析和回测。',
+  empty:'尚未准备热门币研究数据。'
+};
+
+// ============================================================
+// 渲染
+// ============================================================
+function applyStateColor(state){
+  const c=STATE_COLORS[state]||STATE_COLORS.empty;
+  document.documentElement.style.setProperty('--state',c.color);
+  document.documentElement.style.setProperty('--state-glow',c.glow);
+}
+
+function renderStateBar(data){
+  const s=data.state;
+  applyStateColor(s);
+  const message=s==='blocked'
+    ? `暂不能进入回测：发现 ${fmtNumRaw(data.kpis.blocked_period_count)} 个数据问题。`
+    : STATE_MSG[s]||'';
+  const support=s==='blocked'
+    ? '红色表示数据门禁尚未通过；黄色表示上游数据可能稍后恢复。'
+    : '';
+  return `
+    <div class="state-bar fadein">
+      <div class="scanline"></div>
+      <div class="state-light">
+        <div class="dot"></div>
+        <div><div class="txt">${message}</div><div class="code">${STATE_TEXT[s]||s.toUpperCase()}</div></div>
+      </div>
+      <div class="state-msg">${support}</div>
+      <button class="refresh-btn" onclick="fetchData()">
+        <span class="icon">↻</span> 刷新
+      </button>
+    </div>`;
+}
+
+function renderKpis(data){
+  const k=data.kpis;
+  return `
+    <div class="kpi-grid">
+      <div class="kpi"><div class="label">热门池成员</div><div class="num">${fmtNum(k.popular_member_count)}</div></div>
+      <div class="kpi"><div class="label">${term('已发布快照','kpi-snapshots')}</div><div class="num">${fmtNumRaw(k.published_snapshot_count)}</div></div>
+      <div class="kpi"><div class="label">${term('阻断周期','kpi-blocked')}</div><div class="num ${k.blocked_period_count>0?'neg':''}">${fmtNumRaw(k.blocked_period_count)}</div></div>
+      <div class="kpi"><div class="label">${term('临时阻断','kpi-temporary')}</div><div class="num ${k.temporary_blocker_count>0?'amb':''}">${fmtNumRaw(k.temporary_blocker_count)}</div></div>
+      <div class="kpi"><div class="label">${term('计划对象','kpi-planned')}</div><div class="num sm">${fmtNumRaw(data.run.planned_objects)}</div></div>
+      <div class="kpi"><div class="label">${term('上市前排除','kpi-exclusions')}</div><div class="num sm cyn">${fmtNumRaw(data.run.pre_listing_exclusion_count)}</div></div>
+    </div>`;
+}
+
+function renderRunInfo(data){
+  const r=data.run;
+  return `
+    <div class="panel glow fadein">
+      <h3>运行信息 <span class="tag">RUN METADATA</span></h3>
+      <div class="info-grid">
+        <div class="info-row"><span class="k">状态</span><span class="v">${escapeHtml(r.status)}</span></div>
+        <div class="info-row"><span class="k">数据截止</span><span class="v">${fmtTime(r.as_of)}</span></div>
+        <div class="info-row"><span class="k">${term('计划对象','run-planned')}</span><span class="v">${fmtNumRaw(r.planned_objects)}</span></div>
+        <div class="info-row"><span class="k">${term('上市前排除','run-exclusions')}</span><span class="v cyn">${fmtNumRaw(r.pre_listing_exclusion_count)}</span></div>
+        <div class="info-row"><span class="k">生成时间</span><span class="v">${fmtTime(data.generated_at)}</span></div>
+      </div>
+      <details class="technical-details">
+        <summary>技术详情</summary>
+        <div class="technical-grid">
+          <div class="info-row"><span class="k">RUN ID</span><span class="v trunc mono-id" title="${escapeHtml(r.id)}">${escapeHtml(r.id)}</span></div>
+          <div class="info-row"><span class="k">MANIFEST SHA</span><span class="v trunc mono-id" title="${escapeHtml(r.availability_manifest_sha256)}">${escapeHtml(r.availability_manifest_sha256)}</span></div>
+          <div class="info-row"><span class="k">ARTIFACT</span><span class="v trunc mono-id" title="${escapeHtml(r.artifact_path)}">${escapeHtml(r.artifact_path)}</span></div>
+        </div>
+      </details>
+    </div>`;
+}
+
+function renderBlockers(data){
+  if(!data.blockers||data.blockers.length===0)return '';
+  let rows=data.blockers.map(b=>`
+    <tr>
+      <td>${b.temporary?'<span class="blk-temp">临时</span>':'<span class="blk-hard">阻断</span>'}</td>
+      <td>${escapeHtml(b.asset)||DASH}</td>
+      <td>${escapeHtml(DATASET_LABEL(b.dataset))||DASH}</td>
+      <td>${escapeHtml(b.period)||DASH}</td>
+      <td>${escapeHtml(b.error_code)}</td>
+      <td style="max-width:300px;word-break:break-word">${escapeHtml(b.message)}</td>
+    </tr>`).join('');
+  return `
+    <div class="sec fadein">
+      <div class="sec-head">阻断问题 <span class="tag">BLOCKERS · ${data.blockers.length}</span></div>
+      <div class="panel">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>类型</th><th>资产</th><th>数据类型</th><th>周期</th><th>错误码</th><th>错误说明</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <details class="technical-details"><summary>技术详情（${data.blockers.length} 条原始标识）</summary><div class="technical-list">${data.blockers.map(b=>`<code>${escapeHtml(b.identity_key)}</code>`).join('')}</div></details>
+      </div>
+    </div>`;
+}
+
+function renderPopularUniverse(data){
+  const pu=data.popular_universe;
+  if(!pu.latest_members||pu.latest_members.length===0){
+    if(data.state==='empty')return '';
+    return `
+      <div class="sec fadein">
+        <div class="sec-head">热门池 <span class="tag">POPULAR UNIVERSE · 暂无数据</span></div>
+        <div class="panel"><div class="empty-state"><div class="icon">○</div><div class="msg">当前状态无有效热门池成员。</div></div></div>
+      </div>`;
+  }
+  const LIMIT=20;
+  let members=pu.latest_members;
+  let truncated=members.length>LIMIT;
+  let display=truncated?members.slice(0,LIMIT):members;
+  let rows=display.map(m=>`
+    <tr>
+      <td style="color:var(--state);font-weight:700">${m.rank}</td>
+      <td style="font-weight:700;color:var(--green)">${escapeHtml(m.asset)}</td>
+      <td>${fmtNumRaw(m.composite_score)}</td>
+      <td>${fmtNumRaw(m.quote_volume_rank)}</td>
+      <td>${fmtNumRaw(m.open_interest_rank)}</td>
+    </tr>`).join('');
+  let dcHtml='';
+  if(pu.daily_counts&&pu.daily_counts.length>0){
+    let dcRows=pu.daily_counts.slice(-10).map(dc=>`<tr><td>${escapeHtml(dc.date)}</td><td>${dc.member_count}</td></tr>`).join('');
+    dcHtml=`
+      <div class="panel" style="margin-top:12px">
+        <h3>历史成员数 <span class="tag">DAILY COUNTS · 最近 ${Math.min(10,pu.daily_counts.length)} 天</span></h3>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>日期</th><th>成员数</th></tr></thead>
+            <tbody>${dcRows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="sec fadein">
+      <div class="sec-head">热门池 <span class="tag">POPULAR UNIVERSE · ${escapeHtml(pu.latest_date)||'N/A'} · ${members.length} 成员</span></div>
+      <div class="panel">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>排名</th><th>币种</th><th>综合分</th><th>成交量排名</th><th>持仓量排名</th></tr></thead>
+            <tbody id="pop-tbody">${rows}</tbody>
+          </table>
+        </div>
+        ${truncated?`<button class="show-all" id="pop-toggle" onclick="toggleRows('pop')">SHOW ALL (${members.length})</button>`:''}
+      </div>
+      ${dcHtml}
+    </div>`;
+}
+
+function renderCoverage(data){
+  if(!data.coverage||data.coverage.length===0)return '';
+  const LIMIT=20;
+  let cov=data.coverage;
+  let truncated=cov.length>LIMIT;
+  let display=truncated?cov.slice(0,LIMIT):cov;
+  function statusTag(s){
+    return `<span class="cov ${s}">${STATUS_LABEL(s)}<span class="code">${s.toUpperCase()}</span></span>`;
+  }
+  let rows=display.map(c=>`
+    <tr>
+      <td style="font-weight:700;color:var(--green)">${escapeHtml(c.asset)}</td>
+      <td>${statusTag(c.ohlcv)}</td>
+      <td>${statusTag(c.funding)}</td>
+      <td>${statusTag(c.metrics_oi)}</td>
+    </tr>`).join('');
+  return `
+    <div class="sec fadein">
+      <div class="sec-head">${term('数据覆盖','section-coverage')} <span class="tag">COVERAGE MATRIX · ${cov.length} 资产</span></div>
+      <div class="panel">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>币种</th><th>价格K线</th><th>资金费率</th><th>持仓量</th></tr></thead>
+            <tbody id="cov-tbody">${rows}</tbody>
+          </table>
+        </div>
+        ${truncated?`<button class="show-all" id="cov-toggle" onclick="toggleRows('cov')">SHOW ALL (${cov.length})</button>`:''}
+      </div>
+    </div>`;
+}
+
+function renderExclusions(data){
+  if(!data.pre_listing_exclusions||data.pre_listing_exclusions.length===0)return '';
+  const LIMIT=20;
+  let exc=data.pre_listing_exclusions;
+  let truncated=exc.length>LIMIT;
+  let display=truncated?exc.slice(0,LIMIT):exc;
+  let rows=display.map(e=>`
+    <tr>
+      <td><span class="exc-tag">排除</span></td>
+      <td style="font-weight:700">${escapeHtml(e.asset)}</td>
+      <td>${escapeHtml(DATASET_LABEL(e.dataset))}</td>
+      <td>${escapeHtml(GRANULARITY_LABEL(e.granularity))}</td>
+      <td>上市前无数据</td>
+    </tr>`).join('');
+  return `
+    <div class="sec fadein">
+      <div class="sec-head">${term('上市前排除','section-exclusions')} <span class="tag">PRE-LISTING EXCLUSIONS · ${exc.length}</span></div>
+      <div class="panel">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>类型</th><th>资产</th><th>数据类型</th><th>粒度</th><th>原因</th></tr></thead>
+            <tbody id="exc-tbody">${rows}</tbody>
+          </table>
+        </div>
+        <details class="technical-details"><summary>技术详情（${exc.length} 条原始标识）</summary><div class="technical-list">${exc.map(e=>`<code>${escapeHtml(e.identity_key)}</code>`).join('')}</div></details>
+        ${truncated?`<button class="show-all" id="exc-toggle" onclick="toggleRows('exc')">SHOW ALL (${exc.length})</button>`:''}
+      </div>
+    </div>`;
+}
+
+function renderSnapshots(data){
+  if(!data.snapshots||data.snapshots.length===0)return '';
+  const names={'macro-1d':'宏观日线','macro-4h':'宏观4小时','micro-1h':'微观1小时','micro-4h':'微观4小时'};
+  let cards=data.snapshots.map(s=>`
+    <div class="snap-card">
+      <div class="name">${escapeHtml(names[s.name]||s.name)}</div>
+      <div class="id" title="${escapeHtml(s.id)}">${escapeHtml(trunc(s.id,20))}</div>
+      <div class="time">${escapeHtml(s.min_event_time||'')} → ${escapeHtml(s.max_event_time||'')}</div>
+      <div class="badge">${s.status==='published'?'已发布':'未发布'}</div>
+    </div>`).join('');
+  return `
+    <div class="sec fadein">
+      <div class="sec-head">数据快照 <span class="tag">SNAPSHOTS · ${data.snapshots.length}</span></div>
+      <div class="snap-grid">${cards}</div>
+    </div>`;
+}
+
+function renderEmpty(data){
+  return `
+    <div class="empty-state fadein" style="padding:60px 20px">
+      <div class="icon" style="font-size:36px;color:var(--faint)">∅</div>
+      <div class="msg">${STATE_MSG.empty}</div>
+      <div style="margin-top:16px;font-size:11px;color:var(--faint)">
+        数据接口：<code style="color:var(--cyan)">GET /api/research/latest</code>
+      </div>
+    </div>`;
+}
+
+function renderAll(data){
+  applyStateColor(data.state);
+  let html='';
+
+  // 状态栏 + KPI + 运行信息
+  html+=renderStateBar(data);
+  html+=renderKpis(data);
+  html+=renderRunInfo(data);
+
+  if(data.state==='empty'){
+    html+=renderEmpty(data);
+    return html;
+  }
+
+  // blocked: 阻断表在热门池之前
+  if(data.state==='blocked'){
+    html+=renderBlockers(data);
+    html+=renderPopularUniverse(data);
+  }else{
+    // passed: 热门池在前
+    html+=renderPopularUniverse(data);
+    html+=renderBlockers(data);
+  }
+
+  html+=renderCoverage(data);
+  html+=renderExclusions(data);
+  html+=renderSnapshots(data);
+
+  return html;
+}
+
+// ============================================================
+// 展开/折叠
+// ============================================================
+window._fullData=null;
+window.fetchData=fetchData;
+
+function toggleRows(type){
+  const d=window._fullData;
+  if(!d)return;
+  const LIMIT=20;
+  if(type==='pop'){
+    const tbody=document.getElementById('pop-tbody');
+    const btn=document.getElementById('pop-toggle');
+    if(btn.textContent.startsWith('SHOW ALL')){
+      tbody.innerHTML=d.popular_universe.latest_members.map(m=>`
+        <tr><td style="color:var(--state);font-weight:700">${m.rank}</td>
+        <td style="font-weight:700;color:var(--green)">${escapeHtml(m.asset)}</td>
+        <td>${fmtNumRaw(m.composite_score)}</td><td>${fmtNumRaw(m.quote_volume_rank)}</td><td>${fmtNumRaw(m.open_interest_rank)}</td></tr>`).join('');
+      btn.textContent='COLLAPSE';
+    }else{
+      tbody.innerHTML=d.popular_universe.latest_members.slice(0,LIMIT).map(m=>`
+        <tr><td style="color:var(--state);font-weight:700">${m.rank}</td>
+        <td style="font-weight:700;color:var(--green)">${escapeHtml(m.asset)}</td>
+        <td>${fmtNumRaw(m.composite_score)}</td><td>${fmtNumRaw(m.quote_volume_rank)}</td><td>${fmtNumRaw(m.open_interest_rank)}</td></tr>`).join('');
+      btn.textContent='SHOW ALL ('+d.popular_universe.latest_members.length+')';
+    }
+  }else if(type==='cov'){
+    const tbody=document.getElementById('cov-tbody');
+    const btn=document.getElementById('cov-toggle');
+    function st(s){return '<span class="cov '+s+'">'+STATUS_LABEL(s)+'<span class="code">'+s.toUpperCase()+'</span></span>';}
+    if(btn.textContent.startsWith('SHOW ALL')){
+      tbody.innerHTML=d.coverage.map(c=>`<tr><td style="font-weight:700;color:var(--green)">${escapeHtml(c.asset)}</td><td>${st(c.ohlcv)}</td><td>${st(c.funding)}</td><td>${st(c.metrics_oi)}</td></tr>`).join('');
+      btn.textContent='COLLAPSE';
+    }else{
+      tbody.innerHTML=d.coverage.slice(0,LIMIT).map(c=>`<tr><td style="font-weight:700;color:var(--green)">${escapeHtml(c.asset)}</td><td>${st(c.ohlcv)}</td><td>${st(c.funding)}</td><td>${st(c.metrics_oi)}</td></tr>`).join('');
+      btn.textContent='SHOW ALL ('+d.coverage.length+')';
+    }
+  }else if(type==='exc'){
+    const tbody=document.getElementById('exc-tbody');
+    const btn=document.getElementById('exc-toggle');
+    if(btn.textContent.startsWith('SHOW ALL')){
+      tbody.innerHTML=d.pre_listing_exclusions.map(e=>`<tr><td><span class="exc-tag">排除</span></td><td style="font-weight:700">${escapeHtml(e.asset)}</td><td>${escapeHtml(DATASET_LABEL(e.dataset))}</td><td>${escapeHtml(GRANULARITY_LABEL(e.granularity))}</td><td>上市前无数据</td></tr>`).join('');
+      btn.textContent='COLLAPSE';
+    }else{
+      tbody.innerHTML=d.pre_listing_exclusions.slice(0,LIMIT).map(e=>`<tr><td><span class="exc-tag">排除</span></td><td style="font-weight:700">${escapeHtml(e.asset)}</td><td>${escapeHtml(DATASET_LABEL(e.dataset))}</td><td>${escapeHtml(GRANULARITY_LABEL(e.granularity))}</td><td>上市前无数据</td></tr>`).join('');
+      btn.textContent='SHOW ALL ('+d.pre_listing_exclusions.length+')';
+    }
+  }
+}
+
+// ============================================================
+// 数据请求
+// ============================================================
+async function fetchData(){
+  const app=document.getElementById('app');
+  const btn=document.querySelector('.refresh-btn');
+  if(btn)btn.classList.add('loading');
+
+  try{
+    const resp=await fetch('/api/research/latest');
+    const data=await resp.json();
+    window._fullData=data;
+    app.innerHTML=renderAll(data);
+
+    // 更新底部状态栏
+    const fa=document.getElementById('footer-api');
+    fa.className='api-status api-ok';
+    fa.innerHTML='<i></i>API: 200 OK';
+    document.getElementById('footer-time').textContent=fmtTime(data.generated_at);
+
+    // 更新顶部 API 灯
+    document.getElementById('api-light').innerHTML='<i class="on"></i>API';
+  }catch(err){
+    app.innerHTML=`<div class="empty-state fadein"><div class="icon" style="color:var(--red)">✕</div><div class="msg" style="color:var(--red)">请求失败：${escapeHtml(err.message)}<br><br>请确认 server.py 已启动并监听 8787 端口。</div></div>`;
+    const fa=document.getElementById('footer-api');
+    fa.className='api-status api-err';
+    fa.innerHTML='<i></i>API: ERROR';
+    document.getElementById('footer-time').textContent=DASH;
+    document.getElementById('api-light').innerHTML='<i class="off"></i>API';
+  }finally{
+    if(btn)btn.classList.remove('loading');
+  }
+}
+
+document.addEventListener('click', function(e){
+  const help=e.target.closest('.term-help');
+  document.querySelectorAll('.term-tip.is-open').forEach(t=>{
+    if(!help||t!==help.closest('.term-tip'))t.classList.remove('is-open');
+  });
+  if(help){
+    e.preventDefault();
+    help.closest('.term-tip').classList.toggle('is-open');
+  }
+});
+
+// 初次加载
+fetchData();
+</script>
+</body>
+</html>

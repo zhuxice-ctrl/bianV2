@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PRICE_ACTION://TERMINAL — 量化交易终端</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="https://miaoda.feishu.cn/fonts/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap">
 <script src="plotly.min.js"></script>
 <style>
@@ -54,6 +55,7 @@ nav.nav{display:flex;gap:6px;flex-wrap:wrap;flex:1}
 .nav-btn.active{border-color:var(--green);color:var(--green);background:rgba(0,255,65,.07);
   box-shadow:0 0 12px rgba(0,255,65,.12),inset 0 0 8px rgba(0,255,65,.05);text-shadow:0 0 8px var(--green-glow)}
 .nav-btn.active b{color:var(--green-dim)}
+.nav-link{text-decoration:none;display:inline-block}
 .lights{display:flex;gap:10px;align-items:center;font-size:11px;color:var(--muted);white-space:nowrap}
 .lights i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;vertical-align:1px}
 .lights .on{background:var(--green);box-shadow:0 0 6px var(--green)}
@@ -76,6 +78,14 @@ nav.nav{display:flex;gap:6px;flex-wrap:wrap;flex:1}
 .kpi .num{font-size:19px;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums;text-shadow:0 0 10px var(--green-glow)}
 .kpi .num.sm{font-size:15px}
 .pos{color:var(--green)} .neg{color:var(--red)} .amb{color:var(--amber)} .cyn{color:var(--cyan)} .mut{color:var(--muted)}
+
+/* ===== 静默指标说明 ===== */
+.term-tip{position:relative;display:inline-flex;vertical-align:middle}
+.term-help{appearance:none;background:none;border:0;color:inherit;font:inherit;letter-spacing:inherit;padding:0;cursor:help;text-align:inherit}
+.term-help:focus-visible{outline:1px solid var(--green);outline-offset:3px}
+.help-mark{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;margin-left:4px;border:1px solid var(--line-hi);border-radius:50%;color:var(--green-dim);font-size:9px;line-height:1;vertical-align:1px}
+.tooltip{position:absolute;z-index:95;left:0;bottom:calc(100% + 8px);width:min(280px,72vw);padding:8px 9px;border:1px solid var(--line-hi);border-radius:4px;background:rgba(3,10,5,.98);color:var(--text);font-size:11px;font-weight:400;line-height:1.55;letter-spacing:0;text-transform:none;box-shadow:0 0 16px rgba(0,255,65,.12);opacity:0;pointer-events:none;transform:translateY(3px);transition:opacity .12s,transform .12s}
+.term-tip:hover .tooltip,.term-tip:focus-within .tooltip,.term-tip.is-open .tooltip{opacity:1;transform:none;pointer-events:auto}
 
 /* ===== 币种卡 ===== */
 .coin-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-top:10px}
@@ -228,6 +238,7 @@ footer.statusbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;
   body{padding:8px 10px 60px}
   .kpi .num{font-size:16px}
   .lights{display:none}
+  .term-tip.is-open .tooltip{position:fixed;left:10px;right:10px;bottom:58px;width:auto;max-width:none}
   .statusbar .right span:nth-child(2){display:none}
 }
 @media (prefers-reduced-motion:reduce){
@@ -255,6 +266,7 @@ footer.statusbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;
 
     <button class="nav-btn" data-view="SYSTEM" id="tab-SYSTEM"><b>[4]</b>SYSTEM</button>
     <button class="nav-btn" data-view="LOG" id="tab-LOG"><b>[5]</b>LOG</button>
+    <a class="nav-btn nav-link" href="/research"><b>[6]</b>RESEARCH</a>
   </nav>
   <div class="lights">
     <span><i class="on"></i>FEED</span>
@@ -300,7 +312,7 @@ footer.statusbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;
       <div class="port-strip" style="margin-top:8px">
         <div class="kpi"><div class="label">初始资金</div><div class="num sm">10,000 / 币</div></div>
         <div class="kpi"><div class="label">单笔风险</div><div class="num sm">2%</div></div>
-        <div class="kpi"><div class="label">盈亏比</div><div class="num sm">1:3</div></div>
+        <div class="kpi"><div class="label"><span class="term-tip"><button class="term-help" type="button" aria-label="解释：盈亏比" aria-describedby="tip-static-profit">盈亏比<span class="help-mark">?</span></button><span class="tooltip" role="tooltip" id="tip-static-profit">平均每笔盈利与平均每笔亏损的比值。高于 1 表示平均盈利大于平均亏损。</span></span></div><div class="num sm">1:3</div></div>
         <div class="kpi"><div class="label">主周期</div><div class="num sm">4H</div></div>
         <div class="kpi"><div class="label">数据</div><div class="num sm">Binance 真实K线</div></div>
       </div>
@@ -320,7 +332,7 @@ footer.statusbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;
         <table class="run-table">
           <thead><tr>
             <th>#</th><th>策略</th><th>说明</th>
-            <th>Baseline均收益</th><th>分段通过率</th><th>OOS通过率</th><th>OOS均收益</th><th>扰动通过率</th><th>综合得分</th>
+            <th>Baseline均收益</th><th>分段通过率</th><th><span class="term-tip"><button class="term-help" type="button" aria-label="解释：样本外验证" aria-describedby="tip-static-oos">样本外通过率<span class="help-mark">?</span></button><span class="tooltip" role="tooltip" id="tip-static-oos">用没有参与参数选择的数据检验策略，避免策略只适合过去的数据。</span></span></th><th>样本外均收益</th><th><span class="term-tip"><button class="term-help" type="button" aria-label="解释：扰动测试" aria-describedby="tip-static-perturb">扰动通过率<span class="help-mark">?</span></button><span class="tooltip" role="tooltip" id="tip-static-perturb">给历史数据加入小变化，检查策略是否过于脆弱。</span></span></th><th>综合得分</th>
           </tr></thead>
           <tbody id="rankRows"></tbody>
         </table>
@@ -357,9 +369,9 @@ footer.statusbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;
             <th data-sort="protocol">协议</th>
             <th data-sort="segment">数据段</th>
             <th data-sort="total_return_pct">收益%</th>
-            <th data-sort="win_rate_pct">胜率%</th>
+            <th data-sort="win_rate_pct"><span class="term-tip"><button class="term-help" type="button" aria-label="解释：胜率" aria-describedby="tip-static-win">胜率<span class="help-mark">?</span></button><span class="tooltip" role="tooltip" id="tip-static-win">已结束的交易中，盈利交易所占的比例。</span></span>%</th>
             <th data-sort="profit_factor">PF</th>
-            <th data-sort="max_drawdown_pct">回撤%</th>
+            <th data-sort="max_drawdown_pct"><span class="term-tip"><button class="term-help" type="button" aria-label="解释：最大回撤" aria-describedby="tip-static-dd">最大回撤<span class="help-mark">?</span></button><span class="tooltip" role="tooltip" id="tip-static-dd">账户从历史最高点回落的最大幅度，用来衡量可能承受的亏损。</span></span>%</th>
             <th data-sort="total_trades">笔数</th>
             <th data-sort="verdict">判定</th>
             <th>备注</th>
@@ -389,6 +401,7 @@ footer.statusbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;
     <div class="row"><span>BNB 视图</span><kbd>3</kbd></div>
     <div class="row"><span>策略系统</span><kbd>4</kbd> <kbd>S</kbd></div>
     <div class="row"><span>实验日志</span><kbd>5</kbd> <kbd>L</kbd></div>
+    <div class="row"><span>研究终端</span><kbd>6</kbd></div>
     <div class="row"><span>本帮助</span><kbd>?</kbd></div>
     <div class="row"><span>关闭浮层</span><kbd>Esc</kbd></div>
     <div class="esc">点击任意 KPI 数字可复制 · 点击表头可排序</div>
@@ -412,6 +425,9 @@ function fmt(n, dp){
 function cls(n){ return (typeof n === 'number' && n < 0) ? 'neg' : 'pos'; }
 function sign(n){ return (typeof n === 'number' && n > 0) ? '+' : ''; }
 function el(id){ return document.getElementById(id); }
+function term(label, explanation, id){
+  return '<span class="term-tip"><button class="term-help" type="button" aria-label="解释：' + label + '" aria-describedby="tip-' + id + '">' + label + '<span class="help-mark">?</span></button><span class="tooltip" role="tooltip" id="tip-' + id + '">' + explanation + '</span></span>';
+}
 
 var toastTimer = null;
 function toast(msg){
@@ -453,12 +469,12 @@ function portfolioStats(){
 function buildPortfolio(){
   var p = portfolioStats();
   var kpis = [
-    {label:'TOTAL EQUITY', num:fmt(p.fin), cls:'', suffix:' USDT'},
-    {label:'BLENDED RETURN', num:sign(p.ret)+fmt(p.ret)+'%', cls:cls(p.ret)},
-    {label:'TOTAL TRADES', num:fmt(p.trades,0), cls:''},
-    {label:'OVERALL WINRATE', num:fmt(p.wr)+'%', cls:'amb'},
-    {label:'BEST TRADE', num:sign(p.best)+fmt(p.best), cls:'pos'},
-    {label:'WORST TRADE', num:fmt(p.worst), cls:'neg'}
+    {label:'总权益', num:fmt(p.fin), cls:'', suffix:' USDT'},
+    {label:'组合收益', num:sign(p.ret)+fmt(p.ret)+'%', cls:cls(p.ret)},
+    {label:'交易总数', num:fmt(p.trades,0), cls:''},
+    {label:term('整体胜率','已结束的交易中，盈利交易所占的比例。','overall-winrate'), num:fmt(p.wr)+'%', cls:'amb'},
+    {label:'最佳单笔', num:sign(p.best)+fmt(p.best), cls:'pos'},
+    {label:'最差单笔', num:fmt(p.worst), cls:'neg'}
   ];
   el('portStrip').innerHTML = kpis.map(function(k){
     return '<div class="kpi" data-copy="' + k.num + (k.suffix||'') + '">' +
@@ -489,8 +505,8 @@ function buildCoinCards(){
       '<div class="cc-top"><span class="sym">' + SHORT[s] + '<span class="tick">' + s + ' · ' + c.interval + '</span></span>' +
       '<span class="ret ' + cls(m.total_return_pct) + '">' + sign(m.total_return_pct) + fmt(m.total_return_pct) + '%</span></div>' +
       '<div class="spark">' + sparkSVG(c.equity_curve.y) + '</div>' +
-      '<div class="cc-meta"><span>EQ ' + fmt(m.final_equity) + '</span><span>WR ' + fmt(m.win_rate_pct) + '%</span>' +
-      '<span>PF ' + fmt(m.profit_factor) + '</span><span>DD ' + fmt(m.max_drawdown_pct) + '%</span></div>' +
+      '<div class="cc-meta"><span>权益 ' + fmt(m.final_equity) + '</span><span title="盈利交易所占的比例">胜率 ' + fmt(m.win_rate_pct) + '%</span>' +
+      '<span title="平均盈利与平均亏损的比值">盈亏比 ' + fmt(m.profit_factor) + '</span><span title="账户从高点回落的最大幅度">回撤 ' + fmt(m.max_drawdown_pct) + '%</span></div>' +
       '<div class="wr-bar"><div class="wr-fill" style="width:' + Math.max(0, Math.min(100, m.win_rate_pct)) + '%"></div></div>' +
     '</div>';
   }).join('');
@@ -614,9 +630,9 @@ function buildCoinPanel(s){
     '<div class="port-strip">' +
       '<div class="kpi" data-copy="' + sign(m.total_return_pct) + fmt(m.total_return_pct) + '%"><div class="label">总收益</div><div class="num ' + cls(m.total_return_pct) + '">' + sign(m.total_return_pct) + fmt(m.total_return_pct) + '%</div></div>' +
       '<div class="kpi" data-copy="' + fmt(m.final_equity) + '"><div class="label">最终权益</div><div class="num">' + fmt(m.final_equity) + '</div></div>' +
-      '<div class="kpi" data-copy="' + fmt(m.win_rate_pct) + '%"><div class="label">胜率</div><div class="num amb">' + fmt(m.win_rate_pct) + '%</div></div>' +
-      '<div class="kpi" data-copy="' + fmt(m.profit_factor) + '"><div class="label">盈亏比 PF</div><div class="num cyn">' + fmt(m.profit_factor) + '</div></div>' +
-      '<div class="kpi" data-copy="' + fmt(m.max_drawdown_pct) + '%"><div class="label">最大回撤</div><div class="num neg">' + fmt(m.max_drawdown_pct) + '%</div></div>' +
+      '<div class="kpi" data-copy="' + fmt(m.win_rate_pct) + '%"><div class="label">' + term('胜率','已结束的交易中，盈利交易所占的比例。','win-rate-' + s) + '</div><div class="num amb">' + fmt(m.win_rate_pct) + '%</div></div>' +
+      '<div class="kpi" data-copy="' + fmt(m.profit_factor) + '"><div class="label">' + term('盈亏比 PF','平均每笔盈利与平均每笔亏损的比值。高于 1 表示平均盈利大于平均亏损。','profit-factor-' + s) + '</div><div class="num cyn">' + fmt(m.profit_factor) + '</div></div>' +
+      '<div class="kpi" data-copy="' + fmt(m.max_drawdown_pct) + '%"><div class="label">' + term('最大回撤','账户从历史最高点回落的最大幅度，用来衡量可能承受的亏损。','max-drawdown-' + s) + '</div><div class="num neg">' + fmt(m.max_drawdown_pct) + '%</div></div>' +
       '<div class="kpi" data-copy="' + m.total_trades + '"><div class="label">交易数</div><div class="num">' + m.total_trades + '</div></div>' +
       '<div class="kpi" data-copy="' + fmt(m.avg_bars_held,1) + '"><div class="label">平均持仓</div><div class="num sm">' + fmt(m.avg_bars_held,1) + ' K</div></div>' +
     '</div>' +
@@ -917,6 +933,15 @@ function bindEvents(){
     if (card && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); show(card.getAttribute('data-view')); }
   });
   document.addEventListener('click', function(e){
+    var help = e.target.closest('.term-help');
+    document.querySelectorAll('.term-tip.is-open').forEach(function(t){
+      if (!help || t !== help.closest('.term-tip')) t.classList.remove('is-open');
+    });
+    if (help){
+      e.preventDefault();
+      help.closest('.term-tip').classList.toggle('is-open');
+      return;
+    }
     var kpi = e.target.closest('.kpi');
     if (kpi && kpi.getAttribute('data-copy')){ copyVal(kpi.getAttribute('data-copy')); return; }
     var chip = e.target.closest('.chip');
