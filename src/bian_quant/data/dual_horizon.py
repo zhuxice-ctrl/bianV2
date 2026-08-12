@@ -65,7 +65,7 @@ from bian_quant.data.evidence_cutoff import (
     canonical_snapshot_id,
     clip_to_evidence_cutoff,
 )
-from bian_quant.data.popular_universe import build_popular_universe
+from bian_quant.data.popular_universe import _selector_config_hash, build_popular_universe
 from bian_quant.data.snapshots import (
     build_delay_views,
     build_macro_snapshots,
@@ -447,6 +447,38 @@ def _has_funding_days_shortage(
     )
 
 
+def _load_popular_artifact_checkpoint(
+    path: Path, selection_time: datetime, selector_config_hash: str
+) -> dict[str, object] | None:
+    """Load a completed daily artifact only when its selector config matches."""
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("selection_time") != selection_time.isoformat():
+        return None
+    if payload.get("selector_config_hash") != selector_config_hash:
+        return None
+    required = {"artifact_id", "members", "exclusions", "source_hashes"}
+    if not required.issubset(payload):
+        return None
+    return {
+        "artifact_id": payload["artifact_id"],
+        "selection_time": payload["selection_time"],
+        "selector_config_hash": payload["selector_config_hash"],
+        "member_assets": [
+            str(member["asset"])
+            for member in payload["members"]
+            if isinstance(member, dict) and "asset" in member
+        ],
+        "exclusions": payload["exclusions"],
+    }
+
+
 def _build_popular_universe_artifacts(
     config: DualHorizonAcquisition,
     ohlcv: pd.DataFrame,
@@ -468,6 +500,7 @@ def _build_popular_universe_artifacts(
     # same-day rows out until they are actually available.
     start = pd.Timestamp(config.micro_start).tz_convert("UTC")
     end = pd.Timestamp(config.as_of).tz_convert("UTC")
+    selector_config_hash = _selector_config_hash(policy)
 
     artifacts_dir = config.artifact_root / "popular-universe"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -475,8 +508,24 @@ def _build_popular_universe_artifacts(
     results: list[dict[str, object]] = []
     shortages: list[dict[str, str]] = []
     current = start
+    processed = 0
     while current <= end:
         selection_time = current.to_pydatetime()
+        artifact_path = artifacts_dir / f"{selection_time:%Y-%m-%dT%H-%M-%S}.json"
+        checkpoint = _load_popular_artifact_checkpoint(
+            artifact_path, selection_time, selector_config_hash
+        )
+        if checkpoint is not None:
+            results.append(checkpoint)
+            processed += 1
+            if processed == 1 or processed % 25 == 0:
+                print(
+                    f"[popular-universe] resumed {processed} daily artifacts "
+                    f"through {selection_time:%Y-%m-%d}",
+                    flush=True,
+                )
+            current = current + pd.Timedelta(days=1)
+            continue
         try:
             artifact = build_popular_universe(
                 selection_time=selection_time,
@@ -498,7 +547,6 @@ def _build_popular_universe_artifacts(
                 continue
             raise
 
-        artifact_path = artifacts_dir / f"{selection_time:%Y-%m-%dT%H-%M-%S}.json"
         payload = {
             "artifact_id": artifact.artifact_id,
             "selection_time": selection_time.isoformat(),
@@ -515,8 +563,10 @@ def _build_popular_universe_artifacts(
             "exclusions": [{"asset": e.asset, "reason": e.reason} for e in artifact.exclusions],
             "source_hashes": artifact.source_hashes,
         }
-        with artifact_path.open("w", encoding="utf-8") as handle:
+        temporary_path = artifact_path.with_suffix(".json.tmp")
+        with temporary_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True, default=str)
+        temporary_path.replace(artifact_path)
 
         results.append(
             {
@@ -529,6 +579,13 @@ def _build_popular_universe_artifacts(
                 ],
             }
         )
+        processed += 1
+        if processed == 1 or processed % 25 == 0:
+            print(
+                f"[popular-universe] computed {processed} daily artifacts "
+                f"through {selection_time:%Y-%m-%d}",
+                flush=True,
+            )
         current = current + pd.Timedelta(days=1)
 
     return PopularUniverseBuildResult(artifacts=results, shortages=shortages)
