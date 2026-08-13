@@ -271,3 +271,64 @@ type Snapshot = {
 - 复用原页面的视觉 token，而非重新选择配色、圆角或字体。
 - 所有数字使用等宽数字；长 run ID 和 SHA 截断显示，悬停或复制时可获得完整值。
 - 页面必须清楚写明：`READ-ONLY · RESEARCH ONLY · NO LIVE TRADING`。
+
+## 7. 单币策略评估扩展（§7）
+
+`ResearchTerminalResponse` 新增可选列表字段 `single_asset_strategy_evaluations`，默认空列表。旧消费者可安全忽略此字段。
+
+```ts
+type ResearchTerminalResponse = {
+  // ... 所有 v1 字段不变 ...
+  single_asset_strategy_evaluations: SingleAssetStrategyEvaluation[];
+};
+
+type SingleAssetStrategyEvaluation = {
+  asset: string;                    // 首期固定 "ETHUSDT"
+  strategy_id: string;              // "legacy.pa_confluence"
+  strategy_version: string;         // "baseline-0"
+  status: "ok" | "missing" | "error";
+  sample_start: string | null;
+  sample_end: string | null;
+  generated_at: string | null;
+  runtime_ms: number | null;
+  input_artifact_sha256: string | null;
+  result_artifact_sha256: string | null;
+  artifact_path: string | null;
+  current_signal: "long" | "short" | "flat" | "unavailable";
+  current_signal_time: string | null;
+  market_cycle: {
+    label: string;
+    confidence: number;
+    multiplier: number;
+    evidence_sha256: string | null;
+  } | null;
+  recommendation: {
+    participate: boolean;
+    max_invest_usdt: number;
+    reason: string;
+  } | null;
+  baseline: StrategyMetrics | null;
+  confidence_weighted: StrategyMetrics | null;
+  error_summary: string | null;
+};
+
+type StrategyMetrics = {
+  final_equity: number;
+  total_return: number;
+  max_drawdown: number;
+  win_rate: number | null;          // null when no trades
+  trade_count: number;
+  fee_paid_net_profit: number;
+  fees_paid: number;
+};
+```
+
+### 渲染规则
+
+- 页面在快照区域之后新增「ETH 单币策略对比」面板。
+- 首行显示「当前是否建议参与」及原因；参与时显示建议最大投入。
+- 并列展示原始策略与置信度加权策略的指标对比表。
+- `missing`/`error` 只显示原因，不显示建议金额或指标。
+- 所有 API 文本经过 `escapeHtml`。
+- 不新增运行、下载、下单或参数编辑控件。
+

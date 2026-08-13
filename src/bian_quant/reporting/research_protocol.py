@@ -244,6 +244,89 @@ class Snapshot(BaseModel):
     status: SnapshotStatus = SnapshotStatus.PUBLISHED
 
 
+# ---------------------------------------------------------------------------
+# Single-asset strategy evaluation (contract extension §7)
+# ---------------------------------------------------------------------------
+
+
+class SingleAssetStatus(StrEnum):
+    OK = "ok"
+    MISSING = "missing"
+    ERROR = "error"
+
+
+class CurrentSignal(StrEnum):
+    LONG = "long"
+    SHORT = "short"
+    FLAT = "flat"
+    UNAVAILABLE = "unavailable"
+
+
+class StrategyMetrics(BaseModel):
+    """Fee-after metrics for a single-asset strategy variant."""
+
+    model_config = ConfigDict(frozen=True)
+
+    final_equity: float
+    total_return: float
+    max_drawdown: float
+    win_rate: float | None
+    trade_count: int
+    fee_paid_net_profit: float
+    fees_paid: float
+
+
+class SingleAssetMarketCycle(BaseModel):
+    """Market cycle context at the latest decision time."""
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    confidence: float
+    multiplier: float
+    evidence_sha256: str | None
+
+
+class SingleAssetRecommendation(BaseModel):
+    """Participation recommendation for non-technical users."""
+
+    model_config = ConfigDict(frozen=True)
+
+    participate: bool
+    max_invest_usdt: float
+    reason: str
+
+
+class SingleAssetStrategyEvaluation(BaseModel):
+    """Stable contract node for a single-asset strategy evaluation.
+
+    Each item in ``single_asset_strategy_evaluations`` follows this shape.
+    When ``status`` is ``missing`` or ``error``, audit fields carry zero/empty
+    values and a human-readable ``error_summary`` explains the degradation.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    asset: str
+    strategy_id: str
+    strategy_version: str
+    status: SingleAssetStatus
+    sample_start: str | None = None
+    sample_end: str | None = None
+    generated_at: str | None = None
+    runtime_ms: int | None = None
+    input_artifact_sha256: str | None = None
+    result_artifact_sha256: str | None = None
+    artifact_path: str | None = None
+    current_signal: CurrentSignal = CurrentSignal.UNAVAILABLE
+    current_signal_time: str | None = None
+    market_cycle: SingleAssetMarketCycle | None = None
+    recommendation: SingleAssetRecommendation | None = None
+    baseline: StrategyMetrics | None = None
+    confidence_weighted: StrategyMetrics | None = None
+    error_summary: str | None = None
+
+
 class ResearchTerminalResponse(BaseModel):
     """Contract ``ResearchTerminalResponse`` — wire shape of ``GET /api/research/latest``."""
 
@@ -264,3 +347,6 @@ class ResearchTerminalResponse(BaseModel):
     allocation: Allocation
     backtest_comparison: BacktestComparison
     snapshots: list[Snapshot]
+    single_asset_strategy_evaluations: list[SingleAssetStrategyEvaluation] = Field(
+        default_factory=list
+    )

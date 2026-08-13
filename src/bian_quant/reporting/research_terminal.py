@@ -58,6 +58,7 @@ from bian_quant.reporting.research_protocol import (
     PopularUniverse,
     ResearchTerminalResponse,
     RunInfo,
+    SingleAssetStrategyEvaluation,
     Snapshot,
     SnapshotName,
     TerminalState,
@@ -197,6 +198,11 @@ def build_research_terminal_response(
         temporary_blocker_count=temporary_blocker_count,
     )
 
+    # --- single-asset strategy evaluations (defensive) -------------------
+    single_asset_evals = _build_single_asset_evaluations(
+        artifact_root, repo_root=repo_root, popular_universe_dir=artifacts_dir
+    )
+
     return ResearchTerminalResponse(
         schema_version="research-terminal-v1",
         state=state,
@@ -213,6 +219,7 @@ def build_research_terminal_response(
         allocation=allocation,
         backtest_comparison=comparison,
         snapshots=snapshots,
+        single_asset_strategy_evaluations=single_asset_evals,
     )
 
 
@@ -295,6 +302,7 @@ def _empty_response(as_of_iso: str) -> ResearchTerminalResponse:
             artifact_sha256=None,
         ),
         snapshots=[],
+        single_asset_strategy_evaluations=[],
     )
 
 
@@ -654,6 +662,57 @@ def _latest_three_coin_weights(artifacts_dir: Path) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# Single-asset strategy evaluations
+# ---------------------------------------------------------------------------
+
+
+def _build_single_asset_evaluations(
+    artifact_root: Path,
+    *,
+    repo_root: Path,
+    popular_universe_dir: Path | None = None,
+) -> list[SingleAssetStrategyEvaluation]:
+    """Build single-asset evaluations defensively.
+
+    Each evaluator runs in isolation; a failure (missing data, corrupt
+    artifact, unexpected exception) degrades only the affected item to
+    ``missing`` or ``error`` and never changes the parent research state.
+    """
+    evaluations: list[SingleAssetStrategyEvaluation] = []
+
+    # ETH legacy PA confluence evaluation
+    try:
+        from bian_quant.reporting.single_asset_artifacts import (
+            build_eth_single_asset_evaluation,
+        )
+
+        ohlcv_path = repo_root / "data" / "ETHUSDT_4h.csv"
+        artifact_dir = artifact_root / "single-asset-strategies"
+
+        evaluation = build_eth_single_asset_evaluation(
+            ohlcv_path=ohlcv_path,
+            artifact_dir=artifact_dir,
+            popular_universe_dir=popular_universe_dir,
+        )
+        evaluations.append(evaluation)
+    except Exception:
+        # Defensive: any unexpected failure degrades to error status
+        from bian_quant.reporting.research_protocol import SingleAssetStatus
+
+        evaluations.append(
+            SingleAssetStrategyEvaluation(
+                asset="ETHUSDT",
+                strategy_id="legacy.pa_confluence",
+                strategy_version="baseline-0",
+                status=SingleAssetStatus.ERROR,
+                error_summary="Unexpected error during ETH evaluation",
+            )
+        )
+
+    return evaluations
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -708,3 +767,4 @@ def _load_json_cached(path: Path) -> dict[str, Any]:
         return {}
     _json_cache[key] = (mtime, data)
     return data
+

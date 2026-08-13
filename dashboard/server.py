@@ -133,6 +133,7 @@ async def api_research_latest():
                 "blockers": [],
                 "pre_listing_exclusions": [],
                 "snapshots": [],
+                "single_asset_strategy_evaluations": [],
             }
         )
     return JSONResponse(response.model_dump(mode="json"))
@@ -154,3 +155,4 @@ if __name__ == "__main__":
     print("  API:  /api/summary, /api/backtest/BTCUSDT, /api/research/latest")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8787)
+

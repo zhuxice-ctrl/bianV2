@@ -663,6 +663,90 @@ function renderSnapshots(data){
     </div>`;
 }
 
+function renderSingleAssetEvaluations(data){
+  const evals=data.single_asset_strategy_evaluations;
+  if(!evals||evals.length===0)return '';
+  let sections=evals.map(ev=>{
+    if(ev.status==='missing'||ev.status==='error'){
+      return `
+        <div class="panel" style="border-color:${ev.status==='error'?'rgba(255,59,78,.2)':'rgba(85,138,100,.2)'}">
+          <h3>ETH 单币策略对比 <span class="tag">SINGLE ASSET · ${escapeHtml(ev.status.toUpperCase())}</span></h3>
+          <div style="font-size:13px;color:var(--${ev.status==='error'?'red':'muted'});padding:8px 0">
+            当前无法评估：${escapeHtml(ev.error_summary||'未知原因')}
+          </div>
+          <div style="font-size:11px;color:var(--faint)">单币评估不可用不影响热门币研究状态。</div>
+        </div>`;
+    }
+    const rec=ev.recommendation||{};
+    const mc=ev.market_cycle||{};
+    const baseline=ev.baseline||{};
+    const weighted=ev.confidence_weighted||{};
+    const participateColor=rec.participate?'var(--green)':'var(--muted)';
+    const participateText=rec.participate?'建议参与':'不建议参与';
+    function metricRow(label,b,w){
+      return `<tr>
+        <td style="color:var(--muted)">${escapeHtml(label)}</td>
+        <td style="text-align:right">${b.final_equity!=null?usd(b.final_equity):DASH}</td>
+        <td style="text-align:right">${w.final_equity!=null?usd(w.final_equity):DASH}</td>
+      </tr>`;
+    }
+    function pctVal(v){return v!=null?(Number(v)*100).toFixed(1)+'%':DASH;}
+    return `
+      <div class="panel glow" style="border-color:rgba(41,216,255,.18)">
+        <h3>ETH 单币策略对比 <span class="tag">SINGLE ASSET · ${escapeHtml(ev.asset)} · ${escapeHtml(ev.strategy_id)}</span></h3>
+        <div style="margin-bottom:12px">
+          <div style="font-size:15px;font-weight:800;color:${participateColor};margin-bottom:4px">
+            当前是否建议参与：${escapeHtml(participateText)}
+          </div>
+          <div style="font-size:13px;color:var(--text)">
+            ${escapeHtml(rec.reason||'')}
+          </div>
+          ${rec.participate?`<div style="font-size:12px;color:var(--cyan);margin-top:4px">建议最多投入：${escapeHtml(String(rec.max_invest_usdt||0))}U</div>`:''}
+        </div>
+        <div class="info-grid" style="margin-bottom:12px">
+          <div class="info-row"><span class="k">当前信号</span><span class="v">${escapeHtml(ev.current_signal||DASH)}</span></div>
+          <div class="info-row"><span class="k">市场周期</span><span class="v">${escapeHtml(mc.label||DASH)}</span></div>
+          <div class="info-row"><span class="k">置信度</span><span class="v">${pctVal(mc.confidence)}</span></div>
+          <div class="info-row"><span class="k">风险系数</span><span class="v">${mc.multiplier!=null?escapeHtml(String(mc.multiplier)):DASH}</span></div>
+          <div class="info-row"><span class="k">样本起点</span><span class="v">${escapeHtml(ev.sample_start||DASH)}</span></div>
+          <div class="info-row"><span class="k">样本终点</span><span class="v">${escapeHtml(ev.sample_end||DASH)}</span></div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>指标</th><th style="text-align:right">原始策略</th><th style="text-align:right">置信度加权</th></tr></thead>
+            <tbody>
+              <tr><td style="color:var(--muted)">期末权益</td><td style="text-align:right">${usd(baseline.final_equity)}</td><td style="text-align:right">${usd(weighted.final_equity)}</td></tr>
+              <tr><td style="color:var(--muted)">总收益</td><td style="text-align:right">${pctVal(baseline.total_return)}</td><td style="text-align:right">${pctVal(weighted.total_return)}</td></tr>
+              <tr><td style="color:var(--muted)">最大回撤</td><td style="text-align:right">${pctVal(baseline.max_drawdown)}</td><td style="text-align:right">${pctVal(weighted.max_drawdown)}</td></tr>
+              <tr><td style="color:var(--muted)">胜率</td><td style="text-align:right">${baseline.win_rate!=null?pctVal(baseline.win_rate):DASH}</td><td style="text-align:right">${weighted.win_rate!=null?pctVal(weighted.win_rate):DASH}</td></tr>
+              <tr><td style="color:var(--muted)">交易次数</td><td style="text-align:right">${fmtNumRaw(baseline.trade_count)}</td><td style="text-align:right">${fmtNumRaw(weighted.trade_count)}</td></tr>
+              <tr><td style="color:var(--muted)">手续费后净利润</td><td style="text-align:right;color:${(baseline.fee_paid_net_profit||0)>=0?'var(--green)':'var(--red)'}">${baseline.fee_paid_net_profit!=null?escapeHtml(String(Number(baseline.fee_paid_net_profit).toFixed(2)))+'U':DASH}</td><td style="text-align:right;color:${(weighted.fee_paid_net_profit||0)>=0?'var(--green)':'var(--red)'}">${weighted.fee_paid_net_profit!=null?escapeHtml(String(Number(weighted.fee_paid_net_profit).toFixed(2)))+'U':DASH}</td></tr>
+              <tr><td style="color:var(--muted)">已付手续费</td><td style="text-align:right">${baseline.fees_paid!=null?escapeHtml(String(Number(baseline.fees_paid).toFixed(2)))+'U':DASH}</td><td style="text-align:right">${weighted.fees_paid!=null?escapeHtml(String(Number(weighted.fees_paid).toFixed(2)))+'U':DASH}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <details class="technical-details">
+          <summary>审计详情</summary>
+          <div class="technical-grid">
+            <div class="info-row"><span class="k">策略版本</span><span class="v">${escapeHtml(ev.strategy_version||DASH)}</span></div>
+            <div class="info-row"><span class="k">运行耗时</span><span class="v">${fmtNumRaw(ev.runtime_ms)}ms</span></div>
+            <div class="info-row"><span class="k">生成时间</span><span class="v">${fmtTime(ev.generated_at)}</span></div>
+            <div class="info-row"><span class="k">输入哈希</span><span class="v mono-id" title="${escapeHtml(ev.input_artifact_sha256)}">${escapeHtml(trunc(ev.input_artifact_sha256,18))}</span></div>
+            <div class="info-row"><span class="k">结果哈希</span><span class="v mono-id" title="${escapeHtml(ev.result_artifact_sha256)}">${escapeHtml(trunc(ev.result_artifact_sha256,18))}</span></div>
+            <div class="info-row"><span class="k">证据 SHA</span><span class="v mono-id" title="${escapeHtml(mc.evidence_sha256)}">${escapeHtml(trunc(mc.evidence_sha256,18))}</span></div>
+            <div class="info-row"><span class="k">Artifact</span><span class="v trunc mono-id" title="${escapeHtml(ev.artifact_path)}">${escapeHtml(trunc(ev.artifact_path,20))}</span></div>
+            <div class="info-row"><span class="k">信号时间</span><span class="v">${fmtTime(ev.current_signal_time)}</span></div>
+          </div>
+        </details>
+      </div>`;
+  }).join('');
+  return `
+    <div class="sec fadein">
+      <div class="sec-head" style="color:var(--cyan);text-shadow:0 0 6px rgba(41,216,255,.2)">ETH 单币策略对比 <span class="tag" style="color:var(--muted)">SINGLE ASSET STRATEGY · READ ONLY</span></div>
+      ${sections}
+    </div>`;
+}
+
 function renderEmpty(data){
   return `
     <div class="empty-state fadein" style="padding:60px 20px">
@@ -704,6 +788,7 @@ function renderAll(data){
   html+=renderCoverage(data);
   html+=renderExclusions(data);
   html+=renderSnapshots(data);
+  html+=renderSingleAssetEvaluations(data);
 
   return html;
 }
@@ -808,3 +893,4 @@ fetchData();
 </script>
 </body>
 </html>
+
