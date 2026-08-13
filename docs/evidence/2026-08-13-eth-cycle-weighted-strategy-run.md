@@ -5,7 +5,7 @@
 | 项目 | 值 |
 |---|---|
 | 分支 | `codex/eth-cycle-weighted-strategy` |
-| Commit SHA | (pending push) |
+| Commit SHA | `b715dc0` |
 | 运行日期 | 2026-08-13 |
 | 沙箱环境 | 1 Core CPU / 4 GB 内存 / Python 3.10 |
 

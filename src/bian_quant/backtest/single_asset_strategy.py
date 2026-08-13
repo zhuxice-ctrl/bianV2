@@ -28,14 +28,14 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from bian_quant.backtest.engine import EventEngine
+from bian_quant.backtest.engine import BacktestResult, EventEngine
 from bian_quant.backtest.events import Bar, BarConflictPolicy, SignalEvent
 from bian_quant.regimes.market_cycle import (
     MarketCycleLabel,
@@ -126,7 +126,7 @@ def _bars_from_frame(frame: pd.DataFrame) -> list[Bar]:
     for ts, row in frame.iterrows():
         bars.append(
             Bar(
-                timestamp=ts.to_pydatetime(),
+                timestamp=pd.Timestamp(str(ts)).to_pydatetime(),
                 open=Decimal(str(row["open"])),
                 high=Decimal(str(row["high"])),
                 low=Decimal(str(row["low"])),
@@ -145,15 +145,12 @@ def _records_through(
         return records
     times = pd.to_datetime(records["selection_time"], utc=True)
     dt = pd.Timestamp(decision_time)
-    if dt.tzinfo is None:
-        dt = dt.tz_localize("UTC")
-    else:
-        dt = dt.tz_convert("UTC")
+    dt = dt.tz_localize("UTC") if dt.tzinfo is None else dt.tz_convert("UTC")
     return records.loc[times <= dt].copy()
 
 
 def _compute_metrics(
-    result,
+    result: BacktestResult,
     *,
     initial_equity: float,
 ) -> VariantMetrics:
@@ -228,7 +225,9 @@ def _load_eth_ohlcv(csv_path: Path) -> pd.DataFrame:
     sample = str(frame[time_col].iloc[0])
     if sample.isdigit() and len(sample) >= 10:
         unit = "ms" if len(sample) >= 13 else "s"
-        frame[time_col] = pd.to_datetime(frame[time_col], unit=unit, utc=True)
+        frame[time_col] = pd.to_datetime(  # type: ignore[call-overload]
+            frame[time_col], unit=unit, utc=True
+        )
     else:
         frame[time_col] = pd.to_datetime(frame[time_col], utc=True)
     frame = frame.set_index(time_col)
@@ -258,8 +257,10 @@ def _load_eth_ohlcv(csv_path: Path) -> pd.DataFrame:
     frame = frame.sort_index()
     frame = frame[~frame.index.duplicated(keep="first")]
     # Ensure timezone-aware
-    if frame.index.tz is None:
-        frame.index = frame.index.tz_localize("UTC")
+    index = pd.DatetimeIndex(frame.index)
+    if index.tz is None:
+        index = index.tz_localize("UTC")
+    frame.index = index
     return frame[["open", "high", "low", "close", "volume"]].astype(float)
 
 
@@ -382,7 +383,8 @@ def evaluate_eth_strategy(
 
     for sig in signals:
         # Get ATR at the signal's decision time
-        sig_ts = pd.Timestamp(sig.decision_time, tz="UTC")
+        sig_ts = pd.Timestamp(sig.decision_time)
+        sig_ts = sig_ts.tz_localize("UTC") if sig_ts.tzinfo is None else sig_ts.tz_convert("UTC")
         # Find the bar that generated this signal (the completed bar)
         # ATR is indexed by the bar timestamp
         if sig_ts in atr_series.index:
@@ -420,19 +422,16 @@ def evaluate_eth_strategy(
             mult = 0.0
             cycle_label = "insufficient_evidence"
             cycle_conf = 0.0
-            cycle_sha = None
         else:
             try:
                 state = classify_market_cycle(records_through_t)
                 mult = cycle_multiplier(state.label.value, state.confidence)
                 cycle_label = state.label.value
                 cycle_conf = state.confidence
-                cycle_sha = state.evidence_sha256
             except Exception:
                 mult = 0.0
                 cycle_label = "insufficient_evidence"
                 cycle_conf = 0.0
-                cycle_sha = None
 
         signal_multipliers.append(
             {
@@ -459,7 +458,7 @@ def evaluate_eth_strategy(
             )
 
     # --- Run both variants through EventEngine -------------------------
-    engine_kwargs = dict(
+    baseline_engine = EventEngine(
         taker_fee_bps=TAKER_FEE_BPS,
         slippage_bps=SLIPPAGE_BPS,
         initial_equity=INITIAL_EQUITY,
@@ -467,9 +466,14 @@ def evaluate_eth_strategy(
         close_at_end=True,
         bar_conflict_policy=BarConflictPolicy.STOP_FIRST,
     )
-
-    baseline_engine = EventEngine(**engine_kwargs)
-    weighted_engine = EventEngine(**engine_kwargs)
+    weighted_engine = EventEngine(
+        taker_fee_bps=TAKER_FEE_BPS,
+        slippage_bps=SLIPPAGE_BPS,
+        initial_equity=INITIAL_EQUITY,
+        gross_limit=Decimal("1.0"),
+        close_at_end=True,
+        bar_conflict_policy=BarConflictPolicy.STOP_FIRST,
+    )
 
     baseline_result = baseline_engine.run(bars=bars, signals=baseline_events)
     weighted_result = weighted_engine.run(bars=bars, signals=weighted_events)

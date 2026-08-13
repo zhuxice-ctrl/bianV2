@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,6 @@ from bian_quant.reporting.research_protocol import (
     SingleAssetStrategyEvaluation,
     StrategyMetrics,
 )
-
 
 # --- Canonical JSON / hashing ----------------------------------------------
 
@@ -53,10 +53,8 @@ def write_single_asset_artifact(payload: dict[str, Any], path: Path) -> str:
             fh.write(data)
         os.replace(tmp, path)
     except Exception:
-        try:
+        with suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
     return sha
 
@@ -203,7 +201,7 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _metrics_to_model(metrics) -> StrategyMetrics:
+def _metrics_to_model(metrics: Any) -> StrategyMetrics:
     return StrategyMetrics(
         final_equity=metrics.final_equity,
         total_return=metrics.total_return,
@@ -215,7 +213,7 @@ def _metrics_to_model(metrics) -> StrategyMetrics:
     )
 
 
-def _build_artifact_payload(result) -> dict[str, Any]:
+def _build_artifact_payload(result: Any) -> dict[str, Any]:
     """Build the canonical artifact JSON payload from an EvaluationResult."""
     payload: dict[str, Any] = {
         "contract_version": _CONTRACT_VERSION,

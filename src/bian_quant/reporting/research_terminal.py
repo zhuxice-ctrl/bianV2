@@ -200,7 +200,9 @@ def build_research_terminal_response(
 
     # --- single-asset strategy evaluations (defensive) -------------------
     single_asset_evals = _build_single_asset_evaluations(
-        artifact_root, repo_root=repo_root, popular_universe_dir=artifacts_dir
+        artifact_root,
+        repo_root=repo_root,
+        popular_universe_dir=artifact_root / "popular-universe",
     )
 
     return ResearchTerminalResponse(
