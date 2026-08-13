@@ -157,9 +157,6 @@ def build_research_terminal_response(
     # --- coverage ----------------------------------------------------------
     coverage = _build_coverage(quality, config.assets)
 
-    # --- blockers ----------------------------------------------------------
-    blockers = _build_blockers(acquisition)
-
     # --- pre-listing exclusions -------------------------------------------
     exclusions = _build_exclusions(pre_listing_exclusions_raw)
 
@@ -170,6 +167,16 @@ def build_research_terminal_response(
     partial_impact = _build_partial_impact(
         acquisition.get("partial_availability_impact")
     )
+
+    # A partial exclusion is a known, explicitly accepted temporary gap. It is
+    # shown in its dedicated warning area rather than also being presented as a
+    # blocker for an otherwise passed run.
+    partial_identity_keys = {
+        exclusion.identity_key for exclusion in partial_exclusions
+    }
+
+    # --- blockers ----------------------------------------------------------
+    blockers = _build_blockers(acquisition, partial_identity_keys)
 
     # --- market cycle / allocation / 100U comparison -----------------------
     cycle, allocation, comparison = _build_cycle_allocation_backtest(
@@ -460,13 +467,19 @@ def _dataset_status(reports: list[dict[str, Any]] | None) -> CoverageStatus:
 # ---------------------------------------------------------------------------
 
 
-def _build_blockers(acquisition: dict[str, Any]) -> list[Blocker]:
+def _build_blockers(
+    acquisition: dict[str, Any],
+    excluded_identity_keys: set[str] | None = None,
+) -> list[Blocker]:
     results = acquisition.get("results") or []
+    excluded_identity_keys = excluded_identity_keys or set()
     blockers: list[Blocker] = []
     for result in results:
         if result.get("status") != "failed":
             continue
         identity_key = str(result.get("identity_key") or "")
+        if identity_key in excluded_identity_keys:
+            continue
         dataset_str, asset, _interval, granularity, period_start = _parse_identity_key(identity_key)
         try:
             dataset = DatasetName(dataset_str) if dataset_str else None

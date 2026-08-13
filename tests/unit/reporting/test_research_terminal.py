@@ -113,7 +113,19 @@ def _write_artifacts(tmp_path: Path, run_id: str, *, partial: bool) -> None:
         "status": "passed",
         "plan_hash": "test",
         "planned_objects": 39,
-        "results": [],
+        "results": (
+            [
+                {
+                    "identity_key": partial_exclusions[0]["identity_key"],
+                    "status": "failed",
+                    "error_code": partial_exclusions[0]["error_code"],
+                    "message": "HTTP Error 404: Not Found",
+                    "temporary": True,
+                }
+            ]
+            if partial
+            else []
+        ),
         "blocked_periods": [],
         "persistent_bytes": 0,
         "peak_working_bytes": 0,

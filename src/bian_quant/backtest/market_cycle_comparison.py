@@ -80,7 +80,10 @@ def run_market_cycle_comparison(
         date = pd.Timestamp(str(idx)).to_pydatetime()
         historical_popular = _records_through(popular_records, date)
         state = classify_market_cycle(historical_popular)
-        weights = _positive_weights({str(k): float(v) for k, v in row.to_dict().items()})
+        # The comparison has no independent entry signal. Use a fixed equal-weight
+        # BTC/ETH/BNB basket so realized returns cannot leak into the position
+        # weights (which would square gains and discard losses).
+        weights = {asset: 1.0 for asset in THREE_COIN_UNIVERSE}
         baseline_cap = _normalize_weights(weights, 1.0)
         allocation = allocate_confidence_cap(state, weights, capital_usdt=initial_equity_usdt)
         weighted_cap = {
@@ -89,7 +92,7 @@ def run_market_cycle_comparison(
             for asset in THREE_COIN_UNIVERSE
         }
         base_equity *= 1.0 + _portfolio_return(row, baseline_cap, 1.0)
-        conf_equity *= 1.0 + _portfolio_return(row, weighted_cap, float(initial_equity_usdt))
+        conf_equity *= 1.0 + _portfolio_return(row, weighted_cap, 1.0)
         baseline_equity.append(base_equity)
         weighted_equity.append(conf_equity)
         latest_state = state
