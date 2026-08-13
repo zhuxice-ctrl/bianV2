@@ -20,18 +20,27 @@ on every request.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
+from bian_quant.backtest.confidence_allocation import allocate_confidence_cap
+from bian_quant.backtest.market_cycle_comparison import (
+    build_comparison_from_artifacts,
+    comparison_payload,
+)
 from bian_quant.data.acquisition import DualHorizonAcquisition
 from bian_quant.data.catalog import DatasetCatalog
 from bian_quant.data.contracts import DatasetLayer
 from bian_quant.experiments.models import RunStatus
 from bian_quant.experiments.registry import ExperimentRegistry
+from bian_quant.regimes.market_cycle import classify_market_cycle, load_popular_universe_records
 from bian_quant.reporting.research_protocol import (
+    Allocation,
+    BacktestComparison,
+    BacktestMetrics,
     Blocker,
     CoverageRow,
     CoverageStatus,
@@ -41,6 +50,7 @@ from bian_quant.reporting.research_protocol import (
     ExclusionReason,
     Granularity,
     Kpis,
+    MarketCycle,
     PartialAvailabilityExclusion,
     PartialAvailabilityImpact,
     PartialExclusionReason,
@@ -60,6 +70,22 @@ _ZERO_IMPACT = PartialAvailabilityImpact(
     affected_assets=[],
     affected_periods=0,
     affected_selection_days=0,
+)
+
+_ZERO_METRICS = BacktestMetrics(
+    final_equity=100.0,
+    total_return=0.0,
+    annualized_volatility=0.0,
+    max_drawdown=0.0,
+    sharpe_like=0.0,
+    trade_count=0,
+)
+
+_ZERO_ALLOCATION = Allocation(
+    total_cap_usdt=0.0,
+    per_asset_caps_usdt={"BTCUSDT": 0.0, "ETHUSDT": 0.0, "BNBUSDT": 0.0},
+    selected_assets=[],
+    reason="INSUFFICIENT_EVIDENCE",
 )
 
 # Module-level mtime cache for parsed artifact JSON: {path_str: (mtime, data)}
@@ -100,6 +126,15 @@ def build_research_terminal_response(
     pre_listing_exclusions_raw = acquisition.get("pre_listing_exclusions") or []
     planned_objects = int(acquisition.get("planned_objects") or 0)
     manifest_sha = acquisition.get("availability_manifest_sha256")
+    publish_start = acquisition.get("popular_universe_start")
+    if publish_start is None and config.popular_universe_start is not None:
+        publish_start = config.popular_universe_start.isoformat()
+    warmup_start = acquisition.get("popular_universe_warmup_start")
+    if warmup_start is None and config.popular_universe_start is not None:
+        warmup_start = config.micro_start.isoformat()
+    warmup_end = acquisition.get("popular_universe_warmup_end")
+    if warmup_end is None and config.popular_universe_start is not None:
+        warmup_end = _day_before(config.popular_universe_start)
     run_info = RunInfo(
         id=run_id,
         status=state,
@@ -107,6 +142,9 @@ def build_research_terminal_response(
         planned_objects=planned_objects,
         availability_manifest_sha256=manifest_sha,
         pre_listing_exclusion_count=len(pre_listing_exclusions_raw),
+        popular_universe_start=publish_start,
+        popular_universe_warmup_start=warmup_start,
+        popular_universe_warmup_end=warmup_end,
         artifact_path=artifact_path_rel,
     )
 
@@ -131,6 +169,12 @@ def build_research_terminal_response(
     )
     partial_impact = _build_partial_impact(
         acquisition.get("partial_availability_impact")
+    )
+
+    # --- market cycle / allocation / 100U comparison -----------------------
+    cycle, allocation, comparison = _build_cycle_allocation_backtest(
+        artifact_root,
+        raw_root=_resolve(config.raw_root, repo_root),
     )
 
     # --- kpis --------------------------------------------------------------
@@ -158,6 +202,9 @@ def build_research_terminal_response(
         pre_listing_exclusions=exclusions,
         partial_availability_exclusions=partial_exclusions,
         partial_availability_impact=partial_impact,
+        market_cycle=cycle,
+        allocation=allocation,
+        backtest_comparison=comparison,
         snapshots=snapshots,
     )
 
@@ -205,6 +252,9 @@ def _empty_response(as_of_iso: str) -> ResearchTerminalResponse:
             planned_objects=0,
             availability_manifest_sha256=None,
             pre_listing_exclusion_count=0,
+            popular_universe_start=None,
+            popular_universe_warmup_start=None,
+            popular_universe_warmup_end=None,
             artifact_path=None,
         ),
         kpis=Kpis(
@@ -221,6 +271,22 @@ def _empty_response(as_of_iso: str) -> ResearchTerminalResponse:
         pre_listing_exclusions=[],
         partial_availability_exclusions=[],
         partial_availability_impact=_ZERO_IMPACT,
+        market_cycle=MarketCycle(
+            label="insufficient_evidence",
+            confidence=0.0,
+            probabilities={"bull": 0.0, "neutral": 0.0, "risk_off": 0.0},
+            decision_time=None,
+            sample_count=0,
+            evidence_sha256=None,
+            status="missing",
+        ),
+        allocation=_ZERO_ALLOCATION,
+        backtest_comparison=BacktestComparison(
+            status="missing",
+            baseline=_ZERO_METRICS,
+            confidence_weighted=_ZERO_METRICS,
+            artifact_sha256=None,
+        ),
         snapshots=[],
     )
 
@@ -484,6 +550,97 @@ def _build_partial_impact(raw: dict[str, Any] | None) -> PartialAvailabilityImpa
 
 
 # ---------------------------------------------------------------------------
+# Market cycle / allocation / backtest
+# ---------------------------------------------------------------------------
+
+
+def _build_cycle_allocation_backtest(
+    artifact_root: Path,
+    *,
+    raw_root: Path,
+) -> tuple[MarketCycle, Allocation, BacktestComparison]:
+    artifacts_dir = artifact_root / "popular-universe"
+    try:
+        records = load_popular_universe_records(artifacts_dir)
+        state = classify_market_cycle(records)
+        latest_weights = _latest_three_coin_weights(artifacts_dir)
+        allocation_decision = allocate_confidence_cap(state, latest_weights)
+        comparison = build_comparison_from_artifacts(artifacts_dir, raw_root=raw_root)
+    except Exception:
+        return (
+            MarketCycle(
+                label="insufficient_evidence",
+                confidence=0.0,
+                probabilities={"bull": 0.0, "neutral": 0.0, "risk_off": 0.0},
+                decision_time=None,
+                sample_count=0,
+                evidence_sha256=None,
+                status="error",
+            ),
+            _ZERO_ALLOCATION,
+            BacktestComparison(
+                status="error",
+                baseline=_ZERO_METRICS,
+                confidence_weighted=_ZERO_METRICS,
+                artifact_sha256=None,
+            ),
+        )
+    status = "ok" if state.sample_count >= 30 else "insufficient_evidence"
+    cycle = MarketCycle(
+        label=state.label.value,
+        confidence=state.confidence,
+        probabilities=state.probabilities,
+        decision_time=state.decision_time.isoformat() if state.decision_time else None,
+        sample_count=state.sample_count,
+        evidence_sha256=state.evidence_sha256,
+        status=status,
+    )
+    allocation = Allocation(
+        total_cap_usdt=float(allocation_decision.total_cap_usdt),
+        per_asset_caps_usdt={
+            asset: float(value)
+            for asset, value in allocation_decision.per_asset_caps_usdt.items()
+        },
+        selected_assets=list(allocation_decision.selected_assets),
+        reason=allocation_decision.reason,
+    )
+    comparison_payload_data = comparison_payload(comparison)
+    baseline_payload = comparison_payload_data["baseline"]
+    weighted_payload = comparison_payload_data["confidence_weighted"]
+    if not isinstance(baseline_payload, dict) or not isinstance(weighted_payload, dict):
+        raise ValueError("invalid comparison payload")
+    backtest = BacktestComparison(
+        status="missing_returns" if comparison.baseline.trade_count == 0 else "ok",
+        baseline=BacktestMetrics(**baseline_payload),
+        confidence_weighted=BacktestMetrics(**weighted_payload),
+        artifact_sha256=str(comparison_payload_data["artifact_sha256"]),
+    )
+    return cycle, allocation, backtest
+
+
+def _latest_three_coin_weights(artifacts_dir: Path) -> dict[str, float]:
+    if not artifacts_dir.is_dir():
+        return {}
+    files = sorted(artifacts_dir.glob("*.json"))
+    if not files:
+        return {}
+    try:
+        payload = json.loads(files[-1].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    weights: dict[str, float] = {}
+    for member in payload.get("members") or []:
+        if not isinstance(member, dict):
+            continue
+        asset = str(member.get("asset"))
+        if asset not in {"BTCUSDT", "ETHUSDT", "BNBUSDT"}:
+            continue
+        rank = int(member.get("rank") or 99)
+        weights[asset] = max(0.0, 13.0 - float(rank))
+    return weights
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -513,6 +670,10 @@ def _relative_to_repo(path: Path, repo_root: Path) -> str:
         return str(path.resolve().relative_to(repo_root.resolve()))
     except ValueError:
         return str(path)
+
+
+def _day_before(value: datetime) -> str:
+    return (value.astimezone(UTC) - timedelta(days=1)).isoformat()
 
 
 def _load_json_cached(path: Path) -> dict[str, Any]:

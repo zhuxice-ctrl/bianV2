@@ -404,6 +404,32 @@ def test_artifacts_persist_manifest_hash_and_exclusions(tmp_path: Path) -> None:
     assert quality["availability_manifest_sha256"]
 
 
+def test_popular_universe_start_is_audited_as_publish_boundary(tmp_path: Path) -> None:
+    base = _miniature_popular_config_with_availability(tmp_path)
+    config = base.model_copy(
+        update={
+            "popular_universe_start": datetime(2026, 7, 2, 23, 59, 59, 999000, tzinfo=UTC)
+        }
+    )
+
+    result = prepare_dual_horizon(
+        config,
+        code_sha="c" * 40,
+        downloader=FixtureDownloader(FIXTURES),
+    )
+
+    acquisition = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    quality = json.loads(result.quality_artifact.read_text(encoding="utf-8"))
+    assert acquisition["popular_universe_start"].startswith("2026-07-02")
+    assert acquisition["popular_universe_warmup_start"].startswith("2026-07-01")
+    assert acquisition["popular_universe_warmup_end"].startswith("2026-07-01")
+    assert quality["popular_universe_start"] == acquisition["popular_universe_start"]
+    assert all(
+        artifact["selection_time"].startswith(("2026-07-02", "2026-07-03"))
+        for artifact in acquisition["popular_universe_artifacts"]
+    )
+
+
 class PostBoundary404Downloader:
     """Fail the first post-boundary OHLCV object with a 404."""
 

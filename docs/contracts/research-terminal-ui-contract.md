@@ -60,6 +60,9 @@ type ResearchTerminalResponse = {
     planned_objects: number;
     availability_manifest_sha256: string | null;
     pre_listing_exclusion_count: number;
+    popular_universe_start: string | null;
+    popular_universe_warmup_start: string | null;
+    popular_universe_warmup_end: string | null;
     artifact_path: string | null;
   };
   kpis: {
@@ -78,6 +81,9 @@ type ResearchTerminalResponse = {
   pre_listing_exclusions: Exclusion[];
   partial_availability_exclusions: PartialAvailabilityExclusion[];
   partial_availability_impact: PartialAvailabilityImpact;
+  market_cycle: MarketCycle;
+  allocation: Allocation;
+  backtest_comparison: BacktestComparison;
   snapshots: Snapshot[];
 };
 
@@ -129,6 +135,39 @@ type PartialAvailabilityImpact = {
   affected_assets: string[];
   affected_periods: number;
   affected_selection_days: number;
+};
+
+type MarketCycle = {
+  label: "bull" | "neutral" | "risk_off" | "insufficient_evidence";
+  confidence: number; // 0..1
+  probabilities: { bull: number; neutral: number; risk_off: number };
+  decision_time: string | null;
+  sample_count: number;
+  evidence_sha256: string | null;
+  status: "ok" | "missing" | "error" | "insufficient_evidence";
+};
+
+type Allocation = {
+  total_cap_usdt: number;
+  per_asset_caps_usdt: { BTCUSDT: number; ETHUSDT: number; BNBUSDT: number };
+  selected_assets: Array<"BTCUSDT" | "ETHUSDT" | "BNBUSDT">;
+  reason: string;
+};
+
+type BacktestMetrics = {
+  final_equity: number;
+  total_return: number;
+  annualized_volatility: number;
+  max_drawdown: number;
+  sharpe_like: number;
+  trade_count: number;
+};
+
+type BacktestComparison = {
+  status: "ok" | "missing" | "missing_returns" | "error";
+  baseline: BacktestMetrics;
+  confidence_weighted: BacktestMetrics;
+  artifact_sha256: string | null;
 };
 
 type Snapshot = {

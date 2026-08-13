@@ -73,6 +73,9 @@ class RunInfo(BaseModel):
     planned_objects: int
     availability_manifest_sha256: str | None
     pre_listing_exclusion_count: int
+    popular_universe_start: str | None
+    popular_universe_warmup_start: str | None
+    popular_universe_warmup_end: str | None
     artifact_path: str | None
 
 
@@ -180,6 +183,55 @@ class PartialAvailabilityImpact(BaseModel):
     affected_selection_days: int
 
 
+class MarketCycle(BaseModel):
+    """Contract ``MarketCycle``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    confidence: float
+    probabilities: dict[str, float]
+    decision_time: str | None
+    sample_count: int
+    evidence_sha256: str | None
+    status: str
+
+
+class Allocation(BaseModel):
+    """Contract ``Allocation``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    total_cap_usdt: float
+    per_asset_caps_usdt: dict[str, float]
+    selected_assets: list[str]
+    reason: str
+
+
+class BacktestMetrics(BaseModel):
+    """Contract ``BacktestMetrics``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    final_equity: float
+    total_return: float
+    annualized_volatility: float
+    max_drawdown: float
+    sharpe_like: float
+    trade_count: int
+
+
+class BacktestComparison(BaseModel):
+    """Contract ``BacktestComparison``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    baseline: BacktestMetrics
+    confidence_weighted: BacktestMetrics
+    artifact_sha256: str | None
+
+
 class Snapshot(BaseModel):
     """Contract ``Snapshot``."""
 
@@ -208,4 +260,7 @@ class ResearchTerminalResponse(BaseModel):
     pre_listing_exclusions: list[Exclusion]
     partial_availability_exclusions: list[PartialAvailabilityExclusion]
     partial_availability_impact: PartialAvailabilityImpact
+    market_cycle: MarketCycle
+    allocation: Allocation
+    backtest_comparison: BacktestComparison
     snapshots: list[Snapshot]

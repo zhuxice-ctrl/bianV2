@@ -430,6 +430,9 @@ def _is_partializable_funding_tail_coverage(
 class PopularUniverseBuildResult:
     artifacts: list[dict[str, object]]
     shortages: list[dict[str, str]]
+    start: datetime
+    warmup_start: datetime
+    warmup_end: datetime | None
 
 
 def _has_funding_days_shortage(
@@ -495,10 +498,12 @@ def _build_popular_universe_artifacts(
 
     listing = _derive_listing_metadata(ohlcv)
 
-    # Include every configured daily selector boundary, beginning at
-    # micro_start.  Point-in-time filtering in build_popular_universe keeps
-    # same-day rows out until they are actually available.
-    start = pd.Timestamp(config.micro_start).tz_convert("UTC")
+    # Include every configured daily selector boundary, beginning at the
+    # publishable popular-universe start.  Earlier micro rows remain available
+    # as rolling-window warmup evidence.
+    start = pd.Timestamp(
+        config.popular_universe_start or config.micro_start
+    ).tz_convert("UTC")
     end = pd.Timestamp(config.as_of).tz_convert("UTC")
     selector_config_hash = _selector_config_hash(policy)
 
@@ -588,7 +593,17 @@ def _build_popular_universe_artifacts(
             )
         current = current + pd.Timedelta(days=1)
 
-    return PopularUniverseBuildResult(artifacts=results, shortages=shortages)
+    warmup_start = pd.Timestamp(config.micro_start).tz_convert("UTC").to_pydatetime()
+    warmup_end = None
+    if start.to_pydatetime() > warmup_start:
+        warmup_end = (start - pd.Timedelta(days=1)).to_pydatetime()
+    return PopularUniverseBuildResult(
+        artifacts=results,
+        shortages=shortages,
+        start=start.to_pydatetime(),
+        warmup_start=warmup_start,
+        warmup_end=warmup_end,
+    )
 
 
 @overload
@@ -902,6 +917,9 @@ def prepare_dual_horizon(
     blocked_periods = sorted(set(blocked_periods))
     blocking = bool(blocked_periods)
     popular_universe_artifacts: list[dict[str, object]] = []
+    popular_universe_start = config.popular_universe_start or config.micro_start
+    popular_universe_warmup_start = config.micro_start
+    popular_universe_warmup_end: datetime | None = None
     ohlcv_combined = pd.DataFrame()
     funding_combined = pd.DataFrame()
     metrics_combined = pd.DataFrame()
@@ -916,6 +934,9 @@ def prepare_dual_horizon(
                 config, ohlcv_combined, funding_combined, metrics_combined
             )
             popular_universe_artifacts = popular_build.artifacts
+            popular_universe_start = popular_build.start
+            popular_universe_warmup_start = popular_build.warmup_start
+            popular_universe_warmup_end = popular_build.warmup_end
             blocked_periods.extend(
                 shortage["identity_key"] for shortage in popular_build.shortages
             )
@@ -962,6 +983,13 @@ def prepare_dual_horizon(
             "assets": config.assets,
             "macro_start": config.macro_start.isoformat(),
             "micro_start": config.micro_start.isoformat(),
+            "popular_universe_start": popular_universe_start.isoformat(),
+            "popular_universe_warmup_start": popular_universe_warmup_start.isoformat(),
+            "popular_universe_warmup_end": (
+                popular_universe_warmup_end.isoformat()
+                if popular_universe_warmup_end is not None
+                else None
+            ),
             "as_of": config.as_of.isoformat(),
             "code_sha": code_sha,
             "plan_hash": plan_hash,
@@ -1050,6 +1078,13 @@ def prepare_dual_horizon(
         "snapshot_ids": [snapshot.snapshot_id for snapshot in snapshots],
         "delay_snapshot_ids": delay_snapshot_ids,
         "popular_universe_artifacts": popular_universe_artifacts,
+        "popular_universe_start": popular_universe_start.isoformat(),
+        "popular_universe_warmup_start": popular_universe_warmup_start.isoformat(),
+        "popular_universe_warmup_end": (
+            popular_universe_warmup_end.isoformat()
+            if popular_universe_warmup_end is not None
+            else None
+        ),
         "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
         "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
         "partial_availability_exclusions": deduped_exclusions,
@@ -1064,6 +1099,13 @@ def prepare_dual_horizon(
         "funding_tail_strategy": config.funding_tail_strategy,
         "cutoff_evidence": cutoff_payload,
         "popular_universe_artifacts": popular_universe_artifacts,
+        "popular_universe_start": popular_universe_start.isoformat(),
+        "popular_universe_warmup_start": popular_universe_warmup_start.isoformat(),
+        "popular_universe_warmup_end": (
+            popular_universe_warmup_end.isoformat()
+            if popular_universe_warmup_end is not None
+            else None
+        ),
         "availability_manifest_sha256": plan_audit.availability_manifest_sha256,
         "pre_listing_exclusions": list(plan_audit.pre_listing_exclusions),
         "partial_availability_exclusions": deduped_exclusions,

@@ -174,6 +174,9 @@ def test_partial_availability_exclusion_mapped(tmp_path: Path) -> None:
     assert response.partial_availability_impact.affected_assets == ["TONUSDT"]
     assert response.partial_availability_impact.affected_periods == 2
     assert response.partial_availability_impact.affected_selection_days == 31
+    assert response.market_cycle.label == "insufficient_evidence"
+    assert response.allocation.total_cap_usdt == 0.0
+    assert response.backtest_comparison.baseline.final_equity == 100.0
 
 
 def test_no_partial_artifact_returns_empty(tmp_path: Path) -> None:
@@ -188,6 +191,8 @@ def test_no_partial_artifact_returns_empty(tmp_path: Path) -> None:
     assert response.partial_availability_impact.affected_assets == []
     assert response.partial_availability_impact.affected_periods == 0
     assert response.partial_availability_impact.affected_selection_days == 0
+    assert response.market_cycle.status in {"missing", "insufficient_evidence"}
+    assert response.backtest_comparison.status in {"missing", "missing_returns"}
 
 
 def test_empty_response_when_no_run(tmp_path: Path) -> None:
@@ -200,3 +205,5 @@ def test_empty_response_when_no_run(tmp_path: Path) -> None:
     assert response.partial_availability_impact.affected_assets == []
     assert response.partial_availability_impact.affected_periods == 0
     assert response.partial_availability_impact.affected_selection_days == 0
+    assert response.market_cycle.status == "missing"
+    assert response.allocation.selected_assets == []

@@ -54,7 +54,9 @@ class FactorProtocolConfig(BaseModel):
         "holdout_end",
     )
     @classmethod
-    def validate_timezone_aware(cls, value: datetime) -> datetime:
+    def validate_timezone_aware(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
         if value.tzinfo is None:
             raise ValueError("all timestamps must be timezone-aware")
         return value
@@ -102,6 +104,7 @@ class DualHorizonAcquisition(BaseModel):
     macro_start: datetime
     micro_start: datetime
     as_of: datetime
+    popular_universe_start: datetime | None = None
     macro_intervals: tuple[Literal["1d", "4h"], ...]
     micro_intervals: tuple[Literal["1h", "4h"], ...]
     oi_delay_minutes: tuple[Literal[5], Literal[10], Literal[15]]
@@ -122,9 +125,11 @@ class DualHorizonAcquisition(BaseModel):
     coverage: CoverageThresholds
     factor_protocol: FactorProtocolConfig
 
-    @field_validator("macro_start", "micro_start", "as_of")
+    @field_validator("macro_start", "micro_start", "as_of", "popular_universe_start")
     @classmethod
-    def validate_timezone_aware(cls, value: datetime) -> datetime:
+    def validate_timezone_aware(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
         if value.tzinfo is None:
             raise ValueError("all timestamps must be timezone-aware")
         return value
@@ -138,6 +143,11 @@ class DualHorizonAcquisition(BaseModel):
             raise ValueError("assets must match universe_policy.seed_assets")
         if self.macro_start > self.micro_start:
             raise ValueError("macro_start must not follow micro_start")
+        if (
+            self.popular_universe_start is not None
+            and self.popular_universe_start < self.micro_start
+        ):
+            raise ValueError("popular_universe_start must not precede micro_start")
         if self.micro_start >= self.as_of:
             raise ValueError("micro_start must precede as_of")
         if len(set(self.macro_intervals)) != len(self.macro_intervals):

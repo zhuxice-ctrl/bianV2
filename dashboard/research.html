@@ -313,7 +313,11 @@ const TERM_HELP={
   '临时阻断':'上游数据暂未发布或暂时不可访问，稍后重试可能恢复。',
   '计划对象':'本次准备并检查的数据文件数量。',
   '上市前排除':'合约尚未上市时没有数据文件，属于正常排除，不是错误。',
-  '数据覆盖':'每个币的价格、资金费率和持仓量数据是否齐全。'
+  '数据覆盖':'每个币的价格、资金费率和持仓量数据是否齐全。',
+  '大盘周期':'用热门池宽度、成交额、持仓量集中度计算的市场环境，不是单币买卖信号。',
+  '周期置信度':'系统对当前市场环境判断的把握程度，越高代表仓位上限越宽。',
+  '共享仓位':'BTC、ETH、BNB 三个币合计最多可使用的 100U 资金上限。',
+  '回测对比':'固定满额 100U 与按置信度限仓的离线对比结果。'
 };
 function term(label, suffix){
   const id='tip-'+label.replace(/[^a-zA-Z0-9]/g,'-')+'-'+suffix;
@@ -397,6 +401,8 @@ function renderRunInfo(data){
         <div class="info-row"><span class="k">数据截止</span><span class="v">${fmtTime(r.as_of)}</span></div>
         <div class="info-row"><span class="k">${term('计划对象','run-planned')}</span><span class="v">${fmtNumRaw(r.planned_objects)}</span></div>
         <div class="info-row"><span class="k">${term('上市前排除','run-exclusions')}</span><span class="v cyn">${fmtNumRaw(r.pre_listing_exclusion_count)}</span></div>
+        <div class="info-row"><span class="k">热门池起点</span><span class="v">${fmtTime(r.popular_universe_start)}</span></div>
+        <div class="info-row"><span class="k">预热期</span><span class="v">${fmtTime(r.popular_universe_warmup_start)} → ${fmtTime(r.popular_universe_warmup_end)}</span></div>
         <div class="info-row"><span class="k">生成时间</span><span class="v">${fmtTime(data.generated_at)}</span></div>
       </div>
       <details class="technical-details">
@@ -407,6 +413,64 @@ function renderRunInfo(data){
           <div class="info-row"><span class="k">ARTIFACT</span><span class="v trunc mono-id" title="${escapeHtml(r.artifact_path)}">${escapeHtml(r.artifact_path)}</span></div>
         </div>
       </details>
+    </div>`;
+}
+
+function pct(value){
+  if(value===null||value===undefined)return DASH;
+  return (Number(value)*100).toFixed(1)+'%';
+}
+
+function usd(value){
+  if(value===null||value===undefined)return DASH;
+  return Number(value).toFixed(2)+'U';
+}
+
+function cycleLabel(label){
+  return {bull:'牛市环境',neutral:'中性震荡',risk_off:'避险环境',insufficient_evidence:'证据不足'}[label]||label;
+}
+
+function renderMarketCycle(data){
+  const cycle=data.market_cycle||{};
+  const alloc=data.allocation||{total_cap_usdt:0,per_asset_caps_usdt:{},selected_assets:[],reason:'INSUFFICIENT_EVIDENCE'};
+  const bt=data.backtest_comparison||{};
+  const weighted=bt.confidence_weighted||{};
+  const baseline=bt.baseline||{};
+  const assets=['BTCUSDT','ETHUSDT','BNBUSDT'];
+  const rows=assets.map(asset=>`
+    <tr>
+      <td style="font-weight:700;color:var(--green)">${asset}</td>
+      <td>${usd((alloc.per_asset_caps_usdt||{})[asset]||0)}</td>
+      <td>${(alloc.selected_assets||[]).includes(asset)?'<span class="cov passed">可分配<span class="code">SELECTED</span></span>':'<span class="cov unavailable">不开新仓<span class="code">ZERO</span></span>'}</td>
+    </tr>`).join('');
+  return `
+    <div class="sec fadein">
+      <div class="sec-head">${term('大盘周期','section-cycle')} <span class="tag">MARKET CYCLE · READ ONLY</span></div>
+      <div class="panel glow" style="border-color:rgba(41,216,255,.22)">
+        <div class="kpi-grid" style="margin-bottom:12px">
+          <div class="kpi"><div class="label">${term('大盘周期','cycle-label')}</div><div class="num cyn">${escapeHtml(cycleLabel(cycle.label))}</div></div>
+          <div class="kpi"><div class="label">${term('周期置信度','cycle-confidence')}</div><div class="num ${cycle.confidence>=.8?'pos':cycle.confidence>=.5?'amb':'mut'}">${pct(cycle.confidence)}</div></div>
+          <div class="kpi"><div class="label">${term('共享仓位','cycle-cap')}</div><div class="num">${usd(alloc.total_cap_usdt||0)}</div></div>
+          <div class="kpi"><div class="label">${term('回测对比','cycle-backtest')}</div><div class="num sm ${bt.status==='ok'?'pos':'mut'}">${escapeHtml(bt.status||'missing')}</div></div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>三币</th><th>当前上限</th><th>状态</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <details class="technical-details">
+          <summary>周期与回测详情</summary>
+          <div class="technical-grid">
+            <div class="info-row"><span class="k">样本天数</span><span class="v">${fmtNumRaw(cycle.sample_count)}</span></div>
+            <div class="info-row"><span class="k">判断时间</span><span class="v">${fmtTime(cycle.decision_time)}</span></div>
+            <div class="info-row"><span class="k">证据 SHA</span><span class="v mono-id" title="${escapeHtml(cycle.evidence_sha256)}">${escapeHtml(trunc(cycle.evidence_sha256,18))}</span></div>
+            <div class="info-row"><span class="k">固定100U</span><span class="v">${usd(baseline.final_equity)} / ${pct(baseline.total_return)}</span></div>
+            <div class="info-row"><span class="k">置信限仓</span><span class="v">${usd(weighted.final_equity)} / ${pct(weighted.total_return)}</span></div>
+            <div class="info-row"><span class="k">最大回撤</span><span class="v">${pct(weighted.max_drawdown)}</span></div>
+          </div>
+        </details>
+      </div>
     </div>`;
 }
 
@@ -618,6 +682,7 @@ function renderAll(data){
   html+=renderStateBar(data);
   html+=renderKpis(data);
   html+=renderRunInfo(data);
+  html+=renderMarketCycle(data);
 
   if(data.state==='empty'){
     html+=renderEmpty(data);

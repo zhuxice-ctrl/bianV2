@@ -9,6 +9,7 @@ universe_policy:
 archive_availability_path: configs/data/popular_universe_archive_availability.yaml
 macro_start: 2024-07-01T00:00:00Z
 micro_start: 2024-07-01T00:00:00Z
+popular_universe_start: 2024-12-28T00:00:00Z
 as_of: 2026-07-26T19:59:59.999Z
 macro_intervals: [1d, 4h]
 micro_intervals: [1h, 4h]
