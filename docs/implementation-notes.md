@@ -114,3 +114,44 @@ is implemented under `src/bian_quant/paper/`. Operating contract:
   no risk-limit breach. If Plan A produces no Approved artifact, the runner
   raises `PAPER_APPROVAL_REQUIRED` before creating a paper run; implementation
   fixtures remain valid.
+
+## 2026-08-13 — Funding-aligned market cycle scoring (Plan: 2026-08-13-aily-eth-evidence-and-funding-cycle-slice)
+
+Branch `codex/eth-cycle-weighted-strategy`, base commit `063e457`.
+
+**Scope:** Additive market-cycle scoring extension that incorporates funding-rate
+alignment signals from the local Canonical Parquet lake. Two independent
+vertical slices delivered:
+
+- **Slice A (Task 1):** ETH real-data evaluation evidence, prefix-causal audit,
+  API/page acceptance — extends `test_sas.py` and `test_research_terminal.py`
+  with deterministic-evaluation and prefix-causality tests that skip gracefully
+  when `data/ETHUSDT_4h.csv` is absent.
+- **Slice B (Tasks 2–5):** Funding-alignment data contract, local Parquet
+  adapter, pure market-cycle scoring extension, additive API/UI contract, and
+  complete evidence.
+
+**Contract discipline:** `research-terminal-v1` only gains fields; no existing
+field is removed or renamed. `MarketCycle.funding_alignment` defaults to
+`status="missing"`, so old consumers are unaffected. When
+`classify_market_cycle(funding_alignment=None)`, the evidence dict contains no
+funding keys and `evidence_sha256` is byte-identical to the baseline.
+
+**Causal discipline:** `FundingAlignmentRecord.available_time <= decision_time`
+enforced in `__post_init__`. `latest_alignment_through()` filters by decision
+time. `test_future_funding_no_prefix_change` verifies prefix causality.
+
+**Risk-off gate:** When `risk_score > bull_score`, positive funding
+contribution is clamped to zero — contrarian-bullish boost does not fire in
+risk-off-dominant cycles.
+
+**Verification repair (2026-08-14):** The initial slice accidentally replaced
+`backtest/market_cycle_comparison.py` with regime code. The comparison module
+was restored, the additive Funding scoring belongs in `regimes/market_cycle.py`,
+and Funding tests were moved under `tests/unit/regimes/`. Windows verification
+passed: 44 focused tests passed (5 skipped), Ruff passed, and mypy passed for
+93 source files. The API aggregator returned a `research-terminal-v1` passed
+response with Funding alignment status `ok`.
+
+**No auto-merge:** All gates passing → report merge recommendation only; do not
+merge to main automatically.

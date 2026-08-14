@@ -183,6 +183,35 @@ class PartialAvailabilityImpact(BaseModel):
     affected_selection_days: int
 
 
+class FundingAlignment(BaseModel):
+    """Additive Funding-alignment evidence node for ``MarketCycle``.
+
+    Added additively to ``research-terminal-v1``; old consumers may ignore it.
+    Its empty/fallback value carries ``score=None``, all data fields ``None``,
+    ``source_sha256=None`` and ``status="missing"``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    score: float | None
+    positive_rate_share: float | None
+    median_rate: float | None
+    coverage_ratio: float | None
+    source_sha256: str | None
+    status: str  # "ok" | "missing" | "error"
+
+
+def _default_funding_alignment() -> FundingAlignment:
+    return FundingAlignment(
+        score=None,
+        positive_rate_share=None,
+        median_rate=None,
+        coverage_ratio=None,
+        source_sha256=None,
+        status="missing",
+    )
+
+
 class MarketCycle(BaseModel):
     """Contract ``MarketCycle``."""
 
@@ -195,6 +224,7 @@ class MarketCycle(BaseModel):
     sample_count: int
     evidence_sha256: str | None
     status: str
+    funding_alignment: FundingAlignment = Field(default_factory=_default_funding_alignment)
 
 
 class Allocation(BaseModel):

@@ -430,6 +430,12 @@ function cycleLabel(label){
   return {bull:'牛市环境',neutral:'中性震荡',risk_off:'避险环境',insufficient_evidence:'证据不足'}[label]||label;
 }
 
+function fundingLine(fa){
+  if(!fa||fa.status!=='ok')return DASH;
+  const dir=fa.score>0?'利好偏多':fa.score<0?'拥挤偏空':'中性';
+  return escapeHtml(dir)+' · 正费率占比 '+pct(fa.positive_rate_share)+' · 覆盖 '+pct(fa.coverage_ratio);
+}
+
 function renderMarketCycle(data){
   const cycle=data.market_cycle||{};
   const alloc=data.allocation||{total_cap_usdt:0,per_asset_caps_usdt:{},selected_assets:[],reason:'INSUFFICIENT_EVIDENCE'};
@@ -468,6 +474,7 @@ function renderMarketCycle(data){
             <div class="info-row"><span class="k">固定100U</span><span class="v">${usd(baseline.final_equity)} / ${pct(baseline.total_return)}</span></div>
             <div class="info-row"><span class="k">置信限仓</span><span class="v">${usd(weighted.final_equity)} / ${pct(weighted.total_return)}</span></div>
             <div class="info-row"><span class="k">最大回撤</span><span class="v">${pct(weighted.max_drawdown)}</span></div>
+            <div class="info-row"><span class="k">资金费率对齐</span><span class="v">${fundingLine((cycle.funding_alignment)||{})}</span></div>
           </div>
         </details>
       </div>

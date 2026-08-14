@@ -18,6 +18,14 @@ from typing import Any
 
 import pandas as pd
 
+from bian_quant.data.funding_alignment import (
+    FundingAlignmentRecord,
+    latest_alignment_through,
+)
+
+_MIN_FUNDING_COVERAGE_RATIO = 0.5
+_MAX_FUNDING_CONTRIBUTION = 0.10
+
 
 class MarketCycleLabel(StrEnum):
     BULL = "bull"
@@ -79,6 +87,7 @@ def load_popular_universe_records(artifacts_dir: Path) -> pd.DataFrame:
 def classify_market_cycle(
     records: pd.DataFrame,
     *,
+    funding_alignment: tuple[FundingAlignmentRecord, ...] | None = None,
     min_observations: int = 30,
     lookback_days: int = 30,
 ) -> MarketCycleState:
@@ -91,9 +100,7 @@ def classify_market_cycle(
     trailing = work.tail(min(lookback_days, len(work)))
     prior = work.iloc[: -len(trailing)]
     baseline = (
-        prior.tail(lookback_days)
-        if len(prior) >= lookback_days
-        else work.head(lookback_days)
+        prior.tail(lookback_days) if len(prior) >= lookback_days else work.head(lookback_days)
     )
 
     breadth = float(trailing["member_count"].mean() / 12.0)
@@ -125,6 +132,28 @@ def classify_market_cycle(
         + 0.25 * (1.0 - oi_score)
         + 0.10 * concentration_penalty
     )
+
+    funding_contribution: float | None = None
+    funding_source_sha: str | None = None
+    latest_alignment: FundingAlignmentRecord | None = None
+    if funding_alignment is not None:
+        latest_alignment = latest_alignment_through(funding_alignment, latest["selection_time"])
+        if (
+            latest_alignment is not None
+            and latest_alignment.coverage_ratio >= _MIN_FUNDING_COVERAGE_RATIO
+        ):
+            contribution = _clamp(
+                (1.0 - 2.0 * latest_alignment.positive_rate_share) * _MAX_FUNDING_CONTRIBUTION,
+                -_MAX_FUNDING_CONTRIBUTION,
+                _MAX_FUNDING_CONTRIBUTION,
+            )
+            if not (contribution > 0.0 and risk_score > bull_score):
+                funding_contribution = contribution
+            else:
+                funding_contribution = 0.0
+            funding_source_sha = latest_alignment.source_sha256
+    if funding_contribution is not None:
+        bull_score = _clamp(bull_score + funding_contribution, 0.0, 1.0)
     neutral_score = max(0.05, 1.0 - abs(bull_score - risk_score))
     probabilities = _normalize(
         {
@@ -142,6 +171,9 @@ def classify_market_cycle(
         "lookback_days": int(len(trailing)),
         "latest_member_count": int(latest["member_count"]),
     }
+    if latest_alignment is not None:
+        evidence["funding_alignment"] = funding_contribution
+        evidence["funding_alignment_source_sha256"] = funding_source_sha
     evidence_sha = _canonical_hash({"evidence": evidence, "probabilities": probabilities})
     return MarketCycleState(
         label=MarketCycleLabel(label_value),

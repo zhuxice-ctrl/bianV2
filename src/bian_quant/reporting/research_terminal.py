@@ -34,9 +34,18 @@ from bian_quant.backtest.market_cycle_comparison import (
 from bian_quant.data.acquisition import DualHorizonAcquisition
 from bian_quant.data.catalog import DatasetCatalog
 from bian_quant.data.contracts import DatasetLayer
+from bian_quant.data.funding_alignment import (
+    FundingAlignmentRecord,
+    build_daily_funding_alignment,
+    latest_alignment_through,
+)
 from bian_quant.experiments.models import RunStatus
 from bian_quant.experiments.registry import ExperimentRegistry
-from bian_quant.regimes.market_cycle import classify_market_cycle, load_popular_universe_records
+from bian_quant.regimes.market_cycle import (
+    MarketCycleState,
+    classify_market_cycle,
+    load_popular_universe_records,
+)
 from bian_quant.reporting.research_protocol import (
     Allocation,
     BacktestComparison,
@@ -48,6 +57,7 @@ from bian_quant.reporting.research_protocol import (
     DatasetName,
     Exclusion,
     ExclusionReason,
+    FundingAlignment,
     Granularity,
     Kpis,
     MarketCycle,
@@ -165,16 +175,12 @@ def build_research_terminal_response(
     partial_exclusions = _build_partial_exclusions(
         acquisition.get("partial_availability_exclusions") or []
     )
-    partial_impact = _build_partial_impact(
-        acquisition.get("partial_availability_impact")
-    )
+    partial_impact = _build_partial_impact(acquisition.get("partial_availability_impact"))
 
     # A partial exclusion is a known, explicitly accepted temporary gap. It is
     # shown in its dedicated warning area rather than also being presented as a
     # blocker for an otherwise passed run.
-    partial_identity_keys = {
-        exclusion.identity_key for exclusion in partial_exclusions
-    }
+    partial_identity_keys = {exclusion.identity_key for exclusion in partial_exclusions}
 
     # --- blockers ----------------------------------------------------------
     blockers = _build_blockers(acquisition, partial_identity_keys)
@@ -183,6 +189,9 @@ def build_research_terminal_response(
     cycle, allocation, comparison = _build_cycle_allocation_backtest(
         artifact_root,
         raw_root=_resolve(config.raw_root, repo_root),
+        canonical_root=_resolve(config.canonical_root, repo_root),
+        as_of=config.as_of,
+        assets=tuple(config.assets),
     )
 
     # --- kpis --------------------------------------------------------------
@@ -237,9 +246,7 @@ def _latest_derivatives_run(registry_path: Path) -> Any | None:
     try:
         with ExperimentRegistry(registry_path) as registry:
             runs = [
-                run
-                for run in registry.list_runs()
-                if run.strategy_name == DERIVATIVES_STRATEGY
+                run for run in registry.list_runs() if run.strategy_name == DERIVATIVES_STRATEGY
             ]
     except Exception:
         return None
@@ -279,9 +286,7 @@ def _empty_response(as_of_iso: str) -> ResearchTerminalResponse:
             blocked_period_count=0,
             temporary_blocker_count=0,
         ),
-        popular_universe=PopularUniverse(
-            latest_date=None, latest_members=[], daily_counts=[]
-        ),
+        popular_universe=PopularUniverse(latest_date=None, latest_members=[], daily_counts=[]),
         coverage=[],
         blockers=[],
         pre_listing_exclusions=[],
@@ -334,8 +339,7 @@ def _build_popular_universe(artifact_root: Path) -> PopularUniverse:
     latest = records[-1]
     latest_members = _map_members(latest["members"])
     daily_counts = [
-        DailyCount(date=r["selection_time"][:10], member_count=len(r["members"]))
-        for r in records
+        DailyCount(date=r["selection_time"][:10], member_count=len(r["members"])) for r in records
     ]
     return PopularUniverse(
         latest_date=latest["selection_time"][:10],
@@ -349,9 +353,7 @@ def _map_members(members: list[dict[str, Any]]) -> list[PopularMember]:
     quote_volume_ranks = _descending_ranks(
         {str(m["asset"]): float(m["median_quote_volume"]) for m in members}
     )
-    oi_ranks = _descending_ranks(
-        {str(m["asset"]): float(m["median_oi_value"]) for m in members}
-    )
+    oi_ranks = _descending_ranks({str(m["asset"]): float(m["median_oi_value"]) for m in members})
     result: list[PopularMember] = []
     for m in members:
         asset = str(m["asset"])
@@ -581,11 +583,15 @@ def _build_cycle_allocation_backtest(
     artifact_root: Path,
     *,
     raw_root: Path,
+    canonical_root: Path,
+    as_of: datetime,
+    assets: tuple[str, ...],
 ) -> tuple[MarketCycle, Allocation, BacktestComparison]:
     artifacts_dir = artifact_root / "popular-universe"
     try:
         records = load_popular_universe_records(artifacts_dir)
-        state = classify_market_cycle(records)
+        funding_records = _build_funding_alignment_safe(canonical_root, assets, as_of)
+        state = classify_market_cycle(records, funding_alignment=funding_records)
         latest_weights = _latest_three_coin_weights(artifacts_dir)
         allocation_decision = allocate_confidence_cap(state, latest_weights)
         comparison = build_comparison_from_artifacts(artifacts_dir, raw_root=raw_root)
@@ -609,6 +615,7 @@ def _build_cycle_allocation_backtest(
             ),
         )
     status = "ok" if state.sample_count >= 30 else "insufficient_evidence"
+    funding_node = _build_funding_alignment_node(state, funding_records)
     cycle = MarketCycle(
         label=state.label.value,
         confidence=state.confidence,
@@ -617,12 +624,12 @@ def _build_cycle_allocation_backtest(
         sample_count=state.sample_count,
         evidence_sha256=state.evidence_sha256,
         status=status,
+        funding_alignment=funding_node,
     )
     allocation = Allocation(
         total_cap_usdt=float(allocation_decision.total_cap_usdt),
         per_asset_caps_usdt={
-            asset: float(value)
-            for asset, value in allocation_decision.per_asset_caps_usdt.items()
+            asset: float(value) for asset, value in allocation_decision.per_asset_caps_usdt.items()
         },
         selected_assets=list(allocation_decision.selected_assets),
         reason=allocation_decision.reason,
@@ -714,6 +721,53 @@ def _build_single_asset_evaluations(
     return evaluations
 
 
+def _build_funding_alignment_safe(
+    canonical_root: Path,
+    assets: tuple[str, ...],
+    as_of: datetime,
+) -> tuple[FundingAlignmentRecord, ...] | None:
+    """Build causal Funding-alignment records; return None on any failure."""
+    try:
+        return build_daily_funding_alignment(canonical_root, assets=assets, as_of=as_of)
+    except Exception:
+        return None
+
+
+def _build_funding_alignment_node(
+    state: MarketCycleState,
+    funding_records: tuple[FundingAlignmentRecord, ...] | None,
+) -> FundingAlignment:
+    """Map the causal Funding evidence to the additive wire node."""
+    if funding_records is None:
+        return FundingAlignment(
+            score=None,
+            positive_rate_share=None,
+            median_rate=None,
+            coverage_ratio=None,
+            source_sha256=None,
+            status="error",
+        )
+    contribution = state.evidence.get("funding_alignment")
+    latest = latest_alignment_through(funding_records, state.decision_time)
+    if contribution is None or latest is None:
+        return FundingAlignment(
+            score=None,
+            positive_rate_share=None,
+            median_rate=None,
+            coverage_ratio=None,
+            source_sha256=None,
+            status="missing",
+        )
+    return FundingAlignment(
+        score=float(contribution),
+        positive_rate_share=latest.positive_rate_share,
+        median_rate=latest.median_rate,
+        coverage_ratio=latest.coverage_ratio,
+        source_sha256=latest.source_sha256,
+        status="ok",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -769,4 +823,3 @@ def _load_json_cached(path: Path) -> dict[str, Any]:
         return {}
     _json_cache[key] = (mtime, data)
     return data
-

@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 from bian_quant.reporting.research_protocol import (
-    CurrentSignal,
-    ResearchTerminalResponse,
-    RunInfo,
-    Kpis,
-    PopularUniverse,
-    PartialAvailabilityImpact,
-    MarketCycle,
     Allocation,
     BacktestComparison,
     BacktestMetrics,
-    SingleAssetStatus,
-    SingleAssetStrategyEvaluation,
+    CurrentSignal,
+    Kpis,
+    MarketCycle,
+    PartialAvailabilityImpact,
+    PopularUniverse,
+    ResearchTerminalResponse,
+    RunInfo,
     SingleAssetMarketCycle,
     SingleAssetRecommendation,
+    SingleAssetStatus,
+    SingleAssetStrategyEvaluation,
     StrategyMetrics,
     TerminalState,
 )
@@ -46,9 +46,7 @@ def _base_response(**overrides):
             blocked_period_count=0,
             temporary_blocker_count=0,
         ),
-        popular_universe=PopularUniverse(
-            latest_date=None, latest_members=[], daily_counts=[]
-        ),
+        popular_universe=PopularUniverse(latest_date=None, latest_members=[], daily_counts=[]),
         coverage=[],
         blockers=[],
         pre_listing_exclusions=[],
@@ -222,3 +220,91 @@ def test_server_fallback_includes_evaluations():
     }
     assert "single_asset_strategy_evaluations" in fallback
     assert fallback["single_asset_strategy_evaluations"] == []
+
+
+def test_market_cycle_default_funding_alignment_is_missing():
+    """A MarketCycle built without funding_alignment defaults to missing."""
+    from bian_quant.reporting.research_protocol import FundingAlignment
+
+    response = _base_response()
+    fa = response.market_cycle.funding_alignment
+    assert isinstance(fa, FundingAlignment)
+    assert fa.status == "missing"
+    assert fa.score is None
+    assert fa.positive_rate_share is None
+    assert fa.source_sha256 is None
+
+
+def test_market_cycle_with_ok_funding_alignment_serializes():
+    """An ok Funding node round-trips through JSON with all old keys."""
+    from bian_quant.reporting.research_protocol import FundingAlignment
+
+    ok_fa = FundingAlignment(
+        score=-0.08,
+        positive_rate_share=0.9,
+        median_rate=0.0001,
+        coverage_ratio=1.0,
+        source_sha256="c" * 64,
+        status="ok",
+    )
+    cycle = MarketCycle(
+        label="bull",
+        confidence=0.82,
+        probabilities={"bull": 0.8, "neutral": 0.1, "risk_off": 0.1},
+        decision_time="2026-08-13T00:00:00+00:00",
+        sample_count=60,
+        evidence_sha256="d" * 64,
+        status="ok",
+        funding_alignment=ok_fa,
+    )
+    data = cycle.model_dump(mode="json")
+    # All old keys remain.
+    for key in (
+        "label",
+        "confidence",
+        "probabilities",
+        "decision_time",
+        "sample_count",
+        "evidence_sha256",
+        "status",
+    ):
+        assert key in data
+    # Additive node present and populated.
+    assert data["funding_alignment"]["status"] == "ok"
+    assert data["funding_alignment"]["score"] == -0.08
+    assert data["funding_alignment"]["coverage_ratio"] == 1.0
+
+
+def test_funding_alignment_is_frozen():
+    """FundingAlignment must be immutable."""
+    from bian_quant.reporting.research_protocol import FundingAlignment
+
+    fa = FundingAlignment(
+        score=None,
+        positive_rate_share=None,
+        median_rate=None,
+        coverage_ratio=None,
+        source_sha256=None,
+        status="missing",
+    )
+    import pydantic
+
+    with __import__("pytest").raises(pydantic.ValidationError):
+        fa.score = 0.1  # type: ignore[misc]
+
+
+def test_missing_funding_node_cannot_report_passed():
+    """A missing/error Funding node must never let the UI infer a passed state."""
+    from bian_quant.reporting.research_protocol import FundingAlignment
+
+    for status in ("missing", "error"):
+        fa = FundingAlignment(
+            score=None,
+            positive_rate_share=None,
+            median_rate=None,
+            coverage_ratio=None,
+            source_sha256=None,
+            status=status,
+        )
+        assert fa.score is None
+        assert fa.status != "ok"

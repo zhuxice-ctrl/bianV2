@@ -21,6 +21,8 @@ REQUIRED_MARKERS = [
     "胜率",
     "手续费后净利润",
     "READ-ONLY · RESEARCH ONLY · NO LIVE TRADING",
+    "资金费率对齐",
+    "fundingLine",
 ]
 
 FORBIDDEN_MARKERS = [
@@ -70,4 +72,13 @@ def test_escape_html_used_for_api_text(html_content: str):
     # by looking for its usage pattern
     assert html_content.count("escapeHtml") >= 5, (
         "escapeHtml should be used multiple times for API text safety"
+    )
+
+
+def test_funding_alignment_rendering_present(html_content: str):
+    """The page must render a funding-alignment row inside the market-cycle section."""
+    assert "fundingLine" in html_content, "Missing fundingLine JS helper"
+    assert "资金费率对齐" in html_content, "Missing funding-alignment label in markup"
+    assert "funding_alignment" in html_content, (
+        "Market-cycle block must reference funding_alignment data field"
     )

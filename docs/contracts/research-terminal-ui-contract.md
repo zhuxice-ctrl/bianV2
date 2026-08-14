@@ -332,3 +332,41 @@ type StrategyMetrics = {
 - 所有 API 文本经过 `escapeHtml`。
 - 不新增运行、下载、下单或参数编辑控件。
 
+
+## 8. 资金费率对齐扩展（§8）
+
+`MarketCycle` 类型新增可选字段 `funding_alignment`。该字段为加性扩展，旧消费者可安全忽略。
+
+```ts
+type MarketCycle = {
+  label: "bull" | "neutral" | "risk_off" | "insufficient_evidence";
+  confidence: number; // 0..1
+  probabilities: { bull: number; neutral: number; risk_off: number };
+  decision_time: string | null;
+  sample_count: number;
+  evidence_sha256: string | null;
+  status: "ok" | "missing" | "error" | "insufficient_evidence";
+  funding_alignment: FundingAlignment; // 新增，默认 status="missing"
+};
+
+type FundingAlignment = {
+  score: number | null;              // 对 bull_score 的贡献，范围 [-0.10, +0.10]
+  positive_rate_share: number | null; // 正向资金费率资产占比，0..1
+  median_rate: number | null;         // 资金费率中位数
+  coverage_ratio: number | null;      // 覆盖率，0..1
+  source_sha256: string | null;       // Canonical Parquet 源哈希
+  status: "ok" | "missing" | "error"; // ok=有有效贡献；missing=数据不足；error=构建失败
+};
+```
+
+### 渲染规则
+
+- 市场周期技术网格新增「资金费率对齐」行。
+- `status="ok"` 时显示方向（看涨/看跌）、正向占比、覆盖率。
+- `status="missing"` 或 `"error"` 时显示 `—`。
+- 不新增运行、下载、下单或参数编辑控件。
+
+### 因果性约束
+
+- 资金费率记录的 `available_time` 必须 `<= decision_time` 才能影响决策。
+- 前缀因果性：修改 `decision_time` 之后的记录不改变该时刻及之前的市场周期评分。
