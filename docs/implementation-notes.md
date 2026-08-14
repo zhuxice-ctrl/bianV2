@@ -169,3 +169,9 @@ merge to main automatically.
 - Snapshot lineage now retains `funding_interval_hours`; development diagnostics include the factor's own exclusion evidence without changing OI delay gates, Candidate rules, Holdout access, paper, or live boundaries.
 - Focused verification passed: 67 tests passed, 7 skipped; Ruff, format, mypy over 93 source files, and `git diff --check` passed.
 - The actual development run `033e6f9f-e37e-4b5f-8e62-f5988a1bc833` was blocked at `SNAPSHOT_MISSING:macro-1d`. No factor lifecycle evidence was produced, no Holdout was accessed, and no performance conclusion is permitted. See `docs/evidence/2026-08-14-relative-funding-pressure-factor-run.md`.
+
+## 2026-08-14 — Local Canonical snapshot recovery preflight
+
+- Added a data-layer, read-only recovery preflight that resolves Canonical inputs by current source-plan path, source identity and Raw content lineage; it does not relax the research snapshot resolver or mutate old artifacts.
+- The actual popular-universe preflight validated 14,879 local Canonical inputs, then blocked on 16 missing 2026-07-26 1D OHLCV inputs and one missing TONUSDT July Funding Raw manifest.
+- No new research snapshot, development analysis, Holdout ledger, paper run, network download or trading action occurred. The exact command and stable reason codes are in `docs/evidence/2026-08-14-local-snapshot-recovery-run.md`.
