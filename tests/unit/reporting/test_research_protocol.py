@@ -310,7 +310,6 @@ def test_missing_funding_node_cannot_report_passed():
         assert fa.status != "ok"
 
 
-
 # ---------------------------------------------------------------------------
 # Task 3: Wire compatibility and funding audit field tests
 # ---------------------------------------------------------------------------
