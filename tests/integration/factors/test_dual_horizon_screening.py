@@ -7,10 +7,11 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from pandas.testing import assert_series_equal
+from pandas.testing import assert_frame_equal, assert_series_equal
 
 from bian_quant.factors.dual_horizon import (
     build_derivatives_factor_frame,
+    compute_dual_horizon_factor_columns,
     dual_horizon_factor_specs,
 )
 from bian_quant.factors.registry import FactorRegistry
@@ -82,6 +83,34 @@ def weak_signal_fixture() -> pd.DataFrame:
     )
 
 
+def multi_asset_pressure_frame() -> pd.DataFrame:
+    """Three assets (BTC, ETH, BNB) with simultaneous valid funding.
+
+    Every asset shares the same ``available_time`` grid so the
+    cross-sectional pressure is well-defined at each timestamp.
+    """
+    dates = pd.date_range("2025-12-01", periods=40, freq="4h", tz="UTC")
+    rows: list[dict[str, Any]] = []
+    for asset, rate in [("BTCUSDT", 0.0003), ("ETHUSDT", 0.0001), ("BNBUSDT", -0.0001)]:
+        for t in dates:
+            rows.append(
+                {
+                    "asset": asset,
+                    "event_time": t,
+                    "available_time": t + pd.Timedelta(minutes=1),
+                    "close": 100.0,
+                    "high": 101.0,
+                    "low": 99.0,
+                    "volume": 1000.0,
+                    "funding_rate": rate,
+                    "funding_available_time": t,
+                    "funding_interval_hours": 8,
+                    "open_interest": 1_000_000.0,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def screening_config(tmp_path: Path) -> dict:
     """Screening configuration for testing."""
     return {
@@ -92,7 +121,7 @@ def screening_config(tmp_path: Path) -> dict:
 
 
 class TestDualHorizonFactorSpecs:
-    def test_eight_interpretable_factors_are_registered(self) -> None:
+    def test_nine_interpretable_factors_are_registered(self) -> None:
         specs = dual_horizon_factor_specs(primary_interval="4h")
         assert {spec.factor_id for spec in specs} == {
             "momentum_24",
@@ -101,6 +130,7 @@ class TestDualHorizonFactorSpecs:
             "volume_surprise_24",
             "amihud_24",
             "funding_zscore",
+            "relative_funding_pressure",
             "oi_change",
             "leverage_crowding",
         }
@@ -134,7 +164,7 @@ class TestBuildDerivativesFactorFrame:
             fifteen.loc[fifteen.available_time <= cutoff, "oi_change"].reset_index(drop=True),
         )
 
-    def test_all_eight_factors_computed(self) -> None:
+    def test_all_nine_factors_computed(self) -> None:
         frame = build_derivatives_factor_frame(
             bars_fixture(), funding_fixture(), oi_fixture(), delay=5
         )
@@ -145,6 +175,7 @@ class TestBuildDerivativesFactorFrame:
             "volume_surprise_24",
             "amihud_24",
             "funding_zscore",
+            "relative_funding_pressure",
             "oi_change",
             "leverage_crowding",
         }
@@ -203,6 +234,7 @@ class TestBuildDerivativesFactorFrame:
         assert frame["open_interest"].isna().all()
         assert frame["funding_zscore"].isna().all()
         assert frame["oi_change"].isna().all()
+        assert frame["relative_funding_pressure"].isna().all()
 
     def test_delay_scenarios_diverge_only_after_their_publication_boundary(self) -> None:
         bars = pd.DataFrame(
@@ -302,6 +334,87 @@ class TestBuildDerivativesFactorFrame:
         assert four["momentum_24"].first_valid_index() == 24
 
 
+class TestRelativeFundingPressureFactor:
+    def test_pressure_columns_present_for_multi_asset_frame(self) -> None:
+        frame = compute_dual_horizon_factor_columns(multi_asset_pressure_frame())
+        assert "relative_funding_pressure" in frame.columns
+        assert "relative_funding_pressure_exclusion_reason" in frame.columns
+
+    def test_three_assets_have_non_missing_pressure_at_same_timestamp(self) -> None:
+        frame = compute_dual_horizon_factor_columns(multi_asset_pressure_frame())
+        timestamp = frame["available_time"].iloc[0]
+        mask = frame["available_time"] == timestamp
+        assert mask.sum() == 3
+        assert frame.loc[mask, "relative_funding_pressure"].notna().all()
+
+    def test_prefix_causality_future_funding_does_not_change_past(self) -> None:
+        base = multi_asset_pressure_frame()
+        computed_base = compute_dual_horizon_factor_columns(base)
+
+        # Corrupt funding rates after the cutoff.
+        cutoff = base["available_time"].iloc[20]
+        future = base.copy()
+        future.loc[future["available_time"] > cutoff, "funding_rate"] *= -100
+        computed_future = compute_dual_horizon_factor_columns(future)
+
+        # Filter both sides by the same cutoff and compare prefix bytes.
+        prefix_base = (
+            computed_base.loc[computed_base["available_time"] <= cutoff]
+            .sort_values(["asset", "available_time"])
+            .reset_index(drop=True)
+        )
+        prefix_future = (
+            computed_future.loc[computed_future["available_time"] <= cutoff]
+            .sort_values(["asset", "available_time"])
+            .reset_index(drop=True)
+        )
+
+        cols = [
+            "asset",
+            "available_time",
+            "relative_funding_pressure",
+            "relative_funding_pressure_exclusion_reason",
+        ]
+        assert_frame_equal(prefix_base[cols], prefix_future[cols])
+
+    def test_missing_funding_metadata_yields_nan_pressure_and_preserves_existing_factors(
+        self,
+    ) -> None:
+        full = multi_asset_pressure_frame()
+        # Remove the three funding metadata columns.
+        stripped = full.drop(
+            columns=["funding_rate", "funding_available_time", "funding_interval_hours"]
+        )
+        computed = compute_dual_horizon_factor_columns(stripped)
+
+        # New factor should be all missing.
+        assert computed["relative_funding_pressure"].isna().all()
+
+        # Existing eight factors should match the full-frame computation
+        # (stripped of funding_rate which feeds funding_zscore/leverage).
+        full_computed = compute_dual_horizon_factor_columns(
+            full.drop(columns=["funding_rate", "funding_available_time", "funding_interval_hours"])
+        )
+        eight_cols = [
+            "momentum_24",
+            "reversal_12",
+            "realized_vol_24",
+            "volume_surprise_24",
+            "amihud_24",
+            "funding_zscore",
+            "oi_change",
+            "leverage_crowding",
+        ]
+        assert_frame_equal(
+            computed[["asset", "available_time", *eight_cols]]
+            .sort_values(["asset", "available_time"])
+            .reset_index(drop=True),
+            full_computed[["asset", "available_time", *eight_cols]]
+            .sort_values(["asset", "available_time"])
+            .reset_index(drop=True),
+        )
+
+
 class TestRunDualHorizonScreening:
     def test_zero_candidate_run_is_completed_not_failed(self, tmp_path: Path) -> None:
         result = run_dual_horizon_screening(
@@ -393,7 +506,7 @@ class TestRunDualHorizonScreening:
         with FactorRegistry(registry_path) as registry:
             assert registry.history("momentum_24", "1.0.0") == history_before
 
-    def test_generator_runs_only_after_all_eight_interpretable_factors(
+    def test_generator_runs_only_after_all_nine_interpretable_factors(
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
         import bian_quant.research.dual_horizon as research
@@ -432,6 +545,7 @@ class TestRunDualHorizonScreening:
             "volume_surprise_24",
             "amihud_24",
             "funding_zscore",
+            "relative_funding_pressure",
             "oi_change",
             "leverage_crowding",
         }

@@ -71,6 +71,7 @@ def _frame(start: str, *, periods: int, frequency: str) -> pd.DataFrame:
                     "quote_volume": volume * close,
                     "funding_rate": 0.0001 + sequence * 0.0000001,
                     "funding_available_time": times,
+                    "funding_interval_hours": 8,
                     "sum_open_interest": 10000.0 + sequence * 2.0,
                     "sum_open_interest_value": (10000.0 + sequence * 2.0) * close,
                     "oi_available_time": times,
@@ -194,6 +195,25 @@ def test_cataloged_analysis_uses_actual_snapshots_and_packet(tmp_path: Path) -> 
         "CANDIDATES_PENDING_HOLDOUT" if result.candidate_factor_ids else "NO_PROMOTION"
     )
     assert f"Factor status: {expected_status}" in summary
+    assert not (config.artifact_root / "holdout-access.sqlite").exists()
+
+
+def test_cataloged_analysis_factor_screening_includes_relative_funding_pressure(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _publish_required(config)
+    _passed_source_run(config)
+
+    result = analyze_cataloged_dual_horizon(config, code_sha=CODE_SHA)
+    assert result.status == "passed"
+
+    factor_payload = json.loads(
+        (result.artifact_dir / "factor-screening.json").read_text(encoding="utf-8")
+    )
+    assert "relative_funding_pressure" in factor_payload["gates"]
+    assert "relative_funding_pressure" in factor_payload["factor_diagnostics"]
+    assert "relative_funding_pressure" in factor_payload["planned_lifecycle_states"]
     assert not (config.artifact_root / "holdout-access.sqlite").exists()
 
 

@@ -13,6 +13,7 @@ import re
 import numpy as np
 import pandas as pd
 
+from bian_quant.factors.derivatives import relative_funding_pressure
 from bian_quant.factors.price import momentum, realized_volatility, reversal
 from bian_quant.factors.spec import FactorSpec
 from bian_quant.factors.volume import amihud_illiquidity, volume_surprise
@@ -30,16 +31,18 @@ FACTOR_COLUMNS = (
     "volume_surprise_24",
     "amihud_24",
     "funding_zscore",
+    "relative_funding_pressure",
     "oi_change",
     "leverage_crowding",
 )
 
 
 def dual_horizon_factor_specs(primary_interval: str = "4h") -> tuple[FactorSpec, ...]:
-    """Return the eight interpretable factor specifications.
+    """Return the nine interpretable factor specifications.
 
     The factor IDs are fixed: momentum_24, reversal_12, realized_vol_24,
-    volume_surprise_24, amihud_24, funding_zscore, oi_change, leverage_crowding.
+    volume_surprise_24, amihud_24, funding_zscore, relative_funding_pressure,
+    oi_change, leverage_crowding.
     """
     regimes = list(REGIME_LABELS)
     lookups = LOOKBACKS[primary_interval]
@@ -121,6 +124,23 @@ def dual_horizon_factor_specs(primary_interval: str = "4h") -> tuple[FactorSpec,
                 "extreme funding rates may signal crowded positioning and subsequent reversal"
             ),
             required_columns=["funding_rate"],
+        ),
+        build(
+            factor_id="relative_funding_pressure",
+            formula=(
+                "clip((funding_rate - cross_sectional_median(funding_rate)) / "
+                "(1.4826 * cross_sectional_mad(funding_rate)), -5, 5)"
+            ),
+            direction="two_sided",
+            hypothesis=(
+                "relative funding extremes may reveal asset-specific leveraged "
+                "crowding and subsequent return asymmetry"
+            ),
+            required_columns=[
+                "funding_rate",
+                "funding_available_time",
+                "funding_interval_hours",
+            ],
         ),
         build(
             factor_id="oi_change",
@@ -257,34 +277,62 @@ def compute_dual_horizon_factor_columns(
     if missing:
         raise ValueError(f"factor frame missing columns: {sorted(missing)}")
 
+    work = frame.copy()
+    has_available_time = "available_time" in work
+    if has_available_time:
+        work = work.sort_values(["available_time", "asset"]).reset_index(drop=True)
+
+    # Cross-sectional relative funding pressure (computed before per-asset loop
+    # so that every asset at the same available_time sees the same peer set).
+    funding_meta = ("funding_rate", "funding_available_time", "funding_interval_hours")
+    for col in funding_meta:
+        if col not in work:
+            work[col] = np.nan
+    if has_available_time:
+        pressure_values, pressure_reasons = relative_funding_pressure(work)
+    else:
+        pressure_values = pd.Series(np.nan, index=work.index, name="relative_funding_pressure")
+        pressure_reasons = pd.Series(
+            pd.NA,
+            index=work.index,
+            dtype="object",
+            name="relative_funding_pressure_exclusion_reason",
+        )
+    work["relative_funding_pressure"] = pressure_values
+    work["relative_funding_pressure_exclusion_reason"] = pressure_reasons
+
     lookups = LOOKBACKS[interval]
     output: list[pd.DataFrame] = []
-    sort_columns = ["available_time"] if "available_time" in frame else []
-    for _asset, asset_frame in frame.groupby("asset", sort=True):
-        work = asset_frame.sort_values(sort_columns).copy() if sort_columns else asset_frame.copy()
-        if "funding_rate" not in work:
-            work["funding_rate"] = np.nan
-        if "open_interest" not in work:
-            work["open_interest"] = np.nan
+    sort_columns = ["available_time"] if has_available_time else []
+    for _asset, asset_frame in work.groupby("asset", sort=True):
+        asset_work = (
+            asset_frame.sort_values(sort_columns).copy() if sort_columns else asset_frame.copy()
+        )
+        if "funding_rate" not in asset_work:
+            asset_work["funding_rate"] = np.nan
+        if "open_interest" not in asset_work:
+            asset_work["open_interest"] = np.nan
         m = lookups["momentum"]
         r = lookups["reversal"]
         v = lookups["volatility"]
         vol = lookups["volume"]
-        work["momentum_24"] = momentum(work["close"], periods=m)
-        work["reversal_12"] = reversal(work["close"], periods=r)
-        work["realized_vol_24"] = realized_volatility(work["close"], periods=v)
-        work["volume_surprise_24"] = volume_surprise(work["volume"], periods=vol)
-        work["amihud_24"] = amihud_illiquidity(work["close"], work["volume"], periods=vol)
-        funding_mean = work["funding_rate"].rolling(m, min_periods=1).mean()
-        funding_std = work["funding_rate"].rolling(m, min_periods=1).std()
-        work["funding_zscore"] = (work["funding_rate"] - funding_mean) / funding_std.replace(
-            0.0, np.nan
+        asset_work["momentum_24"] = momentum(asset_work["close"], periods=m)
+        asset_work["reversal_12"] = reversal(asset_work["close"], periods=r)
+        asset_work["realized_vol_24"] = realized_volatility(asset_work["close"], periods=v)
+        asset_work["volume_surprise_24"] = volume_surprise(asset_work["volume"], periods=vol)
+        asset_work["amihud_24"] = amihud_illiquidity(
+            asset_work["close"], asset_work["volume"], periods=vol
         )
-        work["oi_change"] = work["open_interest"].pct_change(m, fill_method=None)
-        work["leverage_crowding"] = work["oi_change"] * work["funding_zscore"]
-        output.append(work)
+        funding_mean = asset_work["funding_rate"].rolling(m, min_periods=1).mean()
+        funding_std = asset_work["funding_rate"].rolling(m, min_periods=1).std()
+        asset_work["funding_zscore"] = (
+            asset_work["funding_rate"] - funding_mean
+        ) / funding_std.replace(0.0, np.nan)
+        asset_work["oi_change"] = asset_work["open_interest"].pct_change(m, fill_method=None)
+        asset_work["leverage_crowding"] = asset_work["oi_change"] * asset_work["funding_zscore"]
+        output.append(asset_work)
     if not output:
-        return frame.copy()
+        return work.copy()
     return (
         pd.concat(output, ignore_index=True)
         .sort_values(["asset", *sort_columns])

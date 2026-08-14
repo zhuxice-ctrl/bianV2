@@ -44,6 +44,7 @@ SNAPSHOT_COLUMNS = (
     "quote_volume",
     "funding_rate",
     "funding_available_time",
+    "funding_interval_hours",
     "sum_open_interest",
     "sum_open_interest_value",
     "oi_available_time",
