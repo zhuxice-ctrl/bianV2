@@ -172,4 +172,3 @@ if __name__ == "__main__":
     print("  API:  /api/summary, /api/backtest/BTCUSDT, /api/research/latest")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8787)
-

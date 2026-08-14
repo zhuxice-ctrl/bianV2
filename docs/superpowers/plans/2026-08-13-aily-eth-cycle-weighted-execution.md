@@ -101,4 +101,3 @@ git commit -m "docs(research): record ETH evaluation evidence"
 - ETH 缺失/错误只影响单币节点；
 - 无下载、API Key、私有端点、下单或实盘逻辑；
 - 因果审计通过后才进入下一研究切片，否则停止并记录原因。
-
