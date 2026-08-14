@@ -21,7 +21,11 @@ from bian_quant.data.acquisition import (
 )
 from bian_quant.data.catalog import CatalogEntry
 from bian_quant.data.contracts import DatasetLayer, DatasetManifest
-from bian_quant.data.evidence_cutoff import CutoffEvidence, clip_to_evidence_cutoff
+from bian_quant.data.evidence_cutoff import (
+    CutoffEvidence,
+    canonical_plan_path,
+    clip_to_evidence_cutoff,
+)
 from bian_quant.data.hashing import dataframe_content_hash
 from bian_quant.data.popular_universe_artifacts import (
     PopularUniverseBuildResult,
@@ -100,26 +104,28 @@ _REQUIRED_COLUMNS: dict[SourceDataset, frozenset[str]] = {
 }
 
 
-def _find_by_name_read_only(path: Path, name: str) -> tuple[CatalogEntry, ...]:
+def _entries_by_name_read_only(path: Path, names: set[str]) -> dict[str, tuple[CatalogEntry, ...]]:
     if not path.is_file():
-        return ()
+        return {}
     uri = f"file:{path.resolve().as_posix()}?mode=ro"
+    placeholders = ",".join("?" for _ in names)
     try:
         with sqlite3.connect(uri, uri=True) as connection:
             rows = connection.execute(
-                "SELECT path, manifest_json FROM datasets WHERE name = ? ORDER BY rowid",
-                (name,),
+                "SELECT name, path, manifest_json FROM datasets "
+                f"WHERE name IN ({placeholders}) ORDER BY rowid",
+                tuple(sorted(names)),
             ).fetchall()
     except sqlite3.Error:
-        return ()
-    entries: list[CatalogEntry] = []
-    for stored_path, manifest_json in rows:
+        return {}
+    entries: dict[str, list[CatalogEntry]] = {}
+    for name, stored_path, manifest_json in rows:
         try:
             manifest = DatasetManifest.model_validate_json(manifest_json)
         except ValueError:
             continue
-        entries.append(CatalogEntry(manifest=manifest, path=Path(stored_path)))
-    return tuple(entries)
+        entries.setdefault(name, []).append(CatalogEntry(manifest=manifest, path=Path(stored_path)))
+    return {name: tuple(value) for name, value in entries.items()}
 
 
 def _identity(entry: CatalogEntry) -> str | None:
@@ -129,6 +135,35 @@ def _identity(entry: CatalogEntry) -> str | None:
         return None
     value = payload.get("identity_key") if isinstance(payload, dict) else None
     return value if isinstance(value, str) else None
+
+
+def _raw_sha256(entry: CatalogEntry) -> str | None:
+    try:
+        payload = json.loads(entry.manifest.config_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    value = payload.get("raw_sha256") if isinstance(payload, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def _raw_manifest_sha256(config: DualHorizonAcquisition, source: SourceObject) -> str | None:
+    manifest_path = config.raw_root / source.relative_path
+    manifest_path = manifest_path.with_suffix(f"{manifest_path.suffix}.manifest.json")
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = payload.get("content_sha256") if isinstance(payload, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def _source_plan_hash(plan: SourcePlanAudit) -> str:
+    payload = {
+        "availability_manifest_sha256": plan.availability_manifest_sha256,
+        "object_identity_keys": [source.identity_key for source in plan.objects],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _canonical_input_set_sha(inputs: tuple[CanonicalRecoveryInput, ...]) -> str:
@@ -211,42 +246,67 @@ def _preflight_plan(config: DualHorizonAcquisition) -> SourcePlanAudit:
     return build_source_plan_audit(config)
 
 
+def _load_canonical_input(
+    source: SourceObject,
+    entry: CatalogEntry,
+    config: DualHorizonAcquisition,
+) -> tuple[CanonicalRecoveryInput | None, tuple[str, ...]]:
+    if entry.manifest.layer != DatasetLayer.CANONICAL:
+        return None, (f"CANONICAL_LAYER_INVALID:{entry.manifest.snapshot_id}",)
+    if not entry.path.is_file():
+        return None, (f"CANONICAL_FILE_MISSING:{entry.manifest.snapshot_id}",)
+    try:
+        frame = pd.read_parquet(entry.path)
+    except (OSError, ValueError, ImportError) as error:
+        return None, (f"CANONICAL_READ_FAILED:{entry.manifest.snapshot_id}:{error}",)
+    cutoff, frame_reasons = _validate_frame(source, entry, frame, config)
+    if cutoff is None:
+        return None, frame_reasons
+    return CanonicalRecoveryInput(source, entry, frame, cutoff), frame_reasons
+
+
 def preflight_local_snapshot_recovery(
     config: DualHorizonAcquisition,
 ) -> LocalSnapshotRecoveryPreflight:
     """Inspect local Canonical inputs without creating or changing any file."""
     plan = _preflight_plan(config)
+    plan_hash = _source_plan_hash(plan)
     reasons: list[str] = []
     inputs: list[CanonicalRecoveryInput] = []
+    names = {f"canonical-{source.dataset.value}-{source.interval}" for source in plan.objects}
+    entries_by_name = _entries_by_name_read_only(config.catalog_path, names)
+    entries_by_identity: dict[tuple[str, str | None, str | None, Path], list[CatalogEntry]] = {}
+    for name, entries in entries_by_name.items():
+        for entry in entries:
+            key = (name, _identity(entry), _raw_sha256(entry), entry.path.resolve())
+            entries_by_identity.setdefault(key, []).append(entry)
+    selected: list[tuple[SourceObject, CatalogEntry]] = []
     for source in plan.objects:
         name = f"canonical-{source.dataset.value}-{source.interval}"
-        matches = [
-            entry
-            for entry in _find_by_name_read_only(config.catalog_path, name)
-            if _identity(entry) == source.identity_key
-        ]
+        raw_sha256 = _raw_manifest_sha256(config, source)
+        if raw_sha256 is None:
+            reasons.append(f"RAW_LINEAGE_MISSING:{source.identity_key}")
+            continue
+        expected_path = canonical_plan_path(
+            config.canonical_root,
+            plan_hash=plan_hash,
+            relative_path=source.relative_path,
+        ).resolve()
+        matches = entries_by_identity.get(
+            (name, source.identity_key, raw_sha256, expected_path), []
+        )
         if not matches:
             reasons.append(f"CANONICAL_INPUT_MISSING:{source.identity_key}")
             continue
         if len(matches) != 1:
             reasons.append(f"CANONICAL_INPUT_AMBIGUOUS:{source.identity_key}")
             continue
-        entry = matches[0]
-        if entry.manifest.layer != DatasetLayer.CANONICAL:
-            reasons.append(f"CANONICAL_LAYER_INVALID:{entry.manifest.snapshot_id}")
-            continue
-        if not entry.path.is_file():
-            reasons.append(f"CANONICAL_FILE_MISSING:{entry.manifest.snapshot_id}")
-            continue
-        try:
-            frame = pd.read_parquet(entry.path)
-        except (OSError, ValueError, ImportError) as error:
-            reasons.append(f"CANONICAL_READ_FAILED:{entry.manifest.snapshot_id}:{error}")
-            continue
-        cutoff, frame_reasons = _validate_frame(source, entry, frame, config)
-        reasons.extend(frame_reasons)
-        if cutoff is not None:
-            inputs.append(CanonicalRecoveryInput(source, entry, frame, cutoff))
+        selected.append((source, matches[0]))
+    for source, entry in selected:
+        item, item_reasons = _load_canonical_input(source, entry, config)
+        reasons.extend(item_reasons)
+        if item is not None:
+            inputs.append(item)
 
     ordered_inputs = tuple(sorted(inputs, key=lambda item: item.source.identity_key))
     if reasons:

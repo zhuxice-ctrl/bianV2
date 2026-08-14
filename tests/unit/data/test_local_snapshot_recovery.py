@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,8 +20,10 @@ from bian_quant.data.acquisition import (
 from bian_quant.data.canonicalize import write_canonical_partition
 from bian_quant.data.catalog import DatasetCatalog
 from bian_quant.data.contracts import DatasetLayer, DatasetManifest
+from bian_quant.data.evidence_cutoff import canonical_plan_path
 from bian_quant.data.local_snapshot_recovery import (
     LocalSnapshotRecoveryStatus,
+    _source_plan_hash,
     preflight_local_snapshot_recovery,
 )
 
@@ -125,11 +128,21 @@ def _publish_inputs(
     duplicate_identity: bool = False,
 ) -> None:
     catalog = DatasetCatalog(config.catalog_path)
+    plan_hash = _source_plan_hash(SourcePlanAudit(sources, None, ()))
     for index, source in enumerate(sources):
         frame = frames[source.identity_key]
-        safe_name = source.identity_key.replace("|", "_").replace(":", "-")
-        path = config.canonical_root / f"{safe_name}.parquet"
+        path = canonical_plan_path(
+            config.canonical_root,
+            plan_hash=plan_hash,
+            relative_path=source.relative_path,
+        )
         content_sha = write_canonical_partition(frame, path)
+        raw_sha256 = "b" * 64
+        raw_path = config.raw_root / source.relative_path
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.with_suffix(f"{raw_path.suffix}.manifest.json").write_text(
+            json.dumps({"content_sha256": raw_sha256}), encoding="utf-8"
+        )
         manifest = DatasetManifest(
             snapshot_id=f"canonical-{index}-{content_sha[:16]}",
             layer=DatasetLayer.CANONICAL,
@@ -141,7 +154,10 @@ def _publish_inputs(
             min_available_time=frame["available_time"].min().to_pydatetime(),
             max_available_time=frame["available_time"].max().to_pydatetime(),
             parent_snapshot_ids=["raw-parent"],
-            config_json=json.dumps({"identity_key": source.identity_key}, sort_keys=True),
+            config_json=json.dumps(
+                {"identity_key": source.identity_key, "raw_sha256": raw_sha256},
+                sort_keys=True,
+            ),
         )
         catalog.register(manifest, path=path)
         if duplicate_identity and index == 0:
@@ -187,8 +203,10 @@ def test_preflight_blocks_missing_and_ambiguous_identity(
 ) -> None:
     config = _config(tmp_path)
     sources = _sources()
-    _publish_inputs(config, sources[:-1], _frames(sources))
+    _publish_inputs(config, sources, _frames(sources))
     _patch_plan(monkeypatch, sources)
+    with sqlite3.connect(config.catalog_path) as connection:
+        connection.execute("DELETE FROM datasets WHERE name = ?", ("canonical-metrics_oi-native",))
 
     missing = preflight_local_snapshot_recovery(config)
     assert f"CANONICAL_INPUT_MISSING:{sources[-1].identity_key}" in missing.blocked_reasons
@@ -207,7 +225,7 @@ def test_preflight_blocks_hash_tampering_and_cutoff_violation(
     _publish_inputs(config, sources, frames)
     _patch_plan(monkeypatch, sources)
 
-    tampered_path = next(config.canonical_root.glob("*.parquet"))
+    tampered_path = next(config.canonical_root.rglob("*.parquet"))
     tampered = pd.read_parquet(tampered_path)
     tampered.loc[0, "asset"] = "ETHUSDT"
     tampered.to_parquet(tampered_path, index=False)

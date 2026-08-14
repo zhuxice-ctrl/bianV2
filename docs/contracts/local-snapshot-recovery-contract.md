@@ -20,6 +20,8 @@ Catalog entry must match all of the following:
 - name `canonical-{dataset.value}-{interval}`;
 - `manifest.layer == canonical`;
 - `manifest.config_json.identity_key == source.identity_key`;
+- `manifest.config_json.raw_sha256` equal to the local Raw manifest content SHA;
+- a path equal to the current source-plan-namespaced Canonical path;
 - an existing regular Parquet path; and
 - a recomputed `dataframe_content_hash(frame, sort_by=["asset", "event_time"])`
   equal to `manifest.content_sha256`.
@@ -56,6 +58,7 @@ CANONICAL_DUPLICATE:<identity_key>
 CANONICAL_VALUE_INVALID:<identity_key>
 CANONICAL_INTERVAL_INVALID:<identity_key>
 CANONICAL_NEGATIVE_OI:<identity_key>
+RAW_LINEAGE_MISSING:<identity_key>
 ```
 
 Reasons are deduplicated and sorted. A blocked result has empty parent IDs and
