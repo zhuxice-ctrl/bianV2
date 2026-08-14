@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError
 
+import pandas as pd
 import yaml
 
 from bian_quant.data.acquisition import (
@@ -407,9 +408,7 @@ def test_artifacts_persist_manifest_hash_and_exclusions(tmp_path: Path) -> None:
 def test_popular_universe_start_is_audited_as_publish_boundary(tmp_path: Path) -> None:
     base = _miniature_popular_config_with_availability(tmp_path)
     config = base.model_copy(
-        update={
-            "popular_universe_start": datetime(2026, 7, 2, 23, 59, 59, 999000, tzinfo=UTC)
-        }
+        update={"popular_universe_start": datetime(2026, 7, 2, 23, 59, 59, 999000, tzinfo=UTC)}
     )
 
     result = prepare_dual_horizon(
@@ -507,13 +506,10 @@ def test_partial_funding_tail_passes_with_enough_assets(tmp_path: Path) -> None:
         "TEMPORARY_UPSTREAM_ARCHIVE_UNAVAILABLE"
     }
     assert (
-        acquisition["partial_availability_exclusions"]
-        == quality["partial_availability_exclusions"]
+        acquisition["partial_availability_exclusions"] == quality["partial_availability_exclusions"]
     )
     assert acquisition["partial_availability_impact"]["affected_periods"] > 0
-    assert (
-        acquisition["partial_availability_impact"] == quality["partial_availability_impact"]
-    )
+    assert acquisition["partial_availability_impact"] == quality["partial_availability_impact"]
     assert acquisition["partial_availability_exclusion_sha256"]
     assert (
         acquisition["partial_availability_exclusion_sha256"]
@@ -637,7 +633,58 @@ def test_partial_funding_tail_blocks_when_min_selected_too_high(tmp_path: Path) 
         downloader=TailGapDownloader(),
     )
     assert result.status == DualHorizonStatus.BLOCKED
-    assert any(
-        key.startswith("popular-universe|") for key in result.blocked_periods
-    )
+    assert any(key.startswith("popular-universe|") for key in result.blocked_periods)
     assert result.snapshots == ()
+
+
+def test_extracted_popular_universe_builder_matches_pipeline(tmp_path: Path) -> None:
+    """The public build_popular_universe_artifacts matches the pipeline's output."""
+    from bian_quant.data.popular_universe_artifacts import (
+        build_popular_universe_artifacts,
+    )
+
+    config = _popular_config_with_tail_gap(tmp_path)
+    result = prepare_dual_horizon(
+        config,
+        code_sha="t" * 40,
+        downloader=FixtureDownloader(FIXTURES),
+    )
+    assert result.status == DualHorizonStatus.PASSED
+
+    # Read existing popular-universe JSON files.
+    existing_dir = config.artifact_root / "popular-universe"
+    existing_jsons = sorted(p.read_bytes() for p in existing_dir.glob("*.json"))
+
+    # Read acquisition artifact for popular_universe_artifacts.
+    acquisition = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    existing_artifacts = acquisition["popular_universe_artifacts"]
+
+    # Rebuild DataFrames from canonical Parquet partitions.
+    ohlcv_frames: list[pd.DataFrame] = []
+    funding_frames: list[pd.DataFrame] = []
+    metrics_frames: list[pd.DataFrame] = []
+    for parquet_path in sorted(config.canonical_root.glob("**/*.parquet")):
+        df = pd.read_parquet(parquet_path)
+        if "funding_rate" in df.columns:
+            funding_frames.append(df)
+        elif "open" in df.columns:
+            ohlcv_frames.append(df)
+        else:
+            metrics_frames.append(df)
+
+    ohlcv = pd.concat(ohlcv_frames, ignore_index=True)
+    funding = pd.concat(funding_frames, ignore_index=True)
+    metrics = pd.concat(metrics_frames, ignore_index=True)
+
+    # Call public function with a fresh artifact_root.
+    config_b = config.model_copy(update={"artifact_root": tmp_path / "artifacts2"})
+    extracted = build_popular_universe_artifacts(config_b, ohlcv, funding, metrics)
+
+    # Compare in-memory artifacts and shortages.
+    assert extracted.artifacts == existing_artifacts
+    assert extracted.shortages == []
+
+    # Compare JSON file bytes.
+    extracted_dir = config_b.artifact_root / "popular-universe"
+    extracted_jsons = sorted(p.read_bytes() for p in extracted_dir.glob("*.json"))
+    assert extracted_jsons == existing_jsons
