@@ -82,3 +82,23 @@ def test_funding_alignment_rendering_present(html_content: str):
     assert "funding_alignment" in html_content, (
         "Market-cycle block must reference funding_alignment data field"
     )
+
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Funding audit rendering tests
+# ---------------------------------------------------------------------------
+
+
+def test_funding_audit_markers_present(html_content: str):
+    """The page must render funding audit info (source hash prefix and count)."""
+    assert "funding_alignment_source_sha256" in html_content or "funding_alignment_applied_signal_count" in html_content, (
+        "Page must reference funding audit fields from the API response"
+    )
+
+
+def test_no_run_download_order_controls(html_content: str):
+    """The page must not contain any run/download/order/approval control buttons."""
+    forbidden_controls = ["startRun", "downloadData", "placeOrder", "approveHoldout", "startPaper"]
+    for control in forbidden_controls:
+        assert control not in html_content, f"Forbidden control found: {control}"

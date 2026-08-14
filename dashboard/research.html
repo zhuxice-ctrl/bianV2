@@ -475,6 +475,7 @@ function renderMarketCycle(data){
             <div class="info-row"><span class="k">置信限仓</span><span class="v">${usd(weighted.final_equity)} / ${pct(weighted.total_return)}</span></div>
             <div class="info-row"><span class="k">最大回撤</span><span class="v">${pct(weighted.max_drawdown)}</span></div>
             <div class="info-row"><span class="k">资金费率对齐</span><span class="v">${fundingLine((cycle.funding_alignment)||{})}</span></div>
+            <div class="info-row"><span class="k">Funding 应用</span><span class="v">${bt.funding_alignment_source_sha256?escapeHtml(trunc(bt.funding_alignment_source_sha256,12))+' · '+fmtNumRaw(bt.funding_alignment_applied_signal_count)+'次':DASH}</span></div>
           </div>
         </details>
       </div>
@@ -743,6 +744,7 @@ function renderSingleAssetEvaluations(data){
             <div class="info-row"><span class="k">证据 SHA</span><span class="v mono-id" title="${escapeHtml(mc.evidence_sha256)}">${escapeHtml(trunc(mc.evidence_sha256,18))}</span></div>
             <div class="info-row"><span class="k">Artifact</span><span class="v trunc mono-id" title="${escapeHtml(ev.artifact_path)}">${escapeHtml(trunc(ev.artifact_path,20))}</span></div>
             <div class="info-row"><span class="k">信号时间</span><span class="v">${fmtTime(ev.current_signal_time)}</span></div>
+            <div class="info-row"><span class="k">Funding 应用</span><span class="v">${ev.funding_alignment_source_sha256?escapeHtml(trunc(ev.funding_alignment_source_sha256,12))+' · '+fmtNumRaw(ev.funding_alignment_applied_signal_count)+'次':DASH}</span></div>
           </div>
         </details>
       </div>`;

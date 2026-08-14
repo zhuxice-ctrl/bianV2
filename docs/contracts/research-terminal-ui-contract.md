@@ -168,6 +168,8 @@ type BacktestComparison = {
   baseline: BacktestMetrics;
   confidence_weighted: BacktestMetrics;
   artifact_sha256: string | null;
+  funding_alignment_source_sha256: string | null;        // §9 新增，默认 null
+  funding_alignment_applied_signal_count: number | null;  // §9 新增，默认 null
 };
 
 type Snapshot = {
@@ -309,6 +311,8 @@ type SingleAssetStrategyEvaluation = {
   } | null;
   baseline: StrategyMetrics | null;
   confidence_weighted: StrategyMetrics | null;
+  funding_alignment_source_sha256: string | null;        // §9 新增，默认 null
+  funding_alignment_applied_signal_count: number | null;  // §9 新增，默认 null
   error_summary: string | null;
 };
 
@@ -370,3 +374,27 @@ type FundingAlignment = {
 
 - 资金费率记录的 `available_time` 必须 `<= decision_time` 才能影响决策。
 - 前缀因果性：修改 `decision_time` 之后的记录不改变该时刻及之前的市场周期评分。
+
+## 9. Funding 审计字段扩展（§9）
+
+`BacktestComparison` 和 `SingleAssetStrategyEvaluation` 新增两个可选审计字段，用于展示"已实际应用"的 Funding 证据。这两个字段为加性扩展，默认 `null`，旧消费者可安全忽略。
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `funding_alignment_source_sha256` | `string \| null` | 最近一次实际应用的 Funding 记录源哈希前缀；`null` 表示未应用 |
+| `funding_alignment_applied_signal_count` | `number \| null` | 实际应用了 Funding 证据的决策点数量；`null` 表示未应用 |
+
+### 语义规则
+
+- `null` 表示 Funding 未提供或未实际影响任何决策——结果与无 Funding 输入时字节一致。
+- 非 `null` 值仅在 Funding 被实际应用时出现；Funding 只影响加权变体，不影响基准策略。
+- 未来 Funding 不得改变过去的 `source_sha256` 或 `applied_signal_count`。
+- 页面渲染时，`null` 显示为 `—`；非 `null` 显示源哈希前缀（前 12 位）和应用次数。
+
+### 渲染规则
+
+- 在 100U 回测对比区块和单币策略评估区块的审计详情中展示。
+- 通过 `escapeHtml` 渲染所有 API 文本。
+- 不新增运行、下载、下单或审批控件。

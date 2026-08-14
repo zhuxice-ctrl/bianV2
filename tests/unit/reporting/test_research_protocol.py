@@ -308,3 +308,101 @@ def test_missing_funding_node_cannot_report_passed():
         )
         assert fa.score is None
         assert fa.status != "ok"
+
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Wire compatibility and funding audit field tests
+# ---------------------------------------------------------------------------
+
+
+def test_backtest_comparison_funding_fields_default_none():
+    """BacktestComparison must default funding audit fields to None."""
+    bc = BacktestComparison(
+        status="missing",
+        baseline=BacktestMetrics(
+            final_equity=100.0,
+            total_return=0.0,
+            annualized_volatility=0.0,
+            max_drawdown=0.0,
+            sharpe_like=0.0,
+            trade_count=0,
+        ),
+        confidence_weighted=BacktestMetrics(
+            final_equity=100.0,
+            total_return=0.0,
+            annualized_volatility=0.0,
+            max_drawdown=0.0,
+            sharpe_like=0.0,
+            trade_count=0,
+        ),
+        artifact_sha256=None,
+    )
+    assert bc.funding_alignment_source_sha256 is None
+    assert bc.funding_alignment_applied_signal_count is None
+
+
+def test_backtest_comparison_with_funding_fields_serializes():
+    """BacktestComparison with funding fields must round-trip through JSON."""
+    bc = BacktestComparison(
+        status="ok",
+        baseline=BacktestMetrics(
+            final_equity=100.0,
+            total_return=0.0,
+            annualized_volatility=0.0,
+            max_drawdown=0.0,
+            sharpe_like=0.0,
+            trade_count=0,
+        ),
+        confidence_weighted=BacktestMetrics(
+            final_equity=105.0,
+            total_return=0.05,
+            annualized_volatility=0.1,
+            max_drawdown=-0.02,
+            sharpe_like=1.5,
+            trade_count=5,
+        ),
+        artifact_sha256="abc123",
+        funding_alignment_source_sha256="e" * 64,
+        funding_alignment_applied_signal_count=3,
+    )
+    data = bc.model_dump(mode="json")
+    assert data["funding_alignment_source_sha256"] == "e" * 64
+    assert data["funding_alignment_applied_signal_count"] == 3
+    # Old fields remain intact.
+    assert data["artifact_sha256"] == "abc123"
+    assert data["status"] == "ok"
+
+
+def test_single_asset_funding_fields_default_none():
+    """SingleAssetStrategyEvaluation must default funding audit fields to None."""
+    evaluation = SingleAssetStrategyEvaluation(
+        asset="ETHUSDT",
+        strategy_id="legacy.pa_confluence",
+        strategy_version="baseline-0",
+        status=SingleAssetStatus.MISSING,
+    )
+    data = evaluation.model_dump(mode="json")
+    assert data["funding_alignment_source_sha256"] is None
+    assert data["funding_alignment_applied_signal_count"] is None
+
+
+def test_single_asset_with_funding_fields_serializes():
+    """SingleAssetStrategyEvaluation with funding fields must round-trip."""
+    evaluation = SingleAssetStrategyEvaluation(
+        asset="ETHUSDT",
+        strategy_id="legacy.pa_confluence",
+        strategy_version="baseline-0",
+        status=SingleAssetStatus.OK,
+        funding_alignment_source_sha256="f" * 64,
+        funding_alignment_applied_signal_count=5,
+    )
+    data = evaluation.model_dump(mode="json")
+    assert data["funding_alignment_source_sha256"] == "f" * 64
+    assert data["funding_alignment_applied_signal_count"] == 5
+
+
+def test_research_terminal_v1_schema_unchanged():
+    """The schema_version must remain 'research-terminal-v1'."""
+    response = _base_response()
+    assert response.schema_version == "research-terminal-v1"

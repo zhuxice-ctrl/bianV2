@@ -260,6 +260,8 @@ class BacktestComparison(BaseModel):
     baseline: BacktestMetrics
     confidence_weighted: BacktestMetrics
     artifact_sha256: str | None
+    funding_alignment_source_sha256: str | None = None
+    funding_alignment_applied_signal_count: int | None = None
 
 
 class Snapshot(BaseModel):
@@ -354,6 +356,8 @@ class SingleAssetStrategyEvaluation(BaseModel):
     recommendation: SingleAssetRecommendation | None = None
     baseline: StrategyMetrics | None = None
     confidence_weighted: StrategyMetrics | None = None
+    funding_alignment_source_sha256: str | None = None
+    funding_alignment_applied_signal_count: int | None = None
     error_summary: str | None = None
 
 
