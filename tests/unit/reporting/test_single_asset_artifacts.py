@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from bian_quant.data.funding_alignment import FundingAlignmentRecord
 from bian_quant.reporting.research_protocol import (
     SingleAssetStatus,
 )
@@ -88,3 +91,54 @@ def test_build_eth_error_on_exception(tmp_path: Path):
     # Should be either missing (insufficient bars) or error
     assert result.status in (SingleAssetStatus.MISSING, SingleAssetStatus.ERROR)
     assert result.baseline is None
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Funding alignment forwarding tests
+# ---------------------------------------------------------------------------
+
+
+def test_funding_alignment_forwarded_to_evaluator(tmp_path: Path):
+    """build_eth_single_asset_evaluation must forward funding_alignment to evaluate_eth_strategy."""
+    test_funding = (
+        FundingAlignmentRecord(
+            decision_time=datetime(2026, 1, 1, tzinfo=UTC),
+            available_time=datetime(2026, 1, 1, tzinfo=UTC),
+            member_count=3,
+            positive_rate_share=0.9,
+            median_rate=0.0001,
+            coverage_ratio=1.0,
+            source_sha256="d" * 64,
+        ),
+    )
+
+    with patch("bian_quant.backtest.single_asset_strategy.evaluate_eth_strategy") as mock_eval:
+        from bian_quant.backtest.single_asset_strategy import _missing_result
+
+        mock_eval.return_value = _missing_result("test", runtime_ms=0)
+
+        build_eth_single_asset_evaluation(
+            ohlcv_path=tmp_path / "nonexistent.csv",
+            funding_alignment=test_funding,
+        )
+
+        # Verify funding_alignment was forwarded.
+        assert mock_eval.call_count == 1
+        _, kwargs = mock_eval.call_args
+        assert kwargs.get("funding_alignment") is test_funding
+
+
+def test_funding_none_forwarded_as_none(tmp_path: Path):
+    """When funding_alignment is not provided, it must be forwarded as None."""
+    with patch("bian_quant.backtest.single_asset_strategy.evaluate_eth_strategy") as mock_eval:
+        from bian_quant.backtest.single_asset_strategy import _missing_result
+
+        mock_eval.return_value = _missing_result("test", runtime_ms=0)
+
+        build_eth_single_asset_evaluation(
+            ohlcv_path=tmp_path / "nonexistent.csv",
+        )
+
+        assert mock_eval.call_count == 1
+        _, kwargs = mock_eval.call_args
+        assert kwargs.get("funding_alignment") is None

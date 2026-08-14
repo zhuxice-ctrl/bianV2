@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
+from bian_quant.data.funding_alignment import FundingAlignmentRecord
 from bian_quant.experiments.models import RunManifest, RunStatus
 from bian_quant.experiments.registry import ExperimentRegistry
 from bian_quant.reporting.research_protocol import (
@@ -219,3 +222,79 @@ def test_empty_response_when_no_run(tmp_path: Path) -> None:
     assert response.partial_availability_impact.affected_selection_days == 0
     assert response.market_cycle.status == "missing"
     assert response.allocation.selected_assets == []
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Funding alignment composition root tests
+# ---------------------------------------------------------------------------
+
+
+def _make_test_funding_tuple() -> tuple[FundingAlignmentRecord, ...]:
+    """A single known FundingAlignmentRecord for composition tests."""
+    dt = datetime(2026, 7, 2, tzinfo=UTC)
+    return (
+        FundingAlignmentRecord(
+            decision_time=dt,
+            available_time=dt,
+            member_count=3,
+            positive_rate_share=0.9,
+            median_rate=0.0001,
+            coverage_ratio=1.0,
+            source_sha256="c" * 64,
+        ),
+    )
+
+
+def test_funding_built_once_and_forwarded(tmp_path: Path) -> None:
+    """build_research_terminal_response must call the adapter once and forward the tuple."""
+    config_path = _write_config(tmp_path)
+    run_id = _create_passed_run(tmp_path)
+    _write_artifacts(tmp_path, run_id, partial=False)
+
+    test_tuple = _make_test_funding_tuple()
+
+    with patch(
+        "bian_quant.reporting.research_terminal.build_daily_funding_alignment",
+        return_value=test_tuple,
+    ) as mock_build:
+        response = build_research_terminal_response(config_path, repo_root=tmp_path)
+
+    # Adapter called exactly once.
+    assert mock_build.call_count == 1
+
+    # The response must be valid (not crashed).
+    assert response.schema_version == "research-terminal-v1"
+
+
+def test_funding_failure_preserves_parent_state(tmp_path: Path) -> None:
+    """When the adapter raises, the parent research state must not change."""
+    config_path = _write_config(tmp_path)
+    run_id = _create_passed_run(tmp_path)
+    _write_artifacts(tmp_path, run_id, partial=False)
+
+    with patch(
+        "bian_quant.reporting.research_terminal.build_daily_funding_alignment",
+        side_effect=RuntimeError("adapter crashed"),
+    ):
+        response = build_research_terminal_response(config_path, repo_root=tmp_path)
+
+    # Parent state must remain PASSED (not error/blocked).
+    assert response.state == TerminalState.PASSED
+    # Funding node must report error status.
+    assert response.market_cycle.funding_alignment.status == "error"
+
+
+def test_empty_funding_tuple_preserves_parent_state(tmp_path: Path) -> None:
+    """When the adapter returns (), the parent research state must not change."""
+    config_path = _write_config(tmp_path)
+    run_id = _create_passed_run(tmp_path)
+    _write_artifacts(tmp_path, run_id, partial=False)
+
+    with patch(
+        "bian_quant.reporting.research_terminal.build_daily_funding_alignment",
+        return_value=(),
+    ):
+        response = build_research_terminal_response(config_path, repo_root=tmp_path)
+
+    assert response.state == TerminalState.PASSED
+    assert response.market_cycle.funding_alignment.status == "missing"

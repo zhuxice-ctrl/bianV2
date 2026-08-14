@@ -186,12 +186,18 @@ def build_research_terminal_response(
     blockers = _build_blockers(acquisition, partial_identity_keys)
 
     # --- market cycle / allocation / 100U comparison -----------------------
+    # Build Funding alignment ONCE at the composition root and forward the
+    # same immutable tuple to both the 100U comparison and ETH evaluators.
+    funding_records = _build_funding_alignment_safe(
+        _resolve(config.canonical_root, repo_root),
+        tuple(config.assets),
+        config.as_of,
+    )
+
     cycle, allocation, comparison = _build_cycle_allocation_backtest(
         artifact_root,
         raw_root=_resolve(config.raw_root, repo_root),
-        canonical_root=_resolve(config.canonical_root, repo_root),
-        as_of=config.as_of,
-        assets=tuple(config.assets),
+        funding_alignment=funding_records,
     )
 
     # --- kpis --------------------------------------------------------------
@@ -212,6 +218,7 @@ def build_research_terminal_response(
         artifact_root,
         repo_root=repo_root,
         popular_universe_dir=artifact_root / "popular-universe",
+        funding_alignment=funding_records,
     )
 
     return ResearchTerminalResponse(
@@ -583,18 +590,17 @@ def _build_cycle_allocation_backtest(
     artifact_root: Path,
     *,
     raw_root: Path,
-    canonical_root: Path,
-    as_of: datetime,
-    assets: tuple[str, ...],
+    funding_alignment: tuple[FundingAlignmentRecord, ...] | None,
 ) -> tuple[MarketCycle, Allocation, BacktestComparison]:
     artifacts_dir = artifact_root / "popular-universe"
     try:
         records = load_popular_universe_records(artifacts_dir)
-        funding_records = _build_funding_alignment_safe(canonical_root, assets, as_of)
-        state = classify_market_cycle(records, funding_alignment=funding_records)
+        state = classify_market_cycle(records, funding_alignment=funding_alignment)
         latest_weights = _latest_three_coin_weights(artifacts_dir)
         allocation_decision = allocate_confidence_cap(state, latest_weights)
-        comparison = build_comparison_from_artifacts(artifacts_dir, raw_root=raw_root)
+        comparison = build_comparison_from_artifacts(
+            artifacts_dir, raw_root=raw_root, funding_alignment=funding_alignment
+        )
     except Exception:
         return (
             MarketCycle(
@@ -615,7 +621,7 @@ def _build_cycle_allocation_backtest(
             ),
         )
     status = "ok" if state.sample_count >= 30 else "insufficient_evidence"
-    funding_node = _build_funding_alignment_node(state, funding_records)
+    funding_node = _build_funding_alignment_node(state, funding_alignment)
     cycle = MarketCycle(
         label=state.label.value,
         confidence=state.confidence,
@@ -644,6 +650,8 @@ def _build_cycle_allocation_backtest(
         baseline=BacktestMetrics(**baseline_payload),
         confidence_weighted=BacktestMetrics(**weighted_payload),
         artifact_sha256=str(comparison_payload_data["artifact_sha256"]),
+        funding_alignment_source_sha256=comparison.funding_alignment_source_sha256,
+        funding_alignment_applied_signal_count=comparison.funding_alignment_applied_signal_count,
     )
     return cycle, allocation, backtest
 
@@ -680,6 +688,7 @@ def _build_single_asset_evaluations(
     *,
     repo_root: Path,
     popular_universe_dir: Path | None = None,
+    funding_alignment: tuple[FundingAlignmentRecord, ...] | None = None,
 ) -> list[SingleAssetStrategyEvaluation]:
     """Build single-asset evaluations defensively.
 
@@ -702,6 +711,7 @@ def _build_single_asset_evaluations(
             ohlcv_path=ohlcv_path,
             artifact_dir=artifact_dir,
             popular_universe_dir=popular_universe_dir,
+            funding_alignment=funding_alignment,
         )
         evaluations.append(evaluation)
     except Exception:

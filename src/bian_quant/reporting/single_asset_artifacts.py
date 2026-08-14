@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from bian_quant.data.funding_alignment import FundingAlignmentRecord
 from bian_quant.reporting.research_protocol import (
     CurrentSignal,
     SingleAssetMarketCycle,
@@ -81,12 +82,17 @@ def build_eth_single_asset_evaluation(
     ohlcv_path: Path | None = None,
     popular_universe_dir: Path | None = None,
     popular_records: Any = None,
+    funding_alignment: tuple[FundingAlignmentRecord, ...] | None = None,
 ) -> SingleAssetStrategyEvaluation:
     """Build a :class:`SingleAssetStrategyEvaluation` for ETHUSDT.
 
     This is the entry point called by the research terminal aggregator.  It
     defensively handles missing data, corrupted artifacts, and evaluator
     exceptions — always returning a contract-conformant model.
+
+    *funding_alignment* is forwarded to :func:`evaluate_eth_strategy` and only
+    affects the weighted variant's multiplier.  ``None`` preserves byte-identical
+    output.
     """
     # Lazy import to avoid circular dependency
     from bian_quant.backtest.single_asset_strategy import evaluate_eth_strategy
@@ -110,6 +116,7 @@ def build_eth_single_asset_evaluation(
             ohlcv_path=ohlcv_path,
             popular_universe_dir=popular_universe_dir,
             popular_records=popular_records,
+            funding_alignment=funding_alignment,
         )
     except Exception as exc:
         return _error_evaluation(f"Evaluator raised: {exc}")
@@ -189,6 +196,8 @@ def build_eth_single_asset_evaluation(
         recommendation=recommendation,
         baseline=baseline,
         confidence_weighted=weighted,
+        funding_alignment_source_sha256=result.funding_alignment_source_sha256,
+        funding_alignment_applied_signal_count=result.funding_alignment_applied_signal_count,
     )
 
 
@@ -271,6 +280,12 @@ def _build_artifact_payload(result: Any) -> dict[str, Any]:
         }
     if result.raw_metrics:
         payload["signal_multipliers"] = result.raw_metrics.get("signal_multipliers", [])
+    # Funding audit fields (only when funding was actually applied)
+    if result.funding_alignment_source_sha256 is not None:
+        payload["funding_alignment_source_sha256"] = result.funding_alignment_source_sha256
+        payload["funding_alignment_applied_signal_count"] = (
+            result.funding_alignment_applied_signal_count
+        )
     return payload
 
 
