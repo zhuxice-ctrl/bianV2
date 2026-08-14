@@ -141,7 +141,9 @@ def _publish_required(config: DualHorizonAcquisition) -> dict[str, str]:
     return result
 
 
-def _passed_source_run(config: DualHorizonAcquisition) -> str:
+def _passed_source_run(
+    config: DualHorizonAcquisition, snapshot_ids: dict[str, str] | None = None
+) -> str:
     manifest = RunManifest.create(
         strategy_name="dual_horizon_derivatives",
         code_sha=CODE_SHA,
@@ -156,7 +158,14 @@ def _passed_source_run(config: DualHorizonAcquisition) -> str:
     run_dir = config.artifact_root / manifest.run_id
     run_dir.mkdir(parents=True)
     (run_dir / "data-acquisition.json").write_text(
-        json.dumps({"run_id": manifest.run_id, "status": "passed"}), encoding="utf-8"
+        json.dumps(
+            {
+                "run_id": manifest.run_id,
+                "status": "passed",
+                "snapshot_ids": list(snapshot_ids.values()) if snapshot_ids else [],
+            }
+        ),
+        encoding="utf-8",
     )
     (run_dir / "data-quality.json").write_text(
         json.dumps({"run_id": manifest.run_id, "status": "passed"}), encoding="utf-8"
@@ -177,7 +186,7 @@ def test_missing_catalog_inputs_create_terminal_blocked_packet(tmp_path: Path) -
 def test_cataloged_analysis_uses_actual_snapshots_and_packet(tmp_path: Path) -> None:
     config = _config(tmp_path)
     ids = _publish_required(config)
-    _passed_source_run(config)
+    _passed_source_run(config, ids)
     resolved = resolve_dual_horizon_snapshots(config, code_sha=CODE_SHA)
     assert set(resolved.snapshot_ids) == set(ids.values())
 
@@ -202,8 +211,8 @@ def test_cataloged_analysis_factor_screening_includes_relative_funding_pressure(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
-    _publish_required(config)
-    _passed_source_run(config)
+    ids = _publish_required(config)
+    _passed_source_run(config, ids)
 
     result = analyze_cataloged_dual_horizon(config, code_sha=CODE_SHA)
     assert result.status == "passed"
@@ -214,6 +223,18 @@ def test_cataloged_analysis_factor_screening_includes_relative_funding_pressure(
     assert "relative_funding_pressure" in factor_payload["gates"]
     assert "relative_funding_pressure" in factor_payload["factor_diagnostics"]
     assert "relative_funding_pressure" in factor_payload["planned_lifecycle_states"]
+    assert not (config.artifact_root / "holdout-access.sqlite").exists()
+
+
+def test_cataloged_analysis_rejects_unrelated_source_evidence(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _publish_required(config)
+    _passed_source_run(config, {"unrelated": "source-snapshot"})
+
+    result = analyze_cataloged_dual_horizon(config, code_sha=CODE_SHA)
+
+    assert result.status == "blocked"
+    assert result.error_code == "SOURCE_EVIDENCE_MISSING"
     assert not (config.artifact_root / "holdout-access.sqlite").exists()
 
 

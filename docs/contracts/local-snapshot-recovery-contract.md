@@ -51,6 +51,11 @@ CANONICAL_TIME_INVALID:<identity_key>
 CANONICAL_CAUSALITY_INVALID:<identity_key>
 CANONICAL_CUTOFF_VIOLATION:<identity_key>
 CANONICAL_ASSET_INVALID:<identity_key>
+CANONICAL_SOURCE_PERIOD_MISMATCH:<identity_key>
+CANONICAL_DUPLICATE:<identity_key>
+CANONICAL_VALUE_INVALID:<identity_key>
+CANONICAL_INTERVAL_INVALID:<identity_key>
+CANONICAL_NEGATIVE_OI:<identity_key>
 ```
 
 Reasons are deduplicated and sorted. A blocked result has empty parent IDs and

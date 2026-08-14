@@ -138,7 +138,11 @@ def analyze_cataloged_dual_horizon(
     quality: dict[str, Any] = {}
     try:
         snapshots = resolve_dual_horizon_snapshots(config, code_sha=code_sha)
-        acquisition, quality = _load_acquisition_evidence(config, code_sha=code_sha)
+        acquisition, quality = _load_acquisition_evidence(
+            config,
+            code_sha=code_sha,
+            required_snapshot_ids=snapshots.snapshot_ids,
+        )
         if acquisition.get("status") != "passed" or quality.get("status") != "passed":
             raise AnalysisBlocked("SOURCE_RUN_BLOCKED")
         eligibility_frame, universe_artifact_ids = _load_popular_universe_eligibility(
@@ -560,7 +564,10 @@ def _build_delay_factor_frames(
 
 
 def _load_acquisition_evidence(
-    config: DualHorizonAcquisition, *, code_sha: str
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    required_snapshot_ids: tuple[str, ...],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     with ExperimentRegistry(config.experiment_registry_path) as registry:
         runs = [
@@ -574,10 +581,15 @@ def _load_acquisition_evidence(
         acquisition_path = config.artifact_root / run.run_id / "data-acquisition.json"
         quality_path = config.artifact_root / run.run_id / "data-quality.json"
         if acquisition_path.is_file() and quality_path.is_file():
-            return (
-                json.loads(acquisition_path.read_text(encoding="utf-8")),
-                json.loads(quality_path.read_text(encoding="utf-8")),
-            )
+            acquisition = json.loads(acquisition_path.read_text(encoding="utf-8"))
+            quality = json.loads(quality_path.read_text(encoding="utf-8"))
+            snapshot_ids = acquisition.get("snapshot_ids", [])
+            if (
+                isinstance(snapshot_ids, list)
+                and len(snapshot_ids) == len(required_snapshot_ids)
+                and set(snapshot_ids) == set(required_snapshot_ids)
+            ):
+                return acquisition, quality
     raise AnalysisBlocked("SOURCE_EVIDENCE_MISSING")
 
 

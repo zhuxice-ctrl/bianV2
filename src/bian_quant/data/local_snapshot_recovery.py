@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 
@@ -22,6 +23,17 @@ from bian_quant.data.catalog import CatalogEntry
 from bian_quant.data.contracts import DatasetLayer, DatasetManifest
 from bian_quant.data.evidence_cutoff import CutoffEvidence, clip_to_evidence_cutoff
 from bian_quant.data.hashing import dataframe_content_hash
+from bian_quant.data.popular_universe_artifacts import (
+    PopularUniverseBuildResult,
+    build_popular_universe_artifacts,
+)
+from bian_quant.data.snapshots import (
+    build_delay_views,
+    build_macro_snapshots,
+    build_micro_snapshots,
+)
+from bian_quant.experiments.models import RunManifest, RunStatus
+from bian_quant.experiments.registry import ExperimentRegistry
 
 
 class LocalSnapshotRecoveryStatus(StrEnum):
@@ -45,6 +57,21 @@ class LocalSnapshotRecoveryPreflight:
     parent_snapshot_ids: tuple[str, ...]
     input_set_sha256: str | None
     blocked_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LocalSnapshotRecoveryResult:
+    run_id: str
+    status: LocalSnapshotRecoveryStatus
+    snapshots: tuple[DatasetManifest, ...]
+    delay_snapshot_ids: dict[int, str]
+    acquisition_artifact: Path
+    quality_artifact: Path
+    blocked_reasons: tuple[str, ...]
+
+    @property
+    def snapshot_ids(self) -> tuple[str, ...]:
+        return tuple(item.snapshot_id for item in self.snapshots)
 
 
 _REQUIRED_COLUMNS: dict[SourceDataset, frozenset[str]] = {
@@ -85,13 +112,14 @@ def _find_by_name_read_only(path: Path, name: str) -> tuple[CatalogEntry, ...]:
             ).fetchall()
     except sqlite3.Error:
         return ()
-    return tuple(
-        CatalogEntry(
-            manifest=DatasetManifest.model_validate_json(manifest_json),
-            path=Path(stored_path),
-        )
-        for stored_path, manifest_json in rows
-    )
+    entries: list[CatalogEntry] = []
+    for stored_path, manifest_json in rows:
+        try:
+            manifest = DatasetManifest.model_validate_json(manifest_json)
+        except ValueError:
+            continue
+        entries.append(CatalogEntry(manifest=manifest, path=Path(stored_path)))
+    return tuple(entries)
 
 
 def _identity(entry: CatalogEntry) -> str | None:
@@ -145,6 +173,37 @@ def _validate_frame(
         reasons.append(f"CANONICAL_CUTOFF_VIOLATION:{source.identity_key}")
     if not (frame["asset"].astype(str) == source.asset).all():
         reasons.append(f"CANONICAL_ASSET_INVALID:{source.identity_key}")
+    if source.granularity.value == "daily":
+        period_end = source.period_start + timedelta(days=1)
+    elif source.period_start.month == 12:
+        period_end = source.period_start.replace(year=source.period_start.year + 1, month=1)
+    else:
+        period_end = source.period_start.replace(month=source.period_start.month + 1)
+    if source.dataset == SourceDataset.METRICS_OI and source.granularity.value == "daily":
+        in_period = (event_time >= source.period_start) & (
+            event_time <= period_end + timedelta(seconds=1)
+        )
+    else:
+        in_period = (event_time >= source.period_start) & (event_time < period_end)
+    if (~in_period).any():
+        reasons.append(f"CANONICAL_SOURCE_PERIOD_MISMATCH:{source.identity_key}")
+    if frame.duplicated(["asset", "event_time"]).any():
+        reasons.append(f"CANONICAL_DUPLICATE:{source.identity_key}")
+    if source.dataset == SourceDataset.OHLCV:
+        invalid_prices = (
+            (frame[["open", "high", "low", "close"]] <= 0).any(axis=1)
+            | (frame["volume"] < 0)
+            | (frame["high"] < frame[["open", "close", "low"]].max(axis=1))
+            | (frame["low"] > frame[["open", "close", "high"]].min(axis=1))
+        )
+        if invalid_prices.any():
+            reasons.append(f"CANONICAL_VALUE_INVALID:{source.identity_key}")
+    elif source.dataset == SourceDataset.FUNDING:
+        interval = pd.to_numeric(frame["funding_interval_hours"], errors="coerce")
+        if interval.isna().any() or not interval.isin([1, 4, 8]).all():
+            reasons.append(f"CANONICAL_INTERVAL_INVALID:{source.identity_key}")
+    elif (frame["sum_open_interest"] < 0).any() or (frame["sum_open_interest_value"] < 0).any():
+        reasons.append(f"CANONICAL_NEGATIVE_OI:{source.identity_key}")
     return cutoff, tuple(reasons)
 
 
@@ -213,5 +272,223 @@ def preflight_local_snapshot_recovery(
         inputs=ordered_inputs,
         parent_snapshot_ids=parent_ids,
         input_set_sha256=_canonical_input_set_sha(ordered_inputs),
+        blocked_reasons=(),
+    )
+
+
+def _write_exclusive_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _start_recovery_run(
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    parent_snapshot_ids: tuple[str, ...],
+    input_set_sha256: str | None,
+) -> RunManifest:
+    manifest = RunManifest.create(
+        strategy_name="dual_horizon_derivatives",
+        code_sha=code_sha,
+        dataset_snapshot_ids=list(parent_snapshot_ids)
+        or [f"local-canonical-input-set-{input_set_sha256 or 'blocked'}"],
+        config={
+            "source_mode": "local-canonical-recovery-v1",
+            "canonical_input_set_sha256": input_set_sha256,
+            "as_of": config.as_of.isoformat(),
+        },
+        seed=0,
+    )
+    config.experiment_registry_path.parent.mkdir(parents=True, exist_ok=True)
+    with ExperimentRegistry(config.experiment_registry_path) as registry:
+        registry.create(manifest)
+        registry.transition(manifest.run_id, RunStatus.RUNNING)
+    return manifest
+
+
+def _finish_recovery_run(config: DualHorizonAcquisition, run_id: str, status: RunStatus) -> None:
+    with ExperimentRegistry(config.experiment_registry_path) as registry:
+        registry.transition(run_id, status)
+
+
+def _blocked_recovery_result(
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    preflight: LocalSnapshotRecoveryPreflight,
+) -> LocalSnapshotRecoveryResult:
+    run = _start_recovery_run(
+        config,
+        code_sha=code_sha,
+        parent_snapshot_ids=preflight.parent_snapshot_ids,
+        input_set_sha256=preflight.input_set_sha256,
+    )
+    acquisition_path = config.artifact_root / run.run_id / "data-acquisition.json"
+    quality_path = config.artifact_root / run.run_id / "data-quality.json"
+    payload = {
+        "run_id": run.run_id,
+        "status": "blocked",
+        "source_mode": "local-canonical-recovery-v1",
+        "snapshot_ids": [],
+        "delay_snapshot_ids": {},
+        "blocked_reasons": list(preflight.blocked_reasons),
+        "holdout_accessed": False,
+    }
+    _write_exclusive_json(acquisition_path, payload)
+    _write_exclusive_json(quality_path, payload)
+    _finish_recovery_run(config, run.run_id, RunStatus.BLOCKED)
+    return LocalSnapshotRecoveryResult(
+        run_id=run.run_id,
+        status=LocalSnapshotRecoveryStatus.BLOCKED,
+        snapshots=(),
+        delay_snapshot_ids={},
+        acquisition_artifact=acquisition_path,
+        quality_artifact=quality_path,
+        blocked_reasons=preflight.blocked_reasons,
+    )
+
+
+def _combine_inputs(
+    inputs: tuple[CanonicalRecoveryInput, ...], dataset: SourceDataset
+) -> pd.DataFrame:
+    frames = [item.frame for item in inputs if item.source.dataset == dataset]
+    if not frames:
+        return pd.DataFrame()
+    return (
+        pd.concat(frames, ignore_index=True)
+        .sort_values(["asset", "event_time"])
+        .reset_index(drop=True)
+    )
+
+
+def recover_local_dual_horizon_snapshots(
+    config: DualHorizonAcquisition, *, code_sha: str
+) -> LocalSnapshotRecoveryResult:
+    """Rebuild research snapshots from verified local Canonical inputs only."""
+    preflight = preflight_local_snapshot_recovery(config)
+    if preflight.status is not LocalSnapshotRecoveryStatus.READY:
+        return _blocked_recovery_result(config, code_sha=code_sha, preflight=preflight)
+
+    run = _start_recovery_run(
+        config,
+        code_sha=code_sha,
+        parent_snapshot_ids=preflight.parent_snapshot_ids,
+        input_set_sha256=preflight.input_set_sha256,
+    )
+    acquisition_path = config.artifact_root / run.run_id / "data-acquisition.json"
+    quality_path = config.artifact_root / run.run_id / "data-quality.json"
+    ohlcv = _combine_inputs(preflight.inputs, SourceDataset.OHLCV)
+    funding = _combine_inputs(preflight.inputs, SourceDataset.FUNDING)
+    metrics = _combine_inputs(preflight.inputs, SourceDataset.METRICS_OI)
+    macro_ohlcv = ohlcv.loc[ohlcv["event_time"] >= config.macro_start].copy()
+    micro_ohlcv = ohlcv.loc[ohlcv["event_time"] >= config.micro_start].copy()
+
+    popular_build = PopularUniverseBuildResult([], [], config.micro_start, config.micro_start, None)
+    if config.universe_policy is not None:
+        popular_build = build_popular_universe_artifacts(config, ohlcv, funding, metrics)
+        if popular_build.shortages:
+            preflight = LocalSnapshotRecoveryPreflight(
+                status=LocalSnapshotRecoveryStatus.BLOCKED,
+                inputs=preflight.inputs,
+                parent_snapshot_ids=preflight.parent_snapshot_ids,
+                input_set_sha256=preflight.input_set_sha256,
+                blocked_reasons=tuple(
+                    sorted(item["identity_key"] for item in popular_build.shortages)
+                ),
+            )
+            _finish_recovery_run(config, run.run_id, RunStatus.BLOCKED)
+            payload = {
+                "run_id": run.run_id,
+                "status": "blocked",
+                "source_mode": "local-canonical-recovery-v1",
+                "snapshot_ids": [],
+                "delay_snapshot_ids": {},
+                "blocked_reasons": list(preflight.blocked_reasons),
+                "holdout_accessed": False,
+            }
+            _write_exclusive_json(acquisition_path, payload)
+            _write_exclusive_json(quality_path, payload)
+            return LocalSnapshotRecoveryResult(
+                run_id=run.run_id,
+                status=LocalSnapshotRecoveryStatus.BLOCKED,
+                snapshots=(),
+                delay_snapshot_ids={},
+                acquisition_artifact=acquisition_path,
+                quality_artifact=quality_path,
+                blocked_reasons=preflight.blocked_reasons,
+            )
+
+    snapshot_config = json.dumps(
+        {
+            "assets": list(config.assets),
+            "macro_start": config.macro_start.isoformat(),
+            "micro_start": config.micro_start.isoformat(),
+            "as_of": config.as_of.isoformat(),
+            "code_sha": code_sha,
+            "source_mode": "local-canonical-recovery-v1",
+            "canonical_input_snapshot_ids": list(preflight.parent_snapshot_ids),
+            "canonical_input_set_sha256": preflight.input_set_sha256,
+            "popular_universe_artifact_ids": [
+                str(item["artifact_id"]) for item in popular_build.artifacts
+            ],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    from bian_quant.data.catalog import DatasetCatalog
+
+    catalog = DatasetCatalog(config.catalog_path)
+    snapshots = [
+        *build_macro_snapshots(
+            macro_ohlcv,
+            funding,
+            intervals=config.macro_intervals,
+            root=config.research_root,
+            catalog=catalog,
+            parent_snapshot_ids=preflight.parent_snapshot_ids,
+            config_json=snapshot_config,
+        ),
+        *build_micro_snapshots(
+            micro_ohlcv,
+            funding,
+            metrics,
+            intervals=config.micro_intervals,
+            root=config.research_root,
+            catalog=catalog,
+            parent_snapshot_ids=preflight.parent_snapshot_ids,
+            config_json=snapshot_config,
+        ),
+    ]
+    delay_snapshot_ids = build_delay_views(
+        metrics,
+        delays=config.oi_delay_minutes,
+        root=config.research_root,
+        parent_snapshot_ids=tuple(item.snapshot_id for item in snapshots),
+        as_of=config.as_of,
+    )
+    snapshot_ids = [item.snapshot_id for item in snapshots]
+    payload = {
+        "run_id": run.run_id,
+        "status": "passed",
+        "source_mode": "local-canonical-recovery-v1",
+        "snapshot_ids": snapshot_ids,
+        "delay_snapshot_ids": delay_snapshot_ids,
+        "canonical_input_snapshot_ids": list(preflight.parent_snapshot_ids),
+        "canonical_input_set_sha256": preflight.input_set_sha256,
+        "popular_universe_artifacts": popular_build.artifacts,
+        "holdout_accessed": False,
+    }
+    _write_exclusive_json(acquisition_path, payload)
+    _write_exclusive_json(quality_path, payload)
+    _finish_recovery_run(config, run.run_id, RunStatus.PASSED)
+    return LocalSnapshotRecoveryResult(
+        run_id=run.run_id,
+        status=LocalSnapshotRecoveryStatus.RECOVERED,
+        snapshots=tuple(snapshots),
+        delay_snapshot_ids=delay_snapshot_ids,
+        acquisition_artifact=acquisition_path,
+        quality_artifact=quality_path,
         blocked_reasons=(),
     )
