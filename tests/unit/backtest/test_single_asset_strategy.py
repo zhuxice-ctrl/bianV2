@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 
 import numpy as np
@@ -11,12 +10,10 @@ import pandas as pd
 import pytest
 
 from bian_quant.backtest.single_asset_strategy import (
-    INITIAL_EQUITY,
-    cycle_multiplier,
-    evaluate_eth_strategy,
-    _compute_metrics,
     _compute_metrics_from_equity_only,
     _records_through,
+    cycle_multiplier,
+    evaluate_eth_strategy,
 )
 
 
@@ -43,13 +40,15 @@ def _make_popular_records(n_days: int = 40, start: str = "2025-01-01") -> pd.Dat
     dates = pd.date_range(start=start, periods=n_days, freq="D", tz="UTC")
     records = []
     for d in dates:
-        records.append({
-            "selection_time": d.to_pydatetime(),
-            "member_count": 12,
-            "median_quote_volume": 50000000.0,
-            "median_oi_value": 100000000.0,
-            "top3_share": 0.45,
-        })
+        records.append(
+            {
+                "selection_time": d.to_pydatetime(),
+                "member_count": 12,
+                "median_quote_volume": 50000000.0,
+                "median_oi_value": 100000000.0,
+                "top3_share": 0.45,
+            }
+        )
     return pd.DataFrame(records)
 
 
@@ -135,28 +134,36 @@ def test_prefix_causality(tmp_path: Path):
     result1 = evaluate_eth_strategy(ohlcv_path=csv_path, popular_records=records)
 
     # Add more records at the end (future)
-    records_modified = pd.concat([
-        records,
-        pd.DataFrame([{
-            "selection_time": (records["selection_time"].iloc[-1] + timedelta(days=1)).to_pydatetime()
-            if isinstance(records["selection_time"].iloc[-1], datetime)
-            else records["selection_time"].iloc[-1] + timedelta(days=1),
-            "member_count": 5,
-            "median_quote_volume": 10000000.0,
-            "median_oi_value": 50000000.0,
-            "top3_share": 0.80,
-        }])
-    ], ignore_index=True)
+    records_modified = pd.concat(
+        [
+            records,
+            pd.DataFrame(
+                [
+                    {
+                        "selection_time": (
+                            records["selection_time"].iloc[-1] + timedelta(days=1)
+                        ).to_pydatetime()
+                        if isinstance(records["selection_time"].iloc[-1], datetime)
+                        else records["selection_time"].iloc[-1] + timedelta(days=1),
+                        "member_count": 5,
+                        "median_quote_volume": 10000000.0,
+                        "median_oi_value": 50000000.0,
+                        "top3_share": 0.80,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
 
     result2 = evaluate_eth_strategy(ohlcv_path=csv_path, popular_records=records_modified)
 
     # Input hash should differ (more records), but result hash for the same
     # signals should be identical because the extra record is after the last signal
-    if result1.status == "ok" and result2.status == "ok":
-        if result1.baseline and result2.baseline:
-            # Baseline doesn't use popular records at all, so must be identical
-            assert result1.baseline.final_equity == result2.baseline.final_equity
-            assert result1.baseline.trade_count == result2.baseline.trade_count
+    if result1.status == "ok" and result2.status == "ok" and result1.baseline and result2.baseline:
+        # Baseline doesn't use popular records at all, so must be identical.
+        assert result1.baseline.final_equity == result2.baseline.final_equity
+        assert result1.baseline.trade_count == result2.baseline.trade_count
 
 
 def test_cycle_multiplier_thresholds():
@@ -173,12 +180,14 @@ def test_cycle_multiplier_thresholds():
 
 def test_records_through_filters_causally():
     """_records_through must only return records at or before the decision time."""
-    records = pd.DataFrame({
-        "selection_time": pd.to_datetime([
-            "2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04"
-        ], utc=True),
-        "member_count": [12, 10, 15, 8],
-    })
+    records = pd.DataFrame(
+        {
+            "selection_time": pd.to_datetime(
+                ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04"], utc=True
+            ),
+            "member_count": [12, 10, 15, 8],
+        }
+    )
     dt = datetime(2025, 1, 3, tzinfo=UTC)
     filtered = _records_through(records, dt)
     assert len(filtered) == 3  # Jan 1, 2, 3
@@ -193,3 +202,98 @@ def test_empty_metrics_when_no_trades():
     assert metrics.win_rate is None
     assert metrics.fee_paid_net_profit == 0.0
     assert metrics.fees_paid == 0.0
+
+
+def test_checked_in_eth_csv_evaluates_deterministically() -> None:
+    """The tracked ETH 4H CSV must evaluate deterministically when present."""
+    repo_root = Path(__file__).resolve().parents[3]
+    source = repo_root / "data" / "ETHUSDT_4h.csv"
+    if not source.is_file():
+        pytest.skip("checked-in ETH 4H source is unavailable")
+    result_one = evaluate_eth_strategy(
+        ohlcv_path=source,
+        popular_universe_dir=repo_root
+        / "var"
+        / "artifacts"
+        / "dual-horizon-popular-v1"
+        / "popular-universe",
+    )
+    result_two = evaluate_eth_strategy(
+        ohlcv_path=source,
+        popular_universe_dir=repo_root
+        / "var"
+        / "artifacts"
+        / "dual-horizon-popular-v1"
+        / "popular-universe",
+    )
+    assert result_one.status == "ok"
+    assert result_one.result_sha256 == result_two.result_sha256
+    assert result_one.baseline is not None
+    assert result_one.confidence_weighted is not None
+
+
+def test_prefix_causality_real_artifact_shape() -> None:
+    """Prefix invariance on the real artifact shape.
+
+    The baseline variant never uses popular-universe records, so it must be
+    identical regardless of how many future records are appended.  The
+    confidence-weighted variant may only consume records available at or
+    before each signal decision time, so its per-signal multipliers through a
+    cutoff must be byte-identical after truncation, and the truncated result
+    hash must be deterministic.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    source = repo_root / "data" / "ETHUSDT_4h.csv"
+    if not source.is_file():
+        pytest.skip("checked-in ETH 4H source is unavailable")
+    popular_dir = repo_root / "var" / "artifacts" / "dual-horizon-popular-v1" / "popular-universe"
+    if not popular_dir.is_dir():
+        pytest.skip("checked-in popular-universe artifacts are unavailable")
+    from bian_quant.regimes.market_cycle import load_popular_universe_records
+
+    records = load_popular_universe_records(popular_dir)
+    if records.empty:
+        pytest.skip("popular-universe records are empty")
+
+    full = evaluate_eth_strategy(ohlcv_path=source, popular_records=records)
+    if full.status != "ok" or not full.baseline:
+        pytest.skip("ETH evaluation did not produce an ok result on real data")
+
+    midpoint = records.iloc[len(records) // 2]["selection_time"]
+    truncated = evaluate_eth_strategy(
+        ohlcv_path=source, popular_records=records.iloc[: len(records) // 2 + 1]
+    )
+    truncated_again = evaluate_eth_strategy(
+        ohlcv_path=source, popular_records=records.iloc[: len(records) // 2 + 1]
+    )
+
+    # Baseline never touches popular records -> identical.
+    assert full.baseline.final_equity == truncated.baseline.final_equity
+    assert full.baseline.trade_count == truncated.baseline.trade_count
+
+    # Truncated run is deterministic.
+    assert truncated.result_sha256 == truncated_again.result_sha256
+
+    # Per-signal multipliers for decisions at or before the midpoint must be
+    # JSON-identical between the full and truncated runs.
+    import json as _json
+
+    full_multipliers = full.raw_metrics.get("signal_multipliers", [])
+    trunc_multipliers = truncated.raw_metrics.get("signal_multipliers", [])
+    prefix_full = [
+        m
+        for m in full_multipliers
+        if pd.Timestamp(m["decision_time"]).tz_convert("UTC")
+        <= pd.Timestamp(midpoint).tz_convert("UTC")
+    ]
+    prefix_truncated = [
+        m
+        for m in trunc_multipliers
+        if pd.Timestamp(m["decision_time"]).tz_convert("UTC")
+        <= pd.Timestamp(midpoint).tz_convert("UTC")
+    ]
+    assert _json.dumps(prefix_full, sort_keys=True) == _json.dumps(prefix_truncated, sort_keys=True)
+
+    # Every multiplier entry must carry a decision_time (structural causality
+    # anchor; the engine fills on the bar after the signal).
+    assert all("decision_time" in m for m in full_multipliers)

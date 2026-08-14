@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
+from bian_quant.reporting.research_protocol import (
+    SingleAssetStatus,
+)
 from bian_quant.reporting.single_asset_artifacts import (
+    build_eth_single_asset_evaluation,
     canonical_json_bytes,
     canonical_sha256,
     load_single_asset_artifact,
     write_single_asset_artifact,
-    build_eth_single_asset_evaluation,
-)
-from bian_quant.reporting.research_protocol import (
-    SingleAssetStatus,
 )
 
 

@@ -110,3 +110,12 @@ python dashboard/server.py  # GET /api/research/latest → 200; GET /research �
 ## 安全边界
 
 无 API Key、无交易所连接、无下单、无数据下载、无纸面/实盘交易。页面只读，页脚标注 `READ-ONLY · RESEARCH ONLY · NO LIVE TRADING`。
+
+## 前缀因果审计测试（2026-08-14 验证）
+
+`tests/unit/backtest/test_single_asset_strategy.py` 包含两个真实本地输入测试：
+
+1. `test_checked_in_eth_csv_evaluates_deterministically`：当 `data/ETHUSDT_4h.csv` 存在时，两次独立评估必须产生相同的 `result_sha256`；源文件缺失时明确跳过。
+2. `test_prefix_causality_real_artifact_shape`：截断热门池证据后，截止点之前的信号乘数 JSON 必须与完整输入一致；基线策略不读取热门池，指标必须保持一致。
+
+在 Windows 上述聚焦门禁中，ETH 测试已通过；没有任何测试或页面操作会触发下载、下单或实盘逻辑。
