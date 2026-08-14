@@ -775,6 +775,8 @@ def _factor_exclusion_counts(frame: pd.DataFrame, name: str) -> dict[str, dict[s
         columns.append("funding_exclusion_reason")
     if name in {"oi_change", "leverage_crowding"}:
         columns.append("oi_exclusion_reason")
+    if name == "relative_funding_pressure":
+        columns.append("relative_funding_pressure_exclusion_reason")
     return {
         column: {
             str(reason): int(count)

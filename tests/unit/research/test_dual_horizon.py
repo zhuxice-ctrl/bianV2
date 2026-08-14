@@ -122,3 +122,22 @@ def test_oi_factor_requires_all_three_delay_scenarios(monkeypatch: Any) -> None:
 
     assert "OI_DELAY_STABILITY_UNAVAILABLE" in gates[name]
     assert candidates == []
+
+
+def test_relative_funding_pressure_exclusion_counts_are_audited() -> None:
+    primary = pd.DataFrame(
+        {
+            "relative_funding_pressure_exclusion_reason": [
+                "INSUFFICIENT_PEER_COVERAGE",
+                "INSUFFICIENT_PEER_COVERAGE",
+                "ZERO_CROSS_SECTIONAL_MAD",
+                None,
+            ]
+        }
+    )
+    assert research._factor_exclusion_counts(primary, "relative_funding_pressure") == {
+        "relative_funding_pressure_exclusion_reason": {
+            "INSUFFICIENT_PEER_COVERAGE": 2,
+            "ZERO_CROSS_SECTIONAL_MAD": 1,
+        }
+    }

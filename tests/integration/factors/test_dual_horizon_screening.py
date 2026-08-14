@@ -550,3 +550,32 @@ class TestRunDualHorizonScreening:
             "leverage_crowding",
         }
         assert len(result.generated_factor_ids) <= 20
+
+    def test_relative_funding_pressure_diagnostics_recorded_in_development_artifact(
+        self, tmp_path: Path
+    ) -> None:
+        import json
+
+        registry_path = tmp_path / "factor-registry.sqlite"
+        config = {
+            **screening_config(tmp_path),
+            "run_id": "rfp-diagnostics",
+            "code_sha": "relative-funding-pressure-1.0.0",
+            "factor_registry_path": registry_path,
+            "development_start": "2025-12-01T00:00:00Z",
+            "development_end": "2026-02-01T00:00:00Z",
+        }
+        result = run_dual_horizon_screening(multi_asset_pressure_frame(), config=config)
+
+        assert result.artifact_path is not None
+        payload = json.loads(result.artifact_path.read_text(encoding="utf-8"))
+        assert payload["holdout_accessed"] is False
+        assert "relative_funding_pressure" in payload["factor_diagnostics"]
+        assert (
+            "relative_funding_pressure_exclusion_reason"
+            in (payload["factor_diagnostics"]["relative_funding_pressure"]["exclusion_evidence"])
+        )
+        assert payload["planned_lifecycle_states"]["relative_funding_pressure"] in {
+            "observed",
+            "researching",
+        }
