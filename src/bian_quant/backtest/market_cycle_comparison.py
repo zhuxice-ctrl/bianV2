@@ -18,6 +18,7 @@ from bian_quant.backtest.confidence_allocation import (
     THREE_COIN_UNIVERSE,
     allocate_confidence_cap,
 )
+from bian_quant.data.funding_alignment import FundingAlignmentRecord
 from bian_quant.regimes.market_cycle import (
     MarketCycleState,
     classify_market_cycle,
@@ -43,6 +44,8 @@ class MarketCycleComparison:
     latest_cycle: MarketCycleState
     latest_allocation: dict[str, object]
     artifact_sha256: str
+    funding_alignment_source_sha256: str | None = None
+    funding_alignment_applied_signal_count: int | None = None
 
 
 def run_market_cycle_comparison(
@@ -50,11 +53,18 @@ def run_market_cycle_comparison(
     popular_records: pd.DataFrame,
     *,
     initial_equity_usdt: Decimal = Decimal("100"),
+    funding_alignment: tuple[FundingAlignmentRecord, ...] | None = None,
 ) -> MarketCycleComparison:
-    """Compare fixed 100U exposure with confidence-capped exposure."""
+    """Compare fixed 100U exposure with confidence-capped exposure.
+
+    When *funding_alignment* is ``None`` (default) the output is byte-identical
+    to the pre-funding behaviour.  When provided, ``classify_market_cycle``
+    applies the point-in-time funding evidence to the weighted variant only;
+    the baseline (equal-weight) variant is never affected.
+    """
     if returns.empty:
-        latest_cycle = classify_market_cycle(popular_records)
-        payload = {
+        latest_cycle = classify_market_cycle(popular_records, funding_alignment=funding_alignment)
+        empty_payload = {
             "baseline": _metrics_payload(_empty_metrics(float(initial_equity_usdt))),
             "confidence_weighted": _metrics_payload(_empty_metrics(float(initial_equity_usdt))),
             "latest_cycle": market_cycle_payload(latest_cycle),
@@ -65,7 +75,7 @@ def run_market_cycle_comparison(
             confidence_weighted=_empty_metrics(float(initial_equity_usdt)),
             latest_cycle=latest_cycle,
             latest_allocation={},
-            artifact_sha256=_hash(payload),
+            artifact_sha256=_hash(empty_payload),
         )
 
     frame = _prepare_returns(returns)
@@ -73,13 +83,23 @@ def run_market_cycle_comparison(
     weighted_equity: list[float] = []
     base_equity = float(initial_equity_usdt)
     conf_equity = float(initial_equity_usdt)
-    latest_state = classify_market_cycle(popular_records)
+    latest_state = classify_market_cycle(popular_records, funding_alignment=funding_alignment)
     latest_allocation: dict[str, object] = {}
+    funding_source_sha: str | None = None
+    funding_applied_count = 0
 
     for idx, row in frame.iterrows():
         date = pd.Timestamp(str(idx)).to_pydatetime()
         historical_popular = _records_through(popular_records, date)
-        state = classify_market_cycle(historical_popular)
+        state = classify_market_cycle(historical_popular, funding_alignment=funding_alignment)
+        # Track funding evidence applied at this decision point
+        raw_state_funding_sha = state.evidence.get("funding_alignment_source_sha256")
+        state_funding_sha = (
+            raw_state_funding_sha if isinstance(raw_state_funding_sha, str) else None
+        )
+        if state_funding_sha is not None:
+            funding_source_sha = state_funding_sha
+            funding_applied_count += 1
         # The comparison has no independent entry signal. Use a fixed equal-weight
         # BTC/ETH/BNB basket so realized returns cannot leak into the position
         # weights (which would square gains and discard losses).
@@ -105,18 +125,27 @@ def run_market_cycle_comparison(
 
     baseline = _metrics_from_equity(baseline_equity, float(initial_equity_usdt))
     weighted = _metrics_from_equity(weighted_equity, float(initial_equity_usdt))
-    payload = {
+    result_payload: dict[str, Any] = {
         "baseline": _metrics_payload(baseline),
         "confidence_weighted": _metrics_payload(weighted),
         "latest_cycle": market_cycle_payload(latest_state),
         "latest_allocation": latest_allocation,
     }
+    # Only include funding audit fields when funding was actually applied,
+    # preserving byte-identical output when funding_alignment is None.
+    if funding_source_sha is not None:
+        result_payload["funding_alignment_source_sha256"] = funding_source_sha
+        result_payload["funding_alignment_applied_signal_count"] = funding_applied_count
     return MarketCycleComparison(
         baseline=baseline,
         confidence_weighted=weighted,
         latest_cycle=latest_state,
         latest_allocation=latest_allocation,
-        artifact_sha256=_hash(payload),
+        artifact_sha256=_hash(result_payload),
+        funding_alignment_source_sha256=funding_source_sha,
+        funding_alignment_applied_signal_count=funding_applied_count
+        if funding_source_sha is not None
+        else None,
     )
 
 
@@ -125,6 +154,7 @@ def build_comparison_from_artifacts(
     *,
     raw_root: Path,
     returns_path: Path | None = None,
+    funding_alignment: tuple[FundingAlignmentRecord, ...] | None = None,
 ) -> MarketCycleComparison:
     """Build comparison from local artifacts.
 
@@ -137,17 +167,25 @@ def build_comparison_from_artifacts(
         if returns_path is not None
         else _load_returns_from_raw_root(raw_root)
     )
-    return run_market_cycle_comparison(returns, popular)
+    return run_market_cycle_comparison(returns, popular, funding_alignment=funding_alignment)
 
 
 def comparison_payload(comparison: MarketCycleComparison) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "baseline": _metrics_payload(comparison.baseline),
         "confidence_weighted": _metrics_payload(comparison.confidence_weighted),
         "latest_cycle": market_cycle_payload(comparison.latest_cycle),
         "latest_allocation": comparison.latest_allocation,
         "artifact_sha256": comparison.artifact_sha256,
     }
+    # Only include funding audit fields when they were actually set,
+    # preserving byte-identical output for the no-funding case.
+    if comparison.funding_alignment_source_sha256 is not None:
+        payload["funding_alignment_source_sha256"] = comparison.funding_alignment_source_sha256
+        payload["funding_alignment_applied_signal_count"] = (
+            comparison.funding_alignment_applied_signal_count
+        )
+    return payload
 
 
 def write_comparison_artifact(comparison: MarketCycleComparison, path: Path) -> str:
@@ -194,8 +232,7 @@ def _portfolio_return(row: pd.Series, caps: Mapping[str, float], cap_base: float
     if cap_base <= 0:
         return 0.0
     exposure_return = sum(
-        float(caps.get(asset, 0.0)) * float(row[asset])
-        for asset in THREE_COIN_UNIVERSE
+        float(caps.get(asset, 0.0)) * float(row[asset]) for asset in THREE_COIN_UNIVERSE
     )
     return exposure_return / cap_base
 
@@ -206,7 +243,7 @@ def _metrics_from_equity(equity: list[float], initial: float) -> BacktestMetrics
     series = pd.Series(equity, dtype=float)
     returns = series.pct_change().fillna(series.iloc[0] / initial - 1.0)
     total_return = series.iloc[-1] / initial - 1.0
-    annualized_vol = float(returns.std(ddof=0) * (365 ** 0.5))
+    annualized_vol = float(returns.std(ddof=0) * (365**0.5))
     sharpe = 0.0 if annualized_vol == 0 else float((returns.mean() * 365) / annualized_vol)
     high_water = series.cummax()
     drawdown = (series / high_water - 1.0).min()

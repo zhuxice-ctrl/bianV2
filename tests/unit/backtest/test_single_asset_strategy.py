@@ -15,6 +15,7 @@ from bian_quant.backtest.single_asset_strategy import (
     cycle_multiplier,
     evaluate_eth_strategy,
 )
+from bian_quant.data.funding_alignment import FundingAlignmentRecord
 
 
 def _make_ohlcv(n_bars: int = 250, start: str = "2025-01-01") -> pd.DataFrame:
@@ -297,3 +298,115 @@ def test_prefix_causality_real_artifact_shape() -> None:
     # Every multiplier entry must carry a decision_time (structural causality
     # anchor; the engine fills on the bar after the signal).
     assert all("decision_time" in m for m in full_multipliers)
+
+
+# ---------------------------------------------------------------------------
+# Task 1: Funding alignment propagation tests for ETH strategy
+# ---------------------------------------------------------------------------
+
+
+def _make_eth_funding_records(
+    n_days: int = 40, start: str = "2025-01-01"
+) -> tuple[FundingAlignmentRecord, ...]:
+    """Generate synthetic FundingAlignmentRecords for ETH tests."""
+    records: list[FundingAlignmentRecord] = []
+    base = pd.Timestamp(start, tz="UTC")
+    for i in range(n_days):
+        dt = (base + pd.Timedelta(days=i)).to_pydatetime()
+        records.append(
+            FundingAlignmentRecord(
+                decision_time=dt,
+                available_time=dt,
+                member_count=3,
+                positive_rate_share=0.9,
+                median_rate=0.0001,
+                coverage_ratio=1.0,
+                source_sha256="e" * 64,
+            )
+        )
+    return tuple(records)
+
+
+def test_funding_alignment_none_is_byte_identical_eth(tmp_path: Path):
+    """evaluate_eth_strategy without and with explicit funding_alignment=None must be identical."""
+    frame = _make_ohlcv(300)
+    csv_path = tmp_path / "ETHUSDT_4h.csv"
+    frame.to_csv(csv_path, index_label="timestamp")
+
+    records = _make_popular_records(40, start=str(frame.index[0].date()))
+
+    without = evaluate_eth_strategy(ohlcv_path=csv_path, popular_records=records)
+    explicit_none = evaluate_eth_strategy(
+        ohlcv_path=csv_path, popular_records=records, funding_alignment=None
+    )
+
+    assert without.result_sha256 == explicit_none.result_sha256
+    assert without.input_sha256 == explicit_none.input_sha256
+
+
+def test_funding_does_not_affect_baseline(tmp_path: Path):
+    """Funding alignment must never change the baseline variant's metrics."""
+    frame = _make_ohlcv(300)
+    csv_path = tmp_path / "ETHUSDT_4h.csv"
+    frame.to_csv(csv_path, index_label="timestamp")
+
+    records = _make_popular_records(40, start=str(frame.index[0].date()))
+    funding = _make_eth_funding_records(40, start=str(frame.index[0].date()))
+
+    without = evaluate_eth_strategy(ohlcv_path=csv_path, popular_records=records)
+    with_funding = evaluate_eth_strategy(
+        ohlcv_path=csv_path, popular_records=records, funding_alignment=funding
+    )
+
+    if without.status == "ok" and with_funding.status == "ok":
+        assert without.baseline is not None
+        assert with_funding.baseline is not None
+        # Baseline must be identical — funding never touches it.
+        assert without.baseline.final_equity == with_funding.baseline.final_equity
+        assert without.baseline.trade_count == with_funding.baseline.trade_count
+        assert without.baseline.fees_paid == with_funding.baseline.fees_paid
+
+
+def test_funding_source_sha_in_audit_when_applied(tmp_path: Path):
+    """When funding is applied, the source SHA and count must appear in the result."""
+    frame = _make_ohlcv(300)
+    csv_path = tmp_path / "ETHUSDT_4h.csv"
+    frame.to_csv(csv_path, index_label="timestamp")
+
+    records = _make_popular_records(40, start=str(frame.index[0].date()))
+    funding = _make_eth_funding_records(40, start=str(frame.index[0].date()))
+
+    result = evaluate_eth_strategy(
+        ohlcv_path=csv_path, popular_records=records, funding_alignment=funding
+    )
+
+    if result.status == "ok" and result.funding_alignment_applied_signal_count > 0:
+        assert result.funding_alignment_source_sha256 is not None
+        # The signal_multipliers in raw_metrics must include funding SHA.
+        multipliers = result.raw_metrics.get("signal_multipliers", [])
+        funding_entries = [m for m in multipliers if "funding_alignment_source_sha256" in m]
+        assert len(funding_entries) == result.funding_alignment_applied_signal_count
+
+
+def test_future_funding_preserves_eth_prefix(tmp_path: Path):
+    """Funding available only after the last signal must not change any result."""
+    frame = _make_ohlcv(300)
+    csv_path = tmp_path / "ETHUSDT_4h.csv"
+    frame.to_csv(csv_path, index_label="timestamp")
+
+    records = _make_popular_records(40, start=str(frame.index[0].date()))
+
+    # Create funding records far in the future — after all signals.
+    future_start = str((frame.index[-1] + pd.Timedelta(days=30)).date())
+    future_funding = _make_eth_funding_records(10, start=future_start)
+
+    without = evaluate_eth_strategy(ohlcv_path=csv_path, popular_records=records)
+    with_future = evaluate_eth_strategy(
+        ohlcv_path=csv_path, popular_records=records, funding_alignment=future_funding
+    )
+
+    if without.status == "ok" and with_future.status == "ok":
+        # Future funding cannot affect any past decision.
+        assert without.result_sha256 == with_future.result_sha256
+        assert with_future.funding_alignment_applied_signal_count == 0
+        assert with_future.funding_alignment_source_sha256 is None

@@ -20,6 +20,9 @@ Causality guarantees
 3. Both variants consume the same bar/signal sequences — only notional differs.
 4. Prefix causality: modifying records after *t* does not change any
    multiplier, trade or equity value at or before *t*.
+5. Funding-alignment evidence, when provided, is gated point-in-time by
+   ``classify_market_cycle`` and can only affect the weighted variant's
+   multiplier — never the baseline.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ import pandas as pd
 
 from bian_quant.backtest.engine import BacktestResult, EventEngine
 from bian_quant.backtest.events import Bar, BarConflictPolicy, SignalEvent
+from bian_quant.data.funding_alignment import FundingAlignmentRecord
 from bian_quant.regimes.market_cycle import (
     MarketCycleLabel,
     classify_market_cycle,
@@ -111,11 +115,13 @@ class EvaluationResult:
     cycle_confidence: float | None
     cycle_multiplier: float | None
     cycle_evidence_sha256: str | None
-    recommendation_participate: bool
-    recommendation_max_invest: float
-    recommendation_reason: str
-    baseline: VariantMetrics | None
-    confidence_weighted: VariantMetrics | None
+    funding_alignment_source_sha256: str | None = None
+    funding_alignment_applied_signal_count: int = 0
+    recommendation_participate: bool = False
+    recommendation_max_invest: float = 0.0
+    recommendation_reason: str = ""
+    baseline: VariantMetrics | None = None
+    confidence_weighted: VariantMetrics | None = None
     error_summary: str | None = None
     raw_metrics: dict[str, Any] = field(default_factory=dict)
 
@@ -137,9 +143,7 @@ def _bars_from_frame(frame: pd.DataFrame) -> list[Bar]:
     return bars
 
 
-def _records_through(
-    records: pd.DataFrame, decision_time: datetime
-) -> pd.DataFrame:
+def _records_through(records: pd.DataFrame, decision_time: datetime) -> pd.DataFrame:
     """Filter popular-universe records to those at or before *decision_time*."""
     if records.empty:
         return records
@@ -269,6 +273,7 @@ def evaluate_eth_strategy(
     ohlcv_path: Path,
     popular_universe_dir: Path | None = None,
     popular_records: pd.DataFrame | None = None,
+    funding_alignment: tuple[FundingAlignmentRecord, ...] | None = None,
 ) -> EvaluationResult:
     """Run the ETH single-asset evaluation.
 
@@ -282,6 +287,12 @@ def evaluate_eth_strategy(
     popular_records:
         Pre-loaded popular-universe records DataFrame.  Takes precedence over
         ``popular_universe_dir``.
+    funding_alignment:
+        Optional immutable tuple of causal :class:`FundingAlignmentRecord`
+        entries.  When provided, ``classify_market_cycle`` applies the
+        point-in-time funding evidence to the weighted variant's multiplier
+        only.  The baseline variant is never affected.  ``None`` (default)
+        produces byte-identical output to the pre-funding behaviour.
 
     Returns
     -------
@@ -333,9 +344,7 @@ def evaluate_eth_strategy(
 
     # --- Generate signals ----------------------------------------------
     try:
-        signals = adapt_confluence_signals(
-            frame, asset="ETHUSDT", horizon=HORIZON
-        )
+        signals = adapt_confluence_signals(frame, asset="ETHUSDT", horizon=HORIZON)
     except Exception as exc:
         return _error_result(
             f"Signal generation failed: {exc}",
@@ -380,6 +389,8 @@ def evaluate_eth_strategy(
 
     # Track multipliers for audit and current signal
     signal_multipliers: list[dict[str, Any]] = []
+    funding_applied_count = 0
+    latest_funding_source_sha: str | None = None
 
     for sig in signals:
         # Get ATR at the signal's decision time
@@ -402,7 +413,7 @@ def evaluate_eth_strategy(
         stop_dist = STOP_ATR_MULTIPLE * Decimal(str(atr_val))
         target_dist = stop_dist * TARGET_RR_RATIO
 
-        # --- Baseline: fixed 100U ---
+        # --- Baseline: fixed 100U (never affected by funding) ---
         baseline_events.append(
             SignalEvent(
                 timestamp=sig.decision_time,
@@ -422,26 +433,36 @@ def evaluate_eth_strategy(
             mult = 0.0
             cycle_label = "insufficient_evidence"
             cycle_conf = 0.0
+            funding_source_sha: str | None = None
         else:
             try:
-                state = classify_market_cycle(records_through_t)
+                state = classify_market_cycle(
+                    records_through_t, funding_alignment=funding_alignment
+                )
                 mult = cycle_multiplier(state.label.value, state.confidence)
                 cycle_label = state.label.value
                 cycle_conf = state.confidence
+                raw_funding_sha = state.evidence.get("funding_alignment_source_sha256")
+                funding_source_sha = raw_funding_sha if isinstance(raw_funding_sha, str) else None
+                if funding_source_sha is not None:
+                    funding_applied_count += 1
+                    latest_funding_source_sha = funding_source_sha
             except Exception:
                 mult = 0.0
                 cycle_label = "insufficient_evidence"
                 cycle_conf = 0.0
+                funding_source_sha = None
 
-        signal_multipliers.append(
-            {
-                "decision_time": sig.decision_time.isoformat(),
-                "direction": sig.direction,
-                "multiplier": mult,
-                "cycle_label": cycle_label,
-                "cycle_confidence": cycle_conf,
-            }
-        )
+        multiplier_record: dict[str, Any] = {
+            "decision_time": sig.decision_time.isoformat(),
+            "direction": sig.direction,
+            "multiplier": mult,
+            "cycle_label": cycle_label,
+            "cycle_confidence": cycle_conf,
+        }
+        if funding_source_sha is not None:
+            multiplier_record["funding_alignment_source_sha256"] = funding_source_sha
+        signal_multipliers.append(multiplier_record)
 
         weighted_notional = (INITIAL_EQUITY * Decimal(str(mult))).quantize(Decimal("0.01"))
         if weighted_notional > 0:
@@ -499,11 +520,19 @@ def evaluate_eth_strategy(
     # Latest cycle state for recommendation
     if not popular_records.empty:
         try:
-            latest_state = classify_market_cycle(popular_records)
+            latest_state = classify_market_cycle(
+                popular_records, funding_alignment=funding_alignment
+            )
             latest_mult = cycle_multiplier(latest_state.label.value, latest_state.confidence)
             latest_label = latest_state.label.value
             latest_conf = latest_state.confidence
             latest_sha = latest_state.evidence_sha256
+            raw_latest_funding_sha = latest_state.evidence.get("funding_alignment_source_sha256")
+            latest_funding_sha = (
+                raw_latest_funding_sha if isinstance(raw_latest_funding_sha, str) else None
+            )
+            if latest_funding_sha is not None:
+                latest_funding_source_sha = latest_funding_sha
         except Exception:
             latest_mult = 0.0
             latest_label = "insufficient_evidence"
@@ -576,6 +605,8 @@ def evaluate_eth_strategy(
         cycle_confidence=latest_conf,
         cycle_multiplier=latest_mult,
         cycle_evidence_sha256=latest_sha,
+        funding_alignment_source_sha256=latest_funding_source_sha,
+        funding_alignment_applied_signal_count=funding_applied_count,
         recommendation_participate=participate,
         recommendation_max_invest=max_invest,
         recommendation_reason=reason,
