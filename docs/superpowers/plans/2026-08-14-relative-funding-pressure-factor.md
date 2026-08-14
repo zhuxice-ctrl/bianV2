@@ -307,4 +307,3 @@ git push -u origin codex/relative-funding-pressure-factor
 - [ ] 新 ID 在 FactorSpec、列、diagnostics、registry artifact 和证据中一致。
 - [ ] `holdout_accessed` 始终为 false，没有 ledger、paper run、订单、密钥或下载。
 - [ ] 不自动合并 `main`。
-
