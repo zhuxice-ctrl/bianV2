@@ -76,36 +76,47 @@
 - 单币 `missing`/`error` 不改变主研究状态
 - 异常兜底包含所有 v1 字段 + 新空列表
 
-## 样本区间
+## 样本区间与真实本地运行（2026-08-14）
 
-ETH 4H CSV（`data/ETHUSDT_4h.csv`）覆盖从 `2025-07-26 20:00:00 UTC` 到最新可用 K 线。精确的样本起止时间和指标值需在目标机器上首次运行后确定。
+ETH 4H CSV（`data/ETHUSDT_4h.csv`）实际评估区间为 `2025-07-26 20:00:00 UTC` 至 `2026-07-26 16:00:00 UTC`。
+
+- 输入 SHA-256：`305b93afd9360b0cc10b4063c030e98b01adbb8a509c1a8150248937bd87edf7`。
+- 结果 artifact SHA-256：`96adfc5e2c2bc98ba5f93e8c8ab0fc5650d86383699727372422522cbde5e9ea`。
+- 基准：期末权益 `74.419547`，总收益 `-0.255805`，最大回撤 `-0.431893`，胜率 `0.263889`，交易数 `72`，手续费后净利润 `-25.580453`。
+- Funding 加权：期末权益 `93.258960`，总收益 `-0.067410`，最大回撤 `-0.087652`，胜率 `0.125000`，交易数 `8`，手续费后净利润 `-6.741040`。
+- Funding 来源 SHA-256：`1417f8c91e558755b78cb5f013596e848e9823cc16641769cd404b756aba9318`；应用信号数：`165`。
+- 最新信号：`long`；当前周期 `neutral`、置信度 `0.483176`、风险乘数 `0.0`；因此建议参与为 `false`，最大建议投入 `0U`。
+
+这些是只读研究结果；不构成 Factor Approved、Holdout、paper 或实盘批准。
 
 ## 测试结果
 
-**沙箱限制：** 1 核沙箱运行 Python 3.10，项目要求 3.11，且缺少 `pyyaml` 等依赖，无法在沙箱中执行 pytest/ruff/mypy。
+**Windows 验证结果（2026-08-14）：** 聚焦集为 **69 passed, 7 skipped**；相关 Ruff、格式检查、mypy（93 个源文件）和 `git diff --check` 均通过。
 
-**需在目标机器验证的命令：**
+已执行的命令：
 
 ```bash
 uv sync --all-extras
-pytest tests/unit/reporting/test_research_protocol.py \
+uv run pytest -p no:cov tests/unit/data/test_funding_alignment.py \
+       tests/unit/regimes/test_market_cycle.py \
+       tests/unit/backtest/test_market_cycle_comparison.py \
        tests/unit/reporting/test_research_terminal.py \
        tests/unit/backtest/test_single_asset_strategy.py \
        tests/unit/reporting/test_single_asset_artifacts.py \
        tests/integration/dashboard/test_research_page.py -q
-ruff check src/bian_quant/backtest/single_asset_strategy.py \
+uv run ruff check src/bian_quant/backtest/single_asset_strategy.py \
+           src/bian_quant/backtest/market_cycle_comparison.py \
            src/bian_quant/reporting/single_asset_artifacts.py \
            src/bian_quant/reporting/research_protocol.py \
            src/bian_quant/reporting/research_terminal.py
-mypy src/bian_quant
-python dashboard/server.py  # GET /api/research/latest → 200; GET /research → ETH 面板可见
+uv run mypy src/bian_quant
+git diff --check
 ```
 
 ## 未解决问题
 
-1. **完整测试执行：** 沙箱环境（Python 3.10 + 缺依赖）无法运行 pytest/ruff/mypy，需在目标机器（Python 3.11 + `uv sync --all-extras`）验证
-2. **真实 OHLCV 指标：** 评估器在目标机器首次运行 `data/ETHUSDT_4h.csv` 后才会产生实际收益/回撤/胜率等数值
-3. **前缀因果审计：** 需在目标机器执行因果审计脚本验证字节级一致
+1. **完整测试执行：** 默认全量 pytest 在此 Windows 输出环境仍可能超时；本证据只声明上述聚焦集已通过。
+2. **合并建议：** 仍需人工确认完整质量门和审计证据后再合并 main；不自动合并。
 
 ## 安全边界
 

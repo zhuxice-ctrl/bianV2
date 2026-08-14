@@ -12,6 +12,7 @@
 
 ## Operating Contract
 
+- Before any task action, read `docs/AILY_EXECUTION_RULES.md` in full and follow its Git, module-boundary, contract, causality, validation, and evidence requirements.
 - Work only on `codex/eth-cycle-weighted-strategy`; do not switch to `main`.
 - Preserve the untracked `.superpowers/` directory. Do not add it to Git.
 - Never use exchange credentials, private endpoints, order routes, leverage, websocket code, or data downloads.
@@ -381,4 +382,3 @@ Merge is permitted only when Task 1 real-data evidence is `ok`, all relevant tes
 - Each vertical slice can be tested and committed independently.
 - Missing Funding evidence degrades gracefully; it never fabricates a passing research result.
 - The branch is left ready for review, not automatically merged.
-

@@ -92,11 +92,22 @@
 
 无 API Key、无交易所连接、无下单、无数据下载、无纸面/实盘交易。资金费率数据来自本地 Canonical Parquet lake，不涉及任何网络请求。
 
+## Task 4：传播后的真实本地运行（2026-08-14）
+
+- 终端响应：`schema_version=research-terminal-v1`，`state=passed`。
+- 周期：`neutral`，置信度 `0.483176`，决策时间 `2026-07-26T00:00:00+00:00`。
+- Funding：`status=ok`，评分 `-0.011111112`，正 Funding 占比 `0.55555556`，覆盖率 `0.9375`，来源 SHA-256：`1417f8c91e558755b78cb5f013596e848e9823cc16641769cd404b756aba9318`。
+- 100U 基准：期末权益 `168.775314`，总收益 `0.687753`，最大回撤 `-0.736500`，交易数 `1852`。
+- 100U Funding 加权：期末权益 `97.469283`，总收益 `-0.025307`，最大回撤 `-0.092472`，交易数 `83`，应用 Funding 决策 `547` 次。
+- 100U 比较 artifact SHA-256：`a0116107ca3c669cb7966079a4d2e12116d3e727a8e801f9559b3f0106860ef9`。
+
+这些是研究结果，不构成因子晋级、Holdout、paper 或实盘批准。
+
 ## 测试结果
 
 **Windows 验证结果（2026-08-14）：**
 
-- `uv run pytest -p no:cov`（Funding、市场周期、三币比较、ETH、终端和页面聚焦集）：**44 passed, 5 skipped**。
+- `uv run pytest -p no:cov`（Funding、市场周期、三币比较、ETH、终端、artifact 和页面聚焦集）：**69 passed, 7 skipped**。
 - `uv run ruff check`（Funding、regime、比较、终端与契约文件）：通过。
 - `uv run mypy src/bian_quant`：通过，检查 **93** 个源文件。
 - 聚合器实测生成 `research-terminal-v1` 的 `passed` 响应，`market_cycle.funding_alignment.status == "ok"`。

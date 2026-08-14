@@ -155,3 +155,10 @@ response with Funding alignment status `ok`.
 
 **No auto-merge:** All gates passing → report merge recommendation only; do not
 merge to main automatically.
+
+## 2026-08-14 — Funding propagation real verification
+
+- Funding records are now built once at the reporting composition root and passed as the same immutable tuple to the 100U comparison and ETH evaluator; neither backtest reads Canonical Parquet directly.
+- Local aggregation returned `research-terminal-v1` / `passed`; Funding alignment was `ok` with source SHA `1417f8c91e558755b78cb5f013596e848e9823cc16641769cd404b756aba9318`.
+- Funding was applied to 547 100U decisions and 165 ETH signal decisions. Focused verification passed: 69 tests passed, 7 skipped; Ruff, targeted format checks, mypy over 93 source files, and `git diff --check` passed.
+- The measured ETH and 100U results are recorded in the dated evidence documents. They remain research-only results and do not authorize Holdout, factor approval, paper trading, or live trading.
