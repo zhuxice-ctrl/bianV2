@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from bian_quant.data.acquisition import (
     SourceGranularity,
     SourceObject,
     SourcePlanAudit,
+    source_plan_hash,
 )
 from bian_quant.data.canonicalize import write_canonical_partition
 from bian_quant.data.catalog import DatasetCatalog
@@ -23,7 +25,6 @@ from bian_quant.data.contracts import DatasetLayer, DatasetManifest
 from bian_quant.data.evidence_cutoff import canonical_plan_path
 from bian_quant.data.local_snapshot_recovery import (
     LocalSnapshotRecoveryStatus,
-    _source_plan_hash,
     preflight_local_snapshot_recovery,
 )
 
@@ -128,7 +129,7 @@ def _publish_inputs(
     duplicate_identity: bool = False,
 ) -> None:
     catalog = DatasetCatalog(config.catalog_path)
-    plan_hash = _source_plan_hash(SourcePlanAudit(sources, None, ()))
+    plan_hash = source_plan_hash(SourcePlanAudit(sources, None, ()))
     for index, source in enumerate(sources):
         frame = frames[source.identity_key]
         path = canonical_plan_path(
@@ -177,6 +178,20 @@ def _patch_plan(monkeypatch: pytest.MonkeyPatch, sources: tuple[SourceObject, ..
         "build_source_plan_audit",
         lambda config: SourcePlanAudit(sources, None, ()),
     )
+
+
+def test_source_plan_hash_is_stable_and_shared() -> None:
+    sources = _sources()
+    source_a, source_b = sources[0], sources[1]
+    plan = SourcePlanAudit((source_a, source_b), "a" * 64, ())
+    payload = {
+        "availability_manifest_sha256": plan.availability_manifest_sha256,
+        "object_identity_keys": [source_a.identity_key, source_b.identity_key],
+    }
+    expected = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert source_plan_hash(plan) == expected
 
 
 def test_preflight_accepts_unique_hashed_canonical_inputs(

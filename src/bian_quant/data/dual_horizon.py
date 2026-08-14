@@ -25,6 +25,7 @@ from bian_quant.data.acquisition import (
     SourceObject,
     build_source_plan_audit,
     check_disk_budget,
+    source_plan_hash,
     source_plan_payload,
 )
 from bian_quant.data.acquisition_failures import (
@@ -207,20 +208,6 @@ class FixtureDownloader:
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr(Path(member).name, "\n".join(rows) + "\n")
         return output.getvalue()
-
-
-def _source_plan_hash(
-    plan: tuple[SourceObject, ...], *, availability_manifest_sha256: str | None = None
-) -> str:
-    payload = json.dumps(
-        {
-            "availability_manifest_sha256": availability_manifest_sha256,
-            "object_identity_keys": [obj.identity_key for obj in plan],
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _directory_size(path: Path) -> int:
@@ -454,9 +441,7 @@ def prepare_dual_horizon(
 
     plan_audit = build_source_plan_audit(config)
     plan = plan_audit.objects
-    plan_hash = _source_plan_hash(
-        plan, availability_manifest_sha256=plan_audit.availability_manifest_sha256
-    )
+    plan_hash = source_plan_hash(plan_audit)
 
     # Register run
     registry_path = config.experiment_registry_path

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import calendar as _calendar
+import hashlib
+import json
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -440,6 +442,21 @@ class SourcePlanAudit:
     objects: tuple[SourceObject, ...]
     availability_manifest_sha256: str | None
     pre_listing_exclusions: tuple[dict[str, object], ...]
+
+
+def source_plan_hash(plan: SourcePlanAudit) -> str:
+    """Return the stable identity hash of a source plan audit.
+
+    The hash covers the availability manifest digest and the ordered source
+    identity keys.  It is shared by every data adapter so that Canonical
+    partitions and research snapshots agree on the current plan path.
+    """
+    payload = {
+        "availability_manifest_sha256": plan.availability_manifest_sha256,
+        "object_identity_keys": [source.identity_key for source in plan.objects],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _filter_pre_listing_periods(

@@ -12,9 +12,9 @@ from bian_quant.data.acquisition import (
     SourceGranularity,
     build_source_plan,
     build_source_plan_audit,
+    source_plan_hash,
     source_plan_payload,
 )
-from bian_quant.data.dual_horizon import _source_plan_hash
 
 CONFIG = Path("configs/experiments/dual_horizon_derivatives.yaml")
 POPULAR_CONFIG = Path("configs/experiments/popular_universe_100u.yaml")
@@ -273,9 +273,7 @@ def test_popular_plan_rejects_manifest_missing_a_required_key(tmp_path: Path) ->
             and entry["granularity"] == "daily"
         )
     ]
-    config.archive_availability_path.write_text(
-        yaml.safe_dump(manifest_data), encoding="utf-8"
-    )
+    config.archive_availability_path.write_text(yaml.safe_dump(manifest_data), encoding="utf-8")
 
     with pytest.raises(ValueError, match="ARCHIVE_AVAILABILITY_MISSING"):
         build_source_plan(config)
@@ -288,11 +286,7 @@ def test_actual_plan_hash_includes_availability_manifest_hash(tmp_path: Path) ->
     audit_b = build_source_plan_audit(config_b)
 
     assert audit_a.objects == audit_b.objects
-    assert _source_plan_hash(
-        audit_a.objects, availability_manifest_sha256=audit_a.availability_manifest_sha256
-    ) != _source_plan_hash(
-        audit_b.objects, availability_manifest_sha256=audit_b.availability_manifest_sha256
-    )
+    assert source_plan_hash(audit_a) != source_plan_hash(audit_b)
 
 
 def test_popular_plan_exclusions_are_audit_only(tmp_path: Path) -> None:

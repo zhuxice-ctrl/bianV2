@@ -18,6 +18,7 @@ from bian_quant.data.acquisition import (
     SourceObject,
     SourcePlanAudit,
     build_source_plan_audit,
+    source_plan_hash,
 )
 from bian_quant.data.catalog import CatalogEntry
 from bian_quant.data.contracts import DatasetLayer, DatasetManifest
@@ -157,15 +158,6 @@ def _raw_manifest_sha256(config: DualHorizonAcquisition, source: SourceObject) -
     return value if isinstance(value, str) else None
 
 
-def _source_plan_hash(plan: SourcePlanAudit) -> str:
-    payload = {
-        "availability_manifest_sha256": plan.availability_manifest_sha256,
-        "object_identity_keys": [source.identity_key for source in plan.objects],
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _canonical_input_set_sha(inputs: tuple[CanonicalRecoveryInput, ...]) -> str:
     payload = [
         {
@@ -270,7 +262,7 @@ def preflight_local_snapshot_recovery(
 ) -> LocalSnapshotRecoveryPreflight:
     """Inspect local Canonical inputs without creating or changing any file."""
     plan = _preflight_plan(config)
-    plan_hash = _source_plan_hash(plan)
+    plan_hash = source_plan_hash(plan)
     reasons: list[str] = []
     inputs: list[CanonicalRecoveryInput] = []
     names = {f"canonical-{source.dataset.value}-{source.interval}" for source in plan.objects}
