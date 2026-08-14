@@ -162,3 +162,10 @@ merge to main automatically.
 - Local aggregation returned `research-terminal-v1` / `passed`; Funding alignment was `ok` with source SHA `1417f8c91e558755b78cb5f013596e848e9823cc16641769cd404b756aba9318`.
 - Funding was applied to 547 100U decisions and 165 ETH signal decisions. Focused verification passed: 69 tests passed, 7 skipped; Ruff, targeted format checks, mypy over 93 source files, and `git diff --check` passed.
 - The measured ETH and 100U results are recorded in the dated evidence documents. They remain research-only results and do not authorize Holdout, factor approval, paper trading, or live trading.
+
+## 2026-08-14 — Relative Funding Pressure factor development slice
+
+- Added `relative_funding_pressure@1.0.0` as a pure cross-sectional Funding factor sourced only from locked research snapshots; the factor preserves missing values and audits stale, future, low-peer and zero-MAD exclusions.
+- Snapshot lineage now retains `funding_interval_hours`; development diagnostics include the factor's own exclusion evidence without changing OI delay gates, Candidate rules, Holdout access, paper, or live boundaries.
+- Focused verification passed: 67 tests passed, 7 skipped; Ruff, format, mypy over 93 source files, and `git diff --check` passed.
+- The actual development run `033e6f9f-e37e-4b5f-8e62-f5988a1bc833` was blocked at `SNAPSHOT_MISSING:macro-1d`. No factor lifecycle evidence was produced, no Holdout was accessed, and no performance conclusion is permitted. See `docs/evidence/2026-08-14-relative-funding-pressure-factor-run.md`.
