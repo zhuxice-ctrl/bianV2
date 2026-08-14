@@ -10,7 +10,7 @@
 
 当前的价格/成交量筛选已对 5 个因子给出 `observed`，没有 Candidate；历史衍生品因子研究曾因可用快照不足而停止。已经合并的 Funding-alignment 切片证明本地 Canonical Funding 数据可以因果读取，并且由 `data/funding_alignment.py` 提供的是每日市场整体证据，适用于 regime 打分。
 
-本设计不把该整体证据复制成横截面因子。相对 Funding 压力必须基于每个资产自己的最新可用 Funding，并在每一个决策时点同可用的同伴进行比较。因此新增一个窄的、只读的数据适配器；它不改变 `FundingAlignmentRecord`、市场周期分数或当前仓位乘数。
+本设计不把该整体证据复制成横截面因子。相对 Funding 压力必须基于每个资产自己的最新可用 Funding，并在每一个决策时点同可用的同伴进行比较。已有 `data/snapshots.py` 已将 Canonical Funding 因果并入具有内容标识的研究快照；本切片复用该契约，不新增旁路数据读取。它不改变 `FundingAlignmentRecord`、市场周期分数或当前仓位乘数。
 
 ## 因子定义
 
@@ -38,18 +38,19 @@
 
 ```text
 Canonical Funding Parquet
-  → data/funding_pressure.py（点时快照与不可变证据）
+  → data/snapshots.py（既有点时 Funding 加入 research snapshot）
+  → immutable micro-4h research snapshot
   → factors/derivatives.py（纯横截面变换）
   → factors/dual_horizon.py（FactorSpec 与既有筛选帧）
   → research/dual_horizon.py、screening/registry（既有 walk-forward 与生命周期）
   → reporting artifact / read-only API / Dashboard
 ```
 
-### 数据层
+### 已有数据契约
 
-新模块 `src/bian_quant/data/funding_pressure.py` 只读取本地 Canonical Parquet，构造不可变的点时 Funding 快照记录。记录必须包含资产、`event_time`、`available_time`、Funding 值、声明的 Funding 间隔、覆盖率和来源 SHA-256。适配器负责：路径解析、UTC 规范化、缺失/陈旧数据识别、按时间排序和内容哈希。
+`src/bian_quant/data/snapshots.py` 已负责从本地 Canonical Funding 建立 point-in-time research snapshot，并写入 `funding_rate`、`funding_available_time` 与 `funding_interval_hours`。本切片只消费已锁定的 `micro-4h`/`micro-1h` snapshot；其 snapshot ID、内容哈希、UTC 时间和可用性语义是因子输入血缘的唯一来源。
 
-它不得导入 `factors`、`regimes`、`backtest`、`reporting`、`dashboard`、交易所客户端或网络库。`data/funding_alignment.py` 保持每日整体市场证据的职责，不因本设计承担资产级快照计算。
+因此不新增直接读取 Parquet 的数据模块，也不改变 `data/funding_alignment.py` 的每日市场证据职责。`factors` 不读取路径，`research` 不绕过 Catalog，`backtest`、`reporting` 和 `dashboard` 不读取 Funding 文件。
 
 ### 纯因子层
 
@@ -70,7 +71,7 @@ Canonical Funding Parquet
 | 少于 2 个可用资产 | 缺失 | 可完成但覆盖不足时为 `observed` | `INSUFFICIENT_PEER_COVERAGE` |
 | Funding 陈旧或资产无数据 | 对应资产缺失 | 可完成 | `FUNDING_UNAVAILABLE_OR_GAPPED` 或 `FUNDING_ASSET_MISSING` |
 | MAD 为零 | 缺失 | 可完成 | `ZERO_CROSS_SECTIONAL_MAD` |
-| Canonical 根目录或文件不可读 | 不生成该因子帧 | 父研究按既有防御语义降级 | 明确 `missing`/`error`，不得伪造通过 |
+| 研究快照缺少 Funding 字段或不可读 | 不生成该因子帧 | 父研究按既有防御语义降级 | 明确 `missing`/`error`，不得伪造通过 |
 | 合格的真实研究数据 | 按公式输出有限值 | 由既有门槛判定 | canonical JSON 与 SHA-256 |
 
 因子 ID、版本、公式、方向、必需列、失败条件和父因子集合通过不可变 `FactorSpec` 注册。新字段一律加性；`research-terminal-v1` 现有字段和 HTTP 200 响应行为不可删除、重命名或变为可空。
@@ -86,7 +87,7 @@ Canonical Funding Parquet
 ## 验收标准
 
 1. 新因子在合成样本上精确符合中位数/MAD/截断定义，缺失和零 MAD 不产生伪零值。
-2. 数据适配器与纯因子函数各有独立单元测试；依赖方向保持 `data → factors → research/reporting → dashboard`。
+2. 已有 snapshot 的 Funding 可用性契约与纯因子函数各有独立测试；依赖方向保持 `data → factors → research/reporting → dashboard`。
 3. 无新输入时，已有因子帧和研究产物维持既有行为；现有 Funding-alignment 市场周期和 ETH/100U 回测不受影响。
 4. 前缀因果测试覆盖未来 Funding、未来同伴值和未来可用时间三种变更。
 5. 研究测试、Ruff、Ruff format、mypy、`git diff --check` 和真实离线聚合全部通过，并在证据文档中记录实际命令、哈希、覆盖率、指标和状态。
