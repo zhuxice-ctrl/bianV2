@@ -94,3 +94,94 @@ def oi_change(open_interest: pd.Series, *, periods: int) -> pd.Series:
 def leverage_crowding(funding_z: pd.Series, oi_delta: pd.Series) -> pd.Series:
     """Interaction of positive funding z-score and OI growth."""
     return (funding_z * oi_delta.clip(lower=0.0)).rename("leverage_crowding")
+
+
+def relative_funding_pressure(
+    frame: pd.DataFrame,
+) -> tuple[pd.Series, pd.Series]:
+    """Cross-sectional relative funding pressure factor.
+
+    For each decision time ``available_time`` the function collects the
+    latest canonical funding record of every asset whose
+    ``funding_available_time <= available_time`` and whose age has not
+    exceeded the declared ``funding_interval_hours``.  When at least two
+    peers are available it computes a robust z-score against the
+    cross-sectional median and MAD; otherwise the value is missing with a
+    structured exclusion reason.
+
+    The function is pure: it never reads paths, writes artifacts, modifies
+    the input frame, or imports research/dashboard modules.
+    """
+    required = {
+        "asset",
+        "available_time",
+        "funding_available_time",
+        "funding_interval_hours",
+        "funding_rate",
+    }
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"relative funding frame missing columns: {sorted(missing)}")
+    working = frame.copy()
+    working["available_time"] = pd.to_datetime(
+        working["available_time"], utc=True, errors="coerce", format="mixed"
+    )
+    working["funding_available_time"] = pd.to_datetime(
+        working["funding_available_time"], utc=True, errors="coerce", format="mixed"
+    )
+    if working.duplicated(["asset", "available_time"]).any():
+        raise ValueError("duplicate asset/available_time rows")
+    working["funding_rate"] = pd.to_numeric(working["funding_rate"], errors="coerce")
+    working["funding_interval_hours"] = pd.to_numeric(
+        working["funding_interval_hours"], errors="coerce"
+    )
+
+    values = np.full(len(working), np.nan, dtype=float)
+    reasons = np.full(len(working), pd.NA, dtype=object)
+
+    rate = working["funding_rate"].to_numpy(dtype=float)
+    interval = working["funding_interval_hours"].to_numpy(dtype=float)
+    available_time = working["available_time"]
+    funding_available_time = working["funding_available_time"]
+    available = (
+        available_time.notna().to_numpy()
+        & funding_available_time.notna().to_numpy()
+        & (funding_available_time <= available_time).to_numpy()
+    )
+    finite_rate = np.isfinite(rate)
+    finite_interval = np.isfinite(interval)
+    positive_interval = finite_interval & (interval > 0)
+    max_interval_hours = np.iinfo(np.int64).max / pd.Timedelta(hours=1).value
+    representable_interval = positive_interval & (interval <= max_interval_hours)
+    age = available_time - funding_available_time
+    interval_td = pd.to_timedelta(
+        pd.Series(interval).where(representable_interval), unit="h", errors="coerce"
+    )
+    fresh = age.to_numpy() <= interval_td.to_numpy()
+    valid = available & finite_rate & representable_interval & fresh
+
+    reasons[~valid] = "FUNDING_UNAVAILABLE_OR_GAPPED"
+
+    for positions in working.groupby("available_time", sort=True).indices.values():
+        valid_positions = positions[valid[positions]]
+        valid_rates = rate[valid_positions]
+        if valid_rates.size < 2:
+            reasons[valid_positions] = "INSUFFICIENT_PEER_COVERAGE"
+            continue
+        median_rate = float(np.median(valid_rates))
+        mad = float(np.median(np.abs(valid_rates - median_rate)))
+        if mad <= 0:
+            reasons[valid_positions] = "ZERO_CROSS_SECTIONAL_MAD"
+            continue
+        scale = 1.4826 * mad
+        values[valid_positions] = np.clip((valid_rates - median_rate) / scale, -5.0, 5.0)
+
+    return (
+        pd.Series(values, index=frame.index, name="relative_funding_pressure"),
+        pd.Series(
+            reasons,
+            index=frame.index,
+            dtype="object",
+            name="relative_funding_pressure_exclusion_reason",
+        ),
+    )

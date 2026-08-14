@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 from pandas.testing import assert_series_equal
 
 from bian_quant.factors.derivatives import (
@@ -11,6 +12,7 @@ from bian_quant.factors.derivatives import (
     funding_zscore,
     leverage_crowding,
     oi_change,
+    relative_funding_pressure,
 )
 
 
@@ -130,3 +132,194 @@ def test_asof_join_multi_asset() -> None:
     assert btc_rows.iloc[1]["funding_rate"] == 0.0002
     assert btc_rows.iloc[2]["funding_rate"] == 0.0002
     assert btc_rows.iloc[3]["funding_rate"] == 0.0002
+
+
+def _make_pressure_frame(
+    *,
+    rates: tuple[float, ...] = (0.0003, 0.0001, -0.0001),
+    assets: tuple[str, ...] = ("BTC", "ETH", "BNB"),
+    available_time: str = "2026-01-01 00:00",
+    funding_available_time: str = "2026-01-01 00:00",
+    interval_hours: float = 8.0,
+) -> pd.DataFrame:
+    at = pd.Timestamp(available_time, tz="UTC")
+    fat = pd.Timestamp(funding_available_time, tz="UTC")
+    return pd.DataFrame(
+        {
+            "asset": list(assets),
+            "available_time": [at] * len(assets),
+            "funding_available_time": [fat] * len(assets),
+            "funding_interval_hours": [interval_hours] * len(assets),
+            "funding_rate": list(rates),
+        }
+    )
+
+
+def _make_pressure_frame_multi() -> pd.DataFrame:
+    timestamps = pd.date_range("2026-01-01", periods=2, freq="4h", tz="UTC")
+    assets = ("BTC", "ETH", "BNB")
+    rates = (0.0003, 0.0001, -0.0001)
+    rows = []
+    for at in timestamps:
+        for asset, rate in zip(assets, rates, strict=True):
+            rows.append(
+                {
+                    "asset": asset,
+                    "available_time": at,
+                    "funding_available_time": at,
+                    "funding_interval_hours": 8.0,
+                    "funding_rate": rate,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_relative_funding_pressure_uses_median_and_mad() -> None:
+    frame = _make_pressure_frame()
+    values, reasons = relative_funding_pressure(frame)
+    scale = 1.4826 * 0.0002
+    assert values.tolist() == pytest.approx([0.0002 / scale, 0.0, -0.0002 / scale])
+    assert reasons.isna().all()
+
+
+def test_relative_funding_pressure_clips_to_five_sigma() -> None:
+    # Extreme outlier: BTC funding far above peers -> raw z-score exceeds 5
+    # and is clipped to +5.0; peers stay finite with NaN reasons.
+    frame = _make_pressure_frame(rates=(1.0, 0.0001, -0.0001))
+    values, reasons = relative_funding_pressure(frame)
+    assert values.iloc[0] == pytest.approx(5.0)
+    assert reasons.isna().all()
+
+
+def test_relative_funding_pressure_insufficient_peer_coverage() -> None:
+    frame = _make_pressure_frame()
+    # ETH and BNB funding arrive in the future -> only BTC is valid.
+    future = pd.Timestamp("2026-01-01 12:00", tz="UTC")
+    frame.loc[1, "funding_available_time"] = future
+    frame.loc[2, "funding_available_time"] = future
+    values, reasons = relative_funding_pressure(frame)
+    assert values.isna().all()
+    assert reasons.loc[0] == "INSUFFICIENT_PEER_COVERAGE"
+    assert reasons.loc[1] == "FUNDING_UNAVAILABLE_OR_GAPPED"
+    assert reasons.loc[2] == "FUNDING_UNAVAILABLE_OR_GAPPED"
+
+
+def test_relative_funding_pressure_future_or_gapped_records() -> None:
+    frame = _make_pressure_frame()
+    # BNB funding is stale: age (00:00 - prev-day 12:00 = 12h) > 8h interval.
+    frame.loc[2, "funding_available_time"] = pd.Timestamp("2025-12-31 12:00", tz="UTC")
+    values, reasons = relative_funding_pressure(frame)
+    assert pd.isna(values.loc[2])
+    assert reasons.loc[2] == "FUNDING_UNAVAILABLE_OR_GAPPED"
+    # BTC and ETH remain valid peers and get finite values.
+    assert values.loc[0] == pytest.approx((0.0003 - 0.0002) / (1.4826 * 0.0001))
+    assert values.loc[1] == pytest.approx((0.0001 - 0.0002) / (1.4826 * 0.0001))
+
+    # A future-available funding record is also gapped.
+    frame2 = _make_pressure_frame()
+    frame2.loc[2, "funding_available_time"] = pd.Timestamp("2026-01-01 12:00", tz="UTC")
+    v2, r2 = relative_funding_pressure(frame2)
+    assert r2.loc[2] == "FUNDING_UNAVAILABLE_OR_GAPPED"
+
+
+def test_relative_funding_pressure_zero_mad() -> None:
+    frame = _make_pressure_frame(rates=(0.0002, 0.0002, 0.0002))
+    values, reasons = relative_funding_pressure(frame)
+    assert values.isna().all()
+    assert (reasons == "ZERO_CROSS_SECTIONAL_MAD").all()
+
+
+def test_relative_funding_pressure_duplicate_rows_raises() -> None:
+    frame = _make_pressure_frame()
+    frame = pd.concat([frame, frame.iloc[[0]]], ignore_index=True)
+    with pytest.raises(ValueError, match="duplicate asset/available_time"):
+        relative_funding_pressure(frame)
+
+
+def test_relative_funding_pressure_detects_semantic_duplicate_times() -> None:
+    frame = _make_pressure_frame()
+    frame.loc[0, "available_time"] = "2026-01-01T00:00:00Z"
+    duplicate = frame.iloc[[0]].copy()
+    duplicate["available_time"] = "2025-12-31T19:00:00-05:00"
+    frame = pd.concat([frame, duplicate], ignore_index=True)
+    with pytest.raises(ValueError, match="duplicate asset/available_time"):
+        relative_funding_pressure(frame)
+
+
+def test_relative_funding_pressure_missing_columns_raises() -> None:
+    frame = _make_pressure_frame().drop(columns=["funding_interval_hours"])
+    with pytest.raises(ValueError, match="missing columns"):
+        relative_funding_pressure(frame)
+
+
+def test_relative_funding_pressure_does_not_mutate_input() -> None:
+    frame = _make_pressure_frame()
+    snapshot = frame.copy()
+    relative_funding_pressure(frame)
+    assert_series_equal(
+        frame["funding_rate"].astype(float),
+        snapshot["funding_rate"].astype(float),
+        check_names=False,
+    )
+    assert list(frame.columns) == list(snapshot.columns)
+
+
+def test_relative_funding_pressure_preserves_non_unique_index() -> None:
+    frame = _make_pressure_frame()
+    frame.index = pd.Index([7, 7, 9])
+    values, reasons = relative_funding_pressure(frame)
+    assert values.index.equals(frame.index)
+    assert reasons.index.equals(frame.index)
+    scale = 1.4826 * 0.0002
+    assert values.tolist() == pytest.approx([0.0002 / scale, 0.0, -0.0002 / scale])
+    assert reasons.isna().all()
+
+
+@pytest.mark.parametrize("interval", [np.nan, np.inf, 1e308, "not-a-number"])
+def test_relative_funding_pressure_invalid_interval_is_gapped(interval: object) -> None:
+    frame = _make_pressure_frame()
+    frame["funding_interval_hours"] = frame["funding_interval_hours"].astype(object)
+    frame.loc[0, "funding_interval_hours"] = interval
+    values, reasons = relative_funding_pressure(frame)
+    assert pd.isna(values.iloc[0])
+    assert reasons.iloc[0] == "FUNDING_UNAVAILABLE_OR_GAPPED"
+
+
+def test_relative_funding_pressure_unparseable_funding_time_is_gapped() -> None:
+    frame = _make_pressure_frame()
+    frame["funding_available_time"] = frame["funding_available_time"].astype(object)
+    frame.loc[0, "funding_available_time"] = "not-a-timestamp"
+    values, reasons = relative_funding_pressure(frame)
+    assert pd.isna(values.iloc[0])
+    assert reasons.iloc[0] == "FUNDING_UNAVAILABLE_OR_GAPPED"
+
+
+def test_relative_funding_pressure_prefix_invariance() -> None:
+    base = _make_pressure_frame_multi()
+    cutoff = pd.Timestamp("2026-01-01 00:00", tz="UTC")
+    future = base.copy()
+    # Mutate rates and availability strictly after the cutoff, then append
+    # an entire future cross-section.  Neither can affect the prefix.
+    future.loc[future["available_time"] > cutoff, "funding_rate"] *= -100.0
+    future.loc[future["available_time"] > cutoff, "funding_available_time"] = pd.Timestamp(
+        "2026-01-01 12:00", tz="UTC"
+    )
+    appended = _make_pressure_frame(
+        available_time="2026-01-01 08:00",
+        funding_available_time="2026-01-01 08:00",
+    )
+    future = pd.concat([future, appended], ignore_index=True)
+    v_base, r_base = relative_funding_pressure(base)
+    v_future, r_future = relative_funding_pressure(future)
+    base_mask = base["available_time"] <= cutoff
+    future_mask = future["available_time"] <= cutoff
+    assert_series_equal(
+        v_base[base_mask].reset_index(drop=True),
+        v_future[future_mask].reset_index(drop=True),
+        check_names=False,
+    )
+    assert_series_equal(
+        r_base[base_mask].reset_index(drop=True),
+        r_future[future_mask].reset_index(drop=True),
+        check_names=False,
+    )
