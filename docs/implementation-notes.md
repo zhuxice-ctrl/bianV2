@@ -175,3 +175,16 @@ merge to main automatically.
 - Added a data-layer, read-only recovery preflight that resolves Canonical inputs by current source-plan path, source identity and Raw content lineage; it does not relax the research snapshot resolver or mutate old artifacts.
 - The actual popular-universe preflight validated 14,879 local Canonical inputs, then blocked on 16 missing 2026-07-26 1D OHLCV inputs and one missing TONUSDT July Funding Raw manifest.
 - No new research snapshot, development analysis, Holdout ledger, paper run, network download or trading action occurred. The exact command and stable reason codes are in `docs/evidence/2026-08-14-local-snapshot-recovery-run.md`.
+
+## 2026-08-15 — Causal Canonical-input repair correction
+
+- Raw acquisition identity remains complete and stable. A shared data-layer
+  selector now excludes a daily 1d archive from Canonical repair/preflight only
+  until its 23:59:59.999 UTC close is available; it does not exclude intraday
+  bars from the same daily archive.
+- The actual offline repair and strict preflight validated 14,879 Canonical
+  inputs and left exactly one blocker: the absent TONUSDT July 2026 Funding
+  Raw lineage. No Canonical, Catalog or research file changed byte-for-byte.
+- See `docs/evidence/2026-08-15-local-data-availability-repair-run.md`. This
+  remains a stop gate for recovery, development analysis, Holdout, paper and
+  live work.

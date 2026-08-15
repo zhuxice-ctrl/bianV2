@@ -313,6 +313,17 @@ git push -u origin codex/relative-funding-pressure-factor
 - [ ] pytest, Ruff, format, mypy and git diff --check passed.
 - [ ] Current branch pushed; main is not merged.
 
+## 2026-08-15 causal input-selection amendment
+
+The actual repair showed that the sixteen listed daily 1d OHLCV archives cannot
+produce an eligible row at the configured `2026-07-26T19:59:59.999Z` cutoff:
+their daily close is available at `23:59:59.999Z`. The implementation therefore
+keeps the complete Raw acquisition plan and its plan hash stable, while
+`canonical_input_sources(...)` excludes only those unclosed 1d sources from
+Canonical repair and strict preflight. The actual strict preflight consequently
+has one blocker, the TONUSDT Funding Raw lineage. See
+`docs/evidence/2026-08-15-local-data-availability-repair-run.md`.
+
 ## Separate authorization gate: TONUSDT Funding
 
 This plan does not authorize network access. After Task 3, create a new, narrow plan only if the user explicitly approves a download of this single object:

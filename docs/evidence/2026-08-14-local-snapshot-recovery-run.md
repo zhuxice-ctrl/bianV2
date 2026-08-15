@@ -93,10 +93,10 @@ Actual result: `81 passed` in 222.54 seconds; Ruff passed; all seven task files
 were already formatted; mypy passed for 95 source files; and `git diff --check`
 passed.
 
-## Conclusion
+## Historical conclusion
 
-The snapshot resolver remains strict and was not changed. The correct next
-action is to obtain the 16 missing local 1D Canonical inputs and the missing
-TONUSDT Raw manifest through a separately approved data-availability slice.
-Until then, recovery, development screening, Holdout, paper and live work are
-stopped.
+This was the correct conclusion for the 2026-08-14 source-plan semantics. It
+was superseded on 2026-08-15 after a causal input-selection correction: the
+sixteen unclosed daily 1d bars are not Canonical inputs at this cutoff. The
+remaining stop gate is only the missing TONUSDT Raw lineage; see
+`docs/evidence/2026-08-15-local-data-availability-repair-run.md`.
