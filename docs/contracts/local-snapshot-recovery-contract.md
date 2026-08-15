@@ -74,6 +74,15 @@ identities are intentionally absent from the eligible source set and must
 remain visible to callers; READY does not authorize Funding imputation,
 fallback APIs, or a claim that the excluded source was observed.
 
+When recovery proceeds from a READY preflight, the exact ordered
+`excluded_source_ids` tuple must be copied without reinterpretation into the
+RunManifest config, `data-acquisition.json`, `data-quality.json`, the
+`LocalSnapshotRecoveryResult`, and each of the four main research snapshot
+`config_json` values. OI delay-view configs may omit the field because their
+lineage is the four main snapshots; their parent set must still resolve to
+those snapshots. This propagation is evidence of a documented data gap, not a
+Funding value or a substitute input.
+
 ## Side-effect and lineage boundary
 
 Preflight must not call `DatasetCatalog.register`, `publish_snapshot`, a

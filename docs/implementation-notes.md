@@ -201,3 +201,20 @@ merge to main automatically.
   fallback API was used.
 - Actual output is recorded in
   `docs/evidence/2026-08-15-tonusdt-source-exclusion-run.md`.
+
+## 2026-08-15 - Local recovery evidence with permanent exclusion
+
+- Recovery commit `dd3c2b419b2b01a00a9f87962a3e2777839cdd72` propagates
+  `excluded_source_ids` into the RunManifest config, acquisition/quality
+  artifacts, the recovery result, and all four main research snapshot configs.
+- Local recovery run `f8fabdda-c540-4d62-8272-5412d8bb7924` passed with 14,879
+  Canonical parents and input-set SHA
+  `fb6c5d3599dee1bf8018143df7c09a5d2f3cdb6047c091913ce9d7f24bb6f094`.
+- It published four main snapshots and three OI-delay snapshots. The protected
+  baseline audit found 7 expected research Parquet additions, 0 removals, and
+  only the two expected Catalog index changes; existing Canonical, Raw, and
+  research files stayed byte-identical.
+- Verification passed: 60 tests, Ruff, format, mypy (97 source files), and
+  `git diff --check`. No network download, development analysis, Holdout,
+  paper, live, main merge, or remote push occurred. Full evidence is in
+  `docs/evidence/2026-08-15-local-snapshot-recovery-with-exclusion-run.md`.
