@@ -506,6 +506,43 @@ class TestRunDualHorizonScreening:
         with FactorRegistry(registry_path) as registry:
             assert registry.history("momentum_24", "1.0.0") == history_before
 
+    def test_candidate_ids_do_not_promote_development_lifecycle(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        import json
+
+        import bian_quant.research.dual_horizon as research
+
+        def forced_gates(
+            names: list[str], *_args: Any, **_kwargs: Any
+        ) -> tuple[dict[str, list[str]], dict[str, dict[str, Any]], list[str]]:
+            reasons = {name: ["ALL_DEVELOPMENT_GATES_PASSED"] for name in names}
+            diagnostics = {name: {"reason_codes": reasons[name]} for name in names}
+            return reasons, diagnostics, ["momentum_24"]
+
+        monkeypatch.setattr(research, "_apply_gates", forced_gates)
+        registry_path = tmp_path / "factor-registry.sqlite"
+        result = run_dual_horizon_screening(
+            build_derivatives_factor_frame(
+                bars_fixture(), funding_fixture(), oi_fixture(), delay=5
+            ),
+            config={
+                **screening_config(tmp_path),
+                "run_id": "candidate-state-guard",
+                "code_sha": "a" * 40,
+                "factor_registry_path": registry_path,
+                "development_start": "2025-12-01T00:00:00Z",
+                "development_end": "2026-02-01T00:00:00Z",
+            },
+        )
+
+        assert result.candidate_factor_ids == ("momentum_24",)
+        assert result.artifact_path is not None
+        payload = json.loads(result.artifact_path.read_text(encoding="utf-8"))
+        assert payload["planned_lifecycle_states"]["momentum_24"] == "observed"
+        with FactorRegistry(registry_path) as registry:
+            assert registry.state("momentum_24", "1.0.0") is FactorState.OBSERVED
+
     def test_generator_runs_only_after_all_nine_interpretable_factors(
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
