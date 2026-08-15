@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -11,6 +12,8 @@ from bian_quant.factors.dual_horizon import dual_horizon_factor_specs
 from bian_quant.factors.evaluate import FactorEvaluation
 from bian_quant.factors.multiple_testing import benjamini_hochberg_details
 from bian_quant.factors.redundancy import ClusterResult, IncrementalResult
+from bian_quant.factors.registry import FactorRegistry
+from bian_quant.factors.spec import FactorState
 
 
 def _evaluations(name: str) -> list[FactorEvaluation]:
@@ -141,3 +144,20 @@ def test_relative_funding_pressure_exclusion_counts_are_audited() -> None:
             "ZERO_CROSS_SECTIONAL_MAD": 1,
         }
     }
+
+
+def test_development_evidence_never_promotes_candidate(tmp_path: Path) -> None:
+    registry = FactorRegistry(tmp_path / "factors.sqlite")
+    try:
+        spec = dual_horizon_factor_specs()[0]
+        registry.register(spec, code_sha="test-sha")
+        research._transition_after_evidence(
+            registry,
+            {spec.factor_id: spec},
+            {spec.factor_id},
+            {spec.factor_id},
+            evidence_run_id="development-run",
+        )
+        assert registry.state(spec.factor_id, spec.version) is FactorState.OBSERVED
+    finally:
+        registry.close()

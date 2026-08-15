@@ -177,13 +177,7 @@ def run_dual_horizon_screening(
 
     completed_ids = set(factor_names) if any(context.folds for context in contexts) else set()
     planned_states = {
-        name: (
-            FactorState.CANDIDATE.value
-            if name in candidates
-            else FactorState.OBSERVED.value
-            if name in completed_ids
-            else FactorState.RESEARCHING.value
-        )
+        name: FactorState.OBSERVED.value if name in completed_ids else FactorState.RESEARCHING.value
         for name in factor_names
     }
     for name, state in planned_states.items():
@@ -729,16 +723,6 @@ def _transition_after_evidence(
                 spec.factor_id,
                 spec.version,
                 FactorState.OBSERVED,
-                evidence_run_id=evidence_run_id,
-            )
-        if (
-            name in candidates
-            and registry.state(spec.factor_id, spec.version) == FactorState.OBSERVED
-        ):
-            registry.transition(
-                spec.factor_id,
-                spec.version,
-                FactorState.CANDIDATE,
                 evidence_run_id=evidence_run_id,
             )
 
