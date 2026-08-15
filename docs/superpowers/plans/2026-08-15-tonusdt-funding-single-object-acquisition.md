@@ -3,6 +3,8 @@
 > **Superseded:** The archive returned HTTP 404. Do not execute the network
 > tasks in this document. The implemented path is the data-layer permanent
 > exclusion recorded in `docs/evidence/2026-08-15-tonusdt-source-exclusion-run.md`.
+> The exclusion path intentionally produces 14,879 eligible inputs; all
+> 14,880-input expectations below are historical network-path expectations.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` or `executing-plans` task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -259,7 +261,9 @@ Catalog row may be created by existing adapters. No research file may change.
   '@ | uv run python -
   ```
 
-  Expected: `status=ready`, `inputs=14880`, `parents=14880`, a non-empty
+  Historical network-path expectation: `status=ready`, `inputs=14880`,
+  `parents=14880`. The implemented exclusion path instead produced
+  `inputs=14879`, `parents=14879`, a non-empty
   `input_set_sha256`, and `blocked_reasons=()`. `READY` is a stop point for
   this plan: do not call snapshot recovery, development analysis, Holdout,
   paper, or live code without a new user authorization.
@@ -358,7 +362,8 @@ append `docs/implementation-notes.md` only with actual results.
 - [ ] `download_verified` produced a verified Raw ZIP plus immutable sidecar.
 - [ ] No Raw/sidecar/Catalog/Canonical artifact was manually edited or overwritten.
 - [ ] Repair produced exactly one new Canonical snapshot and was idempotent.
-- [ ] Strict preflight is `READY` with 14,880 inputs and no blockers.
+- [x] Implemented exclusion path: strict preflight is `READY` with 14,879
+  eligible inputs and no blockers. The 14,880-input network path was not run.
 - [ ] No recovery publisher, analysis, Holdout, paper, live, main merge, branch deletion, or unapproved push occurred.
 - [ ] Evidence contains only actual outputs and the baseline comparison allows only the one Funding Canonical path plus the Catalog update.
 - [ ] Pytest, Ruff, format, mypy, and `git diff --check` passed before the documentation commit.
