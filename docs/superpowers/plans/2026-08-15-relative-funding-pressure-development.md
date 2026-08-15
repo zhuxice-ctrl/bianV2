@@ -191,17 +191,25 @@ Files: Development artifacts under var/artifacts/dual-horizon-popular-v1/<analys
 
 - [ ] Step 1: Invoke only the existing cataloged analysis entry point.
 
-Use code_sha="e4fc736" so the strict resolver binds to the recovered snapshots:
+Use the current commit as code_sha and e4fc736 only as snapshot_code_sha:
 
 ~~~powershell
 @'
+import subprocess
 from pathlib import Path
 from bian_quant.data.acquisition import DualHorizonAcquisition
 from bian_quant.research.operations import analyze_cataloged_dual_horizon
 
 root = Path.cwd()
 config = DualHorizonAcquisition.from_yaml(root / "configs/experiments/popular_universe_100u.yaml")
-result = analyze_cataloged_dual_horizon(config, code_sha="e4fc736")
+analysis_code_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+result = analyze_cataloged_dual_horizon(
+    config,
+    code_sha=analysis_code_sha,
+    snapshot_code_sha="e4fc736",
+)
+print(f"analysis_code_sha={analysis_code_sha}")
+print("snapshot_code_sha=e4fc736")
 print(f"run_id={result.run_id}")
 print(f"status={result.status}")
 print(f"snapshot_ids={result.snapshot_ids}")
@@ -236,7 +244,7 @@ planned_lifecycle_states.relative_funding_pressure ∈ {observed, researching}
 holdout_accessed == false
 ~~~
 
-The exclusion evidence must preserve the real reason codes (FUNDING_UNAVAILABLE_OR_GAPPED, INSUFFICIENT_PEER_COVERAGE, or ZERO_CROSS_SECTIONAL_MAD) and must not convert missing values to zero. The artifact must include the two micro snapshot IDs, code SHA e4fc736, development window 2024-07-01T00:00:00+00:00 through 2026-01-01T00:00:00+00:00, and no Holdout ledger path.
+The exclusion evidence must preserve the real reason codes (FUNDING_UNAVAILABLE_OR_GAPPED, INSUFFICIENT_PEER_COVERAGE, or ZERO_CROSS_SECTIONAL_MAD) and must not convert missing values to zero. The artifact must include the two micro snapshot IDs, the actual analysis code SHA, development window 2024-07-01T00:00:00+00:00 through 2026-01-01T00:00:00+00:00, and no Holdout ledger path. The analysis RunManifest config must separately record snapshot_code_sha=e4fc736.
 
 - [ ] Step 3: Check registry state independently.
 

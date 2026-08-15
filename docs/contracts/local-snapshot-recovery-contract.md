@@ -83,6 +83,20 @@ lineage is the four main snapshots; their parent set must still resolve to
 those snapshots. This propagation is evidence of a documented data gap, not a
 Funding value or a substitute input.
 
+## Cataloged analysis identity boundary
+
+`analyze_cataloged_dual_horizon` distinguishes the code that executes an
+analysis from the code identity embedded in immutable recovery snapshots. Its
+required `code_sha` is the actual analysis code identity and is recorded in
+the analysis RunManifest and factor-screening artifact; a newly registered
+factor spec also records that identity in the factor registry. Its
+optional `snapshot_code_sha` is used only by the strict snapshot resolver and
+source-evidence lookup. When omitted, it defaults to `code_sha` for backward
+compatibility. When supplied, it must be copied to the analysis RunManifest
+config without changing the resolved snapshot IDs or accepting a different
+source run. This separation never authorizes snapshot rebuilding, lineage
+relaxation, Holdout access, or a misleading analysis-code identity.
+
 ## Side-effect and lineage boundary
 
 Preflight must not call `DatasetCatalog.register`, `publish_snapshot`, a

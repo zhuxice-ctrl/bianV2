@@ -129,18 +129,22 @@ def resolve_dual_horizon_snapshots(
 
 
 def analyze_cataloged_dual_horizon(
-    config: DualHorizonAcquisition, *, code_sha: str
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    snapshot_code_sha: str | None = None,
 ) -> CatalogedAnalysisResult:
     """Run Macro and development screening from validated catalog snapshots."""
+    snapshot_code_sha = snapshot_code_sha or code_sha
     snapshots: CatalogedSnapshots | None = None
     manifest: RunManifest | None = None
     acquisition: dict[str, Any] = {}
     quality: dict[str, Any] = {}
     try:
-        snapshots = resolve_dual_horizon_snapshots(config, code_sha=code_sha)
+        snapshots = resolve_dual_horizon_snapshots(config, code_sha=snapshot_code_sha)
         acquisition, quality = _load_acquisition_evidence(
             config,
-            code_sha=code_sha,
+            source_code_sha=snapshot_code_sha,
             required_snapshot_ids=snapshots.snapshot_ids,
         )
         if acquisition.get("status") != "passed" or quality.get("status") != "passed":
@@ -155,6 +159,7 @@ def analyze_cataloged_dual_horizon(
             config={
                 "as_of": config.as_of.isoformat(),
                 "snapshot_names": REQUIRED_SNAPSHOTS,
+                "snapshot_code_sha": snapshot_code_sha,
                 "popular_universe_artifact_ids": universe_artifact_ids,
             },
             seed=0,
@@ -255,7 +260,12 @@ def analyze_cataloged_dual_horizon(
         reason = str(error) if isinstance(error, AnalysisBlocked) else f"ANALYSIS_FAILED:{error}"
         if manifest is None:
             snapshot_ids = list(snapshots.snapshot_ids) if snapshots is not None else []
-            manifest = _blocked_manifest(config, code_sha=code_sha, snapshot_ids=snapshot_ids)
+            manifest = _blocked_manifest(
+                config,
+                code_sha=code_sha,
+                snapshot_code_sha=snapshot_code_sha,
+                snapshot_ids=snapshot_ids,
+            )
             _start_run(config, manifest)
         run_dir = config.artifact_root / manifest.run_id
         if not run_dir.exists():
@@ -566,7 +576,7 @@ def _build_delay_factor_frames(
 def _load_acquisition_evidence(
     config: DualHorizonAcquisition,
     *,
-    code_sha: str,
+    source_code_sha: str,
     required_snapshot_ids: tuple[str, ...],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     with ExperimentRegistry(config.experiment_registry_path) as registry:
@@ -574,7 +584,7 @@ def _load_acquisition_evidence(
             run
             for run in registry.list_runs()
             if run.strategy_name == "dual_horizon_derivatives"
-            and run.code_sha == code_sha
+            and run.code_sha == source_code_sha
             and run.status == RunStatus.PASSED
         ]
     for run in reversed(runs):
@@ -608,11 +618,20 @@ def _finish_run(config: DualHorizonAcquisition, run_id: str, status: RunStatus) 
 
 
 def _blocked_manifest(
-    config: DualHorizonAcquisition, *, code_sha: str, snapshot_ids: list[str]
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    snapshot_code_sha: str,
+    snapshot_ids: list[str],
 ) -> RunManifest:
     identity = hashlib.sha256(
         json.dumps(
-            {"code_sha": code_sha, "snapshot_ids": snapshot_ids, "status": "blocked"},
+            {
+                "code_sha": code_sha,
+                "snapshot_code_sha": snapshot_code_sha,
+                "snapshot_ids": snapshot_ids,
+                "status": "blocked",
+            },
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
@@ -620,7 +639,11 @@ def _blocked_manifest(
         strategy_name="dual_horizon_analysis",
         code_sha=code_sha,
         dataset_snapshot_ids=snapshot_ids or [f"catalog-resolution-{identity[:16]}"],
-        config={"as_of": config.as_of.isoformat(), "status": "blocked"},
+        config={
+            "as_of": config.as_of.isoformat(),
+            "snapshot_code_sha": snapshot_code_sha,
+            "status": "blocked",
+        },
         seed=0,
         locked_holdout=LockedHoldout(
             start=config.factor_protocol.holdout_start,

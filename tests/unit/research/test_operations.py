@@ -207,6 +207,31 @@ def test_cataloged_analysis_uses_actual_snapshots_and_packet(tmp_path: Path) -> 
     assert not (config.artifact_root / "holdout-access.sqlite").exists()
 
 
+def test_cataloged_analysis_separates_execution_and_snapshot_code_identity(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    ids = _publish_required(config)
+    _passed_source_run(config, ids)
+    execution_code_sha = "b" * 40
+
+    result = analyze_cataloged_dual_horizon(
+        config,
+        code_sha=execution_code_sha,
+        snapshot_code_sha=CODE_SHA,
+    )
+
+    assert result.status == "passed"
+    factor_payload = json.loads(
+        (result.artifact_dir / "factor-screening.json").read_text(encoding="utf-8")
+    )
+    assert factor_payload["code_sha"] == execution_code_sha
+    with ExperimentRegistry(config.experiment_registry_path) as registry:
+        manifest = registry.get(result.run_id)
+    assert manifest.code_sha == execution_code_sha
+    assert json.loads(manifest.config_json)["snapshot_code_sha"] == CODE_SHA
+
+
 def test_cataloged_analysis_factor_screening_includes_relative_funding_pressure(
     tmp_path: Path,
 ) -> None:
