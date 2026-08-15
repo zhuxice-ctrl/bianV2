@@ -18,7 +18,8 @@ For every source returned by
 `canonical_input_sources(build_source_plan_audit(config), as_of=config.as_of)`,
 exactly one Catalog entry must match all of the following. The full Raw
 acquisition plan remains the source-plan identity, so excluding an unclosed 1d
-bar does not create a new Canonical namespace:
+bar or a recorded permanent source exclusion does not create a new Canonical
+namespace:
 
 - name `canonical-{dataset.value}-{interval}`;
 - `manifest.layer == canonical`;
@@ -67,7 +68,11 @@ RAW_LINEAGE_MISSING:<identity_key>
 Reasons are deduplicated and sorted. A blocked result has empty parent IDs and
 no input-set hash. A ready result hashes the canonical JSON list of each
 source identity, snapshot ID, and content SHA-256 with UTF-8, sorted keys and
-compact separators.
+compact separators. A ready result may also contain a non-empty
+`excluded_source_ids` tuple for `PermanentSourceExclusion` identities. Those
+identities are intentionally absent from the eligible source set and must
+remain visible to callers; READY does not authorize Funding imputation,
+fallback APIs, or a claim that the excluded source was observed.
 
 ## Side-effect and lineage boundary
 

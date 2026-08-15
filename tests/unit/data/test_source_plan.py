@@ -233,6 +233,22 @@ def test_partial_month_excludes_unclosed_daily_1d_bar() -> None:
     assert {item.interval for item in daily_ohlcv} == {"1h", "4h"}
 
 
+def test_permanent_source_exclusion_is_audit_metadata_not_plan_identity() -> None:
+    config = DualHorizonAcquisition.from_yaml(POPULAR_CONFIG)
+    audit = build_source_plan_audit(config)
+    excluded = "funding|TONUSDT|native|monthly|2026-07-01T00:00:00+00:00"
+
+    assert tuple(item.identity_key for item in audit.permanent_exclusions) == (excluded,)
+    assert len(audit.objects) == 14896
+    assert excluded not in {
+        item.identity_key for item in canonical_input_sources(audit, as_of=config.as_of)
+    }
+    assert (
+        source_plan_hash(audit)
+        == "f306aa6e0344847bd70defcb66410b9f6099572b1aa8aeeae7864982dc738cf4"
+    )
+
+
 def test_plan_is_deterministically_sorted() -> None:
     first = build_source_plan(DualHorizonAcquisition.from_yaml(CONFIG))
     second = build_source_plan(DualHorizonAcquisition.from_yaml(CONFIG))

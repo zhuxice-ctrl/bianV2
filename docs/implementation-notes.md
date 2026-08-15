@@ -188,3 +188,16 @@ merge to main automatically.
 - See `docs/evidence/2026-08-15-local-data-availability-repair-run.md`. This
   remains a stop gate for recovery, development analysis, Holdout, paper and
   live work.
+
+## 2026-08-15 — TONUSDT Funding permanent source exclusion
+
+- The Binance Vision 2026-07 TONUSDT Funding archive returned 404. The data
+  contract now records this as `SOURCE_ARCHIVE_404` in
+  `configs/data/canonical_input_exclusions.json`, without changing the Raw
+  acquisition plan or `source_plan_hash`.
+- Canonical repair returned `repaired` with no new snapshot and one explicit
+  `excluded_source_ids` entry. Strict preflight returned `ready` with 14,879
+  eligible inputs, 14,879 parents, and no blockers. No Funding imputation or
+  fallback API was used.
+- Actual output is recorded in
+  `docs/evidence/2026-08-15-tonusdt-source-exclusion-run.md`.

@@ -22,6 +22,7 @@ class LocalAvailabilityRepairResult:
     repaired_snapshot_ids: tuple[str, ...]
     blocked_reasons: tuple[str, ...]
     cutoff_evidence: tuple[CutoffEvidence, ...]
+    excluded_source_ids: tuple[str, ...]
 ```
 
 All result collections use deterministic identity/snapshot ordering.
@@ -31,11 +32,19 @@ All result collections use deterministic identity/snapshot ordering.
 The Raw acquisition plan remains the identity source for the current plan hash.
 The adapter derives its repair candidates with
 `canonical_input_sources(build_source_plan_audit(config), as_of=config.as_of)`.
-This excludes a partial-day 1d OHLCV archive until its 23:59:59.999 UTC close
-is available, while retaining intraday archives that contain earlier closed
-bars. For every remaining source, the adapter computes the current
+This excludes a recorded `PermanentSourceExclusion` identity and a partial-day
+1d OHLCV archive until its 23:59:59.999 UTC close is available, while retaining
+intraday archives that contain earlier closed bars. For every remaining source,
+the adapter computes the current
 source-plan hash and current `canonical_plan_path`. Historical `plan=`
 directories are never selected as inputs.
+
+Permanent exclusions are loaded from the configured
+`canonical_input_exclusions_path`. They must contain a stable identity, the
+literal status `permanently_unavailable`, reason `SOURCE_ARCHIVE_404`, source
+URL, evidence reference and observation date. The exclusion metadata is carried
+by `SourcePlanAudit` but is deliberately excluded from `source_plan_hash`; it
+therefore does not rename or rewrite existing Canonical/Catalog artifacts.
 
 Before checking an existing entry or parsing a candidate, the adapter calls:
 
@@ -58,6 +67,12 @@ The only emitted blocker codes are:
   eligible at the configured cutoff; and
 - `CANONICAL_PARTITION_CONFLICT:<identity_key>` when an existing current-plan
   file or Catalog snapshot cannot be paired with the immutable manifest.
+
+An identity listed in `PermanentSourceExclusion` is not emitted as
+`RAW_ARTIFACT_INCOMPLETE`; it is returned in the repair result's
+`excluded_source_ids` and remains absent from the eligible Canonical input set.
+The exclusion record is not permission to impute Funding or to use another
+network/API source.
 
 ## Published manifest
 
@@ -92,7 +107,7 @@ treated as a prior repair.
 ## Result and authorization boundary
 
 `LocalAvailabilityRepairResult.status` is `repaired` when no blockers remain
-and `blocked` otherwise. Repaired IDs and blocker reasons are sorted and
-deduplicated. The TONUSDT 2026-07 Funding Raw object is explicitly outside this
-offline contract; its missing ZIP and manifest must remain a blocker until a
-separate user-approved network plan is executed.
+and `blocked` otherwise. Repaired IDs, excluded IDs and blocker reasons are
+sorted and deduplicated. A permanently excluded source is a documented gap,
+not a successful data point; downstream Funding factors must preserve missing
+or gapped semantics.

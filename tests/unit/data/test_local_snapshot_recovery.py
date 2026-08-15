@@ -27,6 +27,7 @@ from bian_quant.data.local_snapshot_recovery import (
     LocalSnapshotRecoveryStatus,
     preflight_local_snapshot_recovery,
 )
+from bian_quant.data.source_exclusions import PermanentSourceExclusion
 
 
 def _config(tmp_path: Path) -> DualHorizonAcquisition:
@@ -127,9 +128,10 @@ def _publish_inputs(
     frames: dict[str, pd.DataFrame],
     *,
     duplicate_identity: bool = False,
+    exclusions: tuple[PermanentSourceExclusion, ...] = (),
 ) -> None:
     catalog = DatasetCatalog(config.catalog_path)
-    plan_hash = source_plan_hash(SourcePlanAudit(sources, None, ()))
+    plan_hash = source_plan_hash(SourcePlanAudit(sources, None, (), exclusions))
     for index, source in enumerate(sources):
         frame = frames[source.identity_key]
         path = canonical_plan_path(
@@ -251,6 +253,56 @@ def test_preflight_excludes_unclosed_daily_1d_source_from_canonical_inputs(
     assert result.status is LocalSnapshotRecoveryStatus.BLOCKED
     assert result.inputs == ()
     assert result.blocked_reasons == ("CANONICAL_INPUTS_EMPTY",)
+
+
+def test_preflight_reports_permanent_source_exclusion_without_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    sources = _sources()
+    excluded = SourceObject(
+        dataset=SourceDataset.FUNDING,
+        asset="TONUSDT",
+        interval="native",
+        granularity=SourceGranularity.MONTHLY,
+        period_start=datetime(2026, 7, 1, tzinfo=UTC),
+        url="https://example.invalid/tonusdt-funding",
+        relative_path=Path("funding") / "TONUSDT" / "native" / "2026-07.zip",
+    )
+    record = PermanentSourceExclusion(
+        identity_key=excluded.identity_key,
+        status="permanently_unavailable",
+        reason_code="SOURCE_ARCHIVE_404",
+        source_url=excluded.url,
+        evidence_ref="test-fixture",
+        observed_on=datetime(2026, 8, 15, tzinfo=UTC).date(),
+    )
+    published_frames = _frames(sources)
+    published_frames[excluded.identity_key] = pd.DataFrame(
+        {
+            "asset": ["TONUSDT"],
+            "event_time": [pd.Timestamp("2026-07-01T00:00:00Z")],
+            "available_time": [pd.Timestamp("2026-07-01T00:05:00Z")],
+            "ingested_at": [pd.Timestamp("2026-07-02T00:00:00Z")],
+            "funding_rate": [0.0001],
+            "funding_interval_hours": [8],
+        }
+    )
+    _publish_inputs(config, sources + (excluded,), published_frames, exclusions=(record,))
+    from bian_quant.data import local_snapshot_recovery
+
+    monkeypatch.setattr(
+        local_snapshot_recovery,
+        "build_source_plan_audit",
+        lambda config: SourcePlanAudit(sources + (excluded,), None, (), (record,)),
+    )
+
+    result = preflight_local_snapshot_recovery(config)
+
+    assert result.status is LocalSnapshotRecoveryStatus.READY
+    assert len(result.inputs) == len(sources)
+    assert result.blocked_reasons == ()
+    assert result.excluded_source_ids == (excluded.identity_key,)
 
 
 def test_preflight_blocks_hash_tampering_and_cutoff_violation(

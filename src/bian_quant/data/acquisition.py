@@ -16,6 +16,10 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bian_quant.data.adapters.raw import RawSourceIdentity
+from bian_quant.data.source_exclusions import (
+    PermanentSourceExclusion,
+    load_permanent_source_exclusions,
+)
 
 if TYPE_CHECKING:
     from bian_quant.data.archive_availability import ArchiveAvailabilityManifest
@@ -120,6 +124,7 @@ class DualHorizonAcquisition(BaseModel):
     experiment_registry_path: Path
     factor_registry_path: Path
     archive_availability_path: Path | None = None
+    canonical_input_exclusions_path: Path | None = None
     download_attempts: int = Field(ge=1, le=3)
     max_workers: int = Field(ge=1, le=8)
     disk_warn_gb: int = Field(ge=10)
@@ -442,6 +447,7 @@ class SourcePlanAudit:
     objects: tuple[SourceObject, ...]
     availability_manifest_sha256: str | None
     pre_listing_exclusions: tuple[dict[str, object], ...]
+    permanent_exclusions: tuple[PermanentSourceExclusion, ...] = ()
 
 
 def canonical_input_sources(
@@ -451,14 +457,16 @@ def canonical_input_sources(
 ) -> tuple[SourceObject, ...]:
     """Select source objects that can yield at least one causal Canonical row.
 
-    The Raw acquisition plan remains complete and stable. A daily 1d archive,
-    however, contains only the bar that closes at 23:59:59.999 UTC, so it is
-    excluded from Canonical repair and preflight before that close is available.
+    The Raw acquisition plan remains complete and stable. Permanently unavailable
+    source records and unclosed daily 1d archives are excluded from Canonical
+    repair and preflight without changing the acquisition plan hash.
     """
+    permanently_unavailable = {item.identity_key for item in plan.permanent_exclusions}
     return tuple(
         source
         for source in plan.objects
-        if not (
+        if source.identity_key not in permanently_unavailable
+        and not (
             source.dataset == SourceDataset.OHLCV
             and source.granularity == SourceGranularity.DAILY
             and source.interval == "1d"
@@ -506,19 +514,35 @@ def _filter_pre_listing_periods(
     return kept, excluded
 
 
+def _load_validated_input_exclusions(
+    config: DualHorizonAcquisition,
+    candidates: tuple[SourceObject, ...],
+) -> tuple[PermanentSourceExclusion, ...]:
+    exclusions = load_permanent_source_exclusions(config.canonical_input_exclusions_path)
+    candidate_ids = {item.identity_key for item in candidates}
+    unknown = sorted(
+        item.identity_key for item in exclusions if item.identity_key not in candidate_ids
+    )
+    if unknown:
+        raise ValueError(f"CANONICAL_INPUT_EXCLUSION_UNKNOWN:{','.join(unknown)}")
+    return exclusions
+
+
 def build_source_plan_audit(config: DualHorizonAcquisition) -> SourcePlanAudit:
     """Build the source plan with availability-aware filtering."""
     from bian_quant.data.archive_availability import ArchiveAvailabilityManifest
 
     candidates = _build_unfiltered_source_plan(config)
     if config.archive_availability_path is None:
-        return SourcePlanAudit(candidates, None, ())
+        exclusions = _load_validated_input_exclusions(config, candidates)
+        return SourcePlanAudit(candidates, None, (), exclusions)
     manifest = ArchiveAvailabilityManifest.from_yaml(config.archive_availability_path)
     # A popular-universe run is fail-closed: every asset/data-set boundary is
     # required before any pre-listing filtering can take place.
     manifest.require_expected_keys(assets=config.assets)
     kept, excluded = _filter_pre_listing_periods(candidates, manifest)
-    return SourcePlanAudit(tuple(kept), manifest.content_sha256, tuple(excluded))
+    exclusions = _load_validated_input_exclusions(config, tuple(kept))
+    return SourcePlanAudit(tuple(kept), manifest.content_sha256, tuple(excluded), exclusions)
 
 
 def build_source_plan(config: DualHorizonAcquisition) -> tuple[SourceObject, ...]:
@@ -576,4 +600,7 @@ def source_plan_payload(config: DualHorizonAcquisition) -> dict[str, object]:
         ],
         "availability_manifest_sha256": audit.availability_manifest_sha256,
         "pre_listing_exclusions": list(audit.pre_listing_exclusions),
+        "permanent_input_exclusions": [
+            item.model_dump(mode="json") for item in audit.permanent_exclusions
+        ],
     }

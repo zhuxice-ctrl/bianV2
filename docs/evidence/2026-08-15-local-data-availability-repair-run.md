@@ -99,3 +99,7 @@ The only remaining action is a separately authorized, single-object network
 slice for the TONUSDT July 2026 Funding archive. This run does not authorize
 that download, snapshot recovery, development analysis, Holdout, paper trading
 or live trading.
+
+This stop gate was superseded on 2026-08-15 by the permanent source exclusion
+contract and the path-A run recorded in
+`docs/evidence/2026-08-15-tonusdt-source-exclusion-run.md`.

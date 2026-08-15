@@ -1,0 +1,13 @@
+{
+  "schema_version": "canonical-input-exclusions-v1",
+  "exclusions": [
+    {
+      "identity_key": "funding|TONUSDT|native|monthly|2026-07-01T00:00:00+00:00",
+      "status": "permanently_unavailable",
+      "reason_code": "SOURCE_ARCHIVE_404",
+      "source_url": "https://data.binance.vision/data/futures/um/monthly/fundingRate/TONUSDT/TONUSDT-fundingRate-2026-07.zip",
+      "evidence_ref": "Aily Task 2 download report, 2026-08-15",
+      "observed_on": "2026-08-15"
+    }
+  ]
+}

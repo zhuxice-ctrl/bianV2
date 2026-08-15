@@ -55,6 +55,7 @@ class LocalAvailabilityRepairResult:
     repaired_snapshot_ids: tuple[str, ...]
     blocked_reasons: tuple[str, ...]
     cutoff_evidence: tuple[CutoffEvidence, ...]
+    excluded_source_ids: tuple[str, ...] = ()
 
 
 def _canonicalize(source: SourceObject, *, raw_path: Path, ingested_at: datetime) -> pd.DataFrame:
@@ -211,4 +212,5 @@ def repair_verified_local_canonical_inputs(
         repaired_snapshot_ids=tuple(sorted(repaired)),
         blocked_reasons=tuple(sorted(set(blocked))),
         cutoff_evidence=tuple(sorted(cutoff_evidence, key=lambda item: item.identity_key)),
+        excluded_source_ids=tuple(sorted(item.identity_key for item in plan.permanent_exclusions)),
     )

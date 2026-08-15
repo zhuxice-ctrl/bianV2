@@ -63,6 +63,7 @@ class LocalSnapshotRecoveryPreflight:
     parent_snapshot_ids: tuple[str, ...]
     input_set_sha256: str | None
     blocked_reasons: tuple[str, ...]
+    excluded_source_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -265,6 +266,7 @@ def preflight_local_snapshot_recovery(
     plan = _preflight_plan(config)
     plan_hash = source_plan_hash(plan)
     sources = canonical_input_sources(plan, as_of=config.as_of)
+    excluded_source_ids = tuple(sorted(item.identity_key for item in plan.permanent_exclusions))
     reasons: list[str] = []
     inputs: list[CanonicalRecoveryInput] = []
     names = {f"canonical-{source.dataset.value}-{source.interval}" for source in sources}
@@ -310,6 +312,7 @@ def preflight_local_snapshot_recovery(
             parent_snapshot_ids=(),
             input_set_sha256=None,
             blocked_reasons=tuple(sorted(set(reasons))),
+            excluded_source_ids=excluded_source_ids,
         )
     parent_ids = tuple(sorted(item.entry.manifest.snapshot_id for item in ordered_inputs))
     if not parent_ids:
@@ -320,6 +323,7 @@ def preflight_local_snapshot_recovery(
             parent_snapshot_ids=(),
             input_set_sha256=None,
             blocked_reasons=tuple(reasons),
+            excluded_source_ids=excluded_source_ids,
         )
     return LocalSnapshotRecoveryPreflight(
         status=LocalSnapshotRecoveryStatus.READY,
@@ -327,6 +331,7 @@ def preflight_local_snapshot_recovery(
         parent_snapshot_ids=parent_ids,
         input_set_sha256=_canonical_input_set_sha(ordered_inputs),
         blocked_reasons=(),
+        excluded_source_ids=excluded_source_ids,
     )
 
 
