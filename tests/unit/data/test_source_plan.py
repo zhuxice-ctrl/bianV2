@@ -12,6 +12,7 @@ from bian_quant.data.acquisition import (
     SourceGranularity,
     build_source_plan,
     build_source_plan_audit,
+    canonical_input_sources,
     source_plan_hash,
     source_plan_payload,
 )
@@ -215,6 +216,21 @@ def test_partial_month_keeps_only_supported_daily_datasets() -> None:
         for item in july
         if item.dataset != SourceDataset.FUNDING
     )
+
+
+def test_partial_month_excludes_unclosed_daily_1d_bar() -> None:
+    config = DualHorizonAcquisition.from_yaml(CONFIG)
+    plan = build_source_plan_audit(config)
+    cutoff_day = config.as_of.replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_ohlcv = [
+        item
+        for item in canonical_input_sources(plan, as_of=config.as_of)
+        if item.dataset == SourceDataset.OHLCV
+        and item.granularity == SourceGranularity.DAILY
+        and item.period_start == cutoff_day
+    ]
+
+    assert {item.interval for item in daily_ohlcv} == {"1h", "4h"}
 
 
 def test_plan_is_deterministically_sorted() -> None:

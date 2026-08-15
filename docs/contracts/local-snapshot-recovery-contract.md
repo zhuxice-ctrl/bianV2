@@ -14,8 +14,11 @@ preflight_local_snapshot_recovery(
 
 ## Input identity
 
-For every object returned by `build_source_plan_audit(config)`, exactly one
-Catalog entry must match all of the following:
+For every source returned by
+`canonical_input_sources(build_source_plan_audit(config), as_of=config.as_of)`,
+exactly one Catalog entry must match all of the following. The full Raw
+acquisition plan remains the source-plan identity, so excluding an unclosed 1d
+bar does not create a new Canonical namespace:
 
 - name `canonical-{dataset.value}-{interval}`;
 - `manifest.layer == canonical`;

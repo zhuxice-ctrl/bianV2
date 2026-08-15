@@ -7,7 +7,7 @@ import hashlib
 import json
 import shutil
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -442,6 +442,29 @@ class SourcePlanAudit:
     objects: tuple[SourceObject, ...]
     availability_manifest_sha256: str | None
     pre_listing_exclusions: tuple[dict[str, object], ...]
+
+
+def canonical_input_sources(
+    plan: SourcePlanAudit,
+    *,
+    as_of: datetime,
+) -> tuple[SourceObject, ...]:
+    """Select source objects that can yield at least one causal Canonical row.
+
+    The Raw acquisition plan remains complete and stable. A daily 1d archive,
+    however, contains only the bar that closes at 23:59:59.999 UTC, so it is
+    excluded from Canonical repair and preflight before that close is available.
+    """
+    return tuple(
+        source
+        for source in plan.objects
+        if not (
+            source.dataset == SourceDataset.OHLCV
+            and source.granularity == SourceGranularity.DAILY
+            and source.interval == "1d"
+            and source.period_start + timedelta(days=1, milliseconds=-1) > as_of
+        )
+    )
 
 
 def source_plan_hash(plan: SourcePlanAudit) -> str:

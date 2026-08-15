@@ -15,6 +15,7 @@ from bian_quant.data.acquisition import (
     SourceDataset,
     SourceObject,
     build_source_plan_audit,
+    canonical_input_sources,
     source_plan_hash,
 )
 from bian_quant.data.adapters.raw import reuse_verified_artifact
@@ -122,7 +123,7 @@ def repair_verified_local_canonical_inputs(
     repaired: list[str] = []
     blocked: list[str] = []
     cutoff_evidence: list[CutoffEvidence] = []
-    for source in sorted(plan.objects, key=lambda item: item.identity_key):
+    for source in canonical_input_sources(plan, as_of=config.as_of):
         canonical_path = canonical_plan_path(
             config.canonical_root,
             plan_hash=plan_hash,

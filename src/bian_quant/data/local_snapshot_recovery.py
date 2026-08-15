@@ -18,6 +18,7 @@ from bian_quant.data.acquisition import (
     SourceObject,
     SourcePlanAudit,
     build_source_plan_audit,
+    canonical_input_sources,
     source_plan_hash,
 )
 from bian_quant.data.catalog import CatalogEntry
@@ -263,9 +264,10 @@ def preflight_local_snapshot_recovery(
     """Inspect local Canonical inputs without creating or changing any file."""
     plan = _preflight_plan(config)
     plan_hash = source_plan_hash(plan)
+    sources = canonical_input_sources(plan, as_of=config.as_of)
     reasons: list[str] = []
     inputs: list[CanonicalRecoveryInput] = []
-    names = {f"canonical-{source.dataset.value}-{source.interval}" for source in plan.objects}
+    names = {f"canonical-{source.dataset.value}-{source.interval}" for source in sources}
     entries_by_name = _entries_by_name_read_only(config.catalog_path, names)
     entries_by_identity: dict[tuple[str, str | None, str | None, Path], list[CatalogEntry]] = {}
     for name, entries in entries_by_name.items():
@@ -273,7 +275,7 @@ def preflight_local_snapshot_recovery(
             key = (name, _identity(entry), _raw_sha256(entry), entry.path.resolve())
             entries_by_identity.setdefault(key, []).append(entry)
     selected: list[tuple[SourceObject, CatalogEntry]] = []
-    for source in plan.objects:
+    for source in sources:
         name = f"canonical-{source.dataset.value}-{source.interval}"
         raw_sha256 = _raw_manifest_sha256(config, source)
         if raw_sha256 is None:

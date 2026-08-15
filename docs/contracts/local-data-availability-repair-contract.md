@@ -28,11 +28,14 @@ All result collections use deterministic identity/snapshot ordering.
 
 ## Selection and verification
 
-For every source in `build_source_plan_audit(config)`, the adapter computes the
-current source-plan hash and current `canonical_plan_path`. A source is a
-repair candidate only when that current path is not already paired with its
-matching Catalog manifest. Historical `plan=` directories are never selected
-as inputs.
+The Raw acquisition plan remains the identity source for the current plan hash.
+The adapter derives its repair candidates with
+`canonical_input_sources(build_source_plan_audit(config), as_of=config.as_of)`.
+This excludes a partial-day 1d OHLCV archive until its 23:59:59.999 UTC close
+is available, while retaining intraday archives that contain earlier closed
+bars. For every remaining source, the adapter computes the current
+source-plan hash and current `canonical_plan_path`. Historical `plan=`
+directories are never selected as inputs.
 
 Before checking an existing entry or parsing a candidate, the adapter calls:
 

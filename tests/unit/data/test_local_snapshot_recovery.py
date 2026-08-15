@@ -231,6 +231,28 @@ def test_preflight_blocks_missing_and_ambiguous_identity(
     assert f"CANONICAL_INPUT_AMBIGUOUS:{sources[0].identity_key}" in ambiguous.blocked_reasons
 
 
+def test_preflight_excludes_unclosed_daily_1d_source_from_canonical_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    unclosed = SourceObject(
+        dataset=SourceDataset.OHLCV,
+        asset="BTCUSDT",
+        interval="1d",
+        granularity=SourceGranularity.DAILY,
+        period_start=config.as_of.replace(hour=0, minute=0, second=0, microsecond=0),
+        url="https://example.invalid/ohlcv",
+        relative_path=Path("ohlcv") / "BTCUSDT" / "1d" / "2026-07-26.zip",
+    )
+    _patch_plan(monkeypatch, (unclosed,))
+
+    result = preflight_local_snapshot_recovery(config)
+
+    assert result.status is LocalSnapshotRecoveryStatus.BLOCKED
+    assert result.inputs == ()
+    assert result.blocked_reasons == ("CANONICAL_INPUTS_EMPTY",)
+
+
 def test_preflight_blocks_hash_tampering_and_cutoff_violation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
