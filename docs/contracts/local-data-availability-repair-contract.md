@@ -1,0 +1,95 @@
+# Local Data Availability Repair Contract
+
+## Scope
+
+`repair_verified_local_canonical_inputs(config)` is a data-layer operation for
+current source-plan Canonical partitions only. It may read local Raw ZIPs and
+write new Canonical Parquet files below `canonical_root/plan=<current-plan-hash>/`
+plus new Canonical Catalog rows in `catalog_path`. It may not write Raw files,
+historical Canonical paths, research snapshots or `research_root`; it may not
+run analysis, access Holdout, use paper/live code or make network requests.
+
+The public result is immutable:
+
+```python
+class LocalAvailabilityRepairStatus(StrEnum):
+    REPAIRED = "repaired"
+    BLOCKED = "blocked"
+
+@dataclass(frozen=True)
+class LocalAvailabilityRepairResult:
+    status: LocalAvailabilityRepairStatus
+    repaired_snapshot_ids: tuple[str, ...]
+    blocked_reasons: tuple[str, ...]
+    cutoff_evidence: tuple[CutoffEvidence, ...]
+```
+
+All result collections use deterministic identity/snapshot ordering.
+
+## Selection and verification
+
+For every source in `build_source_plan_audit(config)`, the adapter computes the
+current source-plan hash and current `canonical_plan_path`. A source is a
+repair candidate only when that current path is not already paired with its
+matching Catalog manifest. Historical `plan=` directories are never selected
+as inputs.
+
+Before checking an existing entry or parsing a candidate, the adapter calls:
+
+```python
+reuse_verified_artifact(raw_root / source.relative_path, expected=source.raw_identity)
+```
+
+The Raw ZIP bytes, sidecar manifest hash, identity, byte count and source period
+must all pass. A missing ZIP/sidecar, hash mismatch or identity mismatch is a
+stable blocker; the adapter never reconstructs a sidecar or guesses a hash.
+
+The only emitted blocker codes are:
+
+- `RAW_ARTIFACT_INCOMPLETE:<identity_key>` for a missing or malformed Raw
+  artifact/sidecar;
+- `RAW_HASH_MISMATCH:<identity_key>` for content or byte-count mismatch;
+- `RAW_IDENTITY_MISMATCH:<identity_key>` for a verified file with the wrong
+  source identity;
+- `EVIDENCE_CUTOFF_VIOLATION:<identity_key>` when no canonicalized row is
+  eligible at the configured cutoff; and
+- `CANONICAL_PARTITION_CONFLICT:<identity_key>` when an existing current-plan
+  file or Catalog snapshot cannot be paired with the immutable manifest.
+
+## Published manifest
+
+The verified Raw is canonicalized with the existing dataset parser, clipped by
+`event_time <= config.as_of` and `available_time <= config.as_of`, and rejected
+if the eligible frame is empty. The only write path is
+`write_canonical_partition(eligible_frame, current_plan_path)` followed by
+`DatasetCatalog.register(DatasetManifest(...))`.
+
+The manifest must contain:
+
+```python
+layer = DatasetLayer.CANONICAL
+name = f"canonical-{source.dataset.value}-{source.interval}"
+parent_snapshot_ids = [f"raw-{verified.manifest.content_sha256}"]
+config_json = json.dumps(
+    {"identity_key": source.identity_key,
+     "raw_sha256": verified.manifest.content_sha256},
+    sort_keys=True,
+    separators=(",", ":"),
+)
+```
+
+The snapshot ID is the existing `canonical_snapshot_id(source,
+content_sha=..., plan_hash=...)`. Existing files and rows are immutable: a
+different content hash, path, lineage, metadata or canonical config causes
+`CANONICAL_PARTITION_CONFLICT` and is never overwritten. A valid existing
+entry must have the matching path, content hash, layer, name, row/time bounds,
+currently verified Raw parent and canonical `config_json`; otherwise it is not
+treated as a prior repair.
+
+## Result and authorization boundary
+
+`LocalAvailabilityRepairResult.status` is `repaired` when no blockers remain
+and `blocked` otherwise. Repaired IDs and blocker reasons are sorted and
+deduplicated. The TONUSDT 2026-07 Funding Raw object is explicitly outside this
+offline contract; its missing ZIP and manifest must remain a blocker until a
+separate user-approved network plan is executed.
