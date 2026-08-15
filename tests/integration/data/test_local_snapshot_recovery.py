@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from bian_quant.data.acquisition import (
     SourceGranularity,
     SourceObject,
 )
-from bian_quant.data.catalog import CatalogEntry
+from bian_quant.data.catalog import CatalogEntry, DatasetCatalog
 from bian_quant.data.contracts import DatasetLayer, DatasetManifest
 from bian_quant.data.evidence_cutoff import CutoffEvidence
 from bian_quant.data.local_snapshot_recovery import (
@@ -101,7 +102,7 @@ def _metrics() -> pd.DataFrame:
     )
 
 
-def _preflight() -> LocalSnapshotRecoveryPreflight:
+def _preflight(*, excluded_source_ids: tuple[str, ...] = ()) -> LocalSnapshotRecoveryPreflight:
     sources = (
         _source(SourceDataset.OHLCV, "1d"),
         _source(SourceDataset.OHLCV, "4h"),
@@ -149,6 +150,7 @@ def _preflight() -> LocalSnapshotRecoveryPreflight:
         parent_snapshot_ids=tuple(item.entry.manifest.snapshot_id for item in inputs),
         input_set_sha256="f" * 64,
         blocked_reasons=(),
+        excluded_source_ids=excluded_source_ids,
     )
 
 
@@ -177,3 +179,26 @@ def test_local_recovery_publishes_resolvable_snapshots_idempotently(
     assert resolved.snapshot_ids == first.snapshot_ids
     assert set(resolved.entries) == {"macro-1d", "macro-4h", "micro-1h", "micro-4h"}
     assert not (config.artifact_root / "holdout-access.sqlite").exists()
+
+
+def test_local_recovery_propagates_excluded_source_ids_to_evidence_and_snapshots(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    excluded = ("funding|TONUSDT|native|monthly|2026-07-01T00:00:00+00:00",)
+    preflight = _preflight(excluded_source_ids=excluded)
+    monkeypatch.setattr(
+        "bian_quant.data.local_snapshot_recovery.preflight_local_snapshot_recovery",
+        lambda config: preflight,
+    )
+
+    result = recover_local_dual_horizon_snapshots(config, code_sha=CODE_SHA)
+
+    assert result.excluded_source_ids == excluded
+    payload = json.loads(result.acquisition_artifact.read_text(encoding="utf-8"))
+    assert tuple(payload["excluded_source_ids"]) == excluded
+    catalog = DatasetCatalog(config.catalog_path)
+    for snapshot in result.snapshots:
+        entry = catalog.get(snapshot.snapshot_id)
+        snapshot_config = json.loads(entry.manifest.config_json)
+        assert tuple(snapshot_config["excluded_source_ids"]) == excluded

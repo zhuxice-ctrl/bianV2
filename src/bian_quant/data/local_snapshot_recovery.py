@@ -75,6 +75,7 @@ class LocalSnapshotRecoveryResult:
     acquisition_artifact: Path
     quality_artifact: Path
     blocked_reasons: tuple[str, ...]
+    excluded_source_ids: tuple[str, ...] = ()
 
     @property
     def snapshot_ids(self) -> tuple[str, ...]:
@@ -347,6 +348,7 @@ def _start_recovery_run(
     code_sha: str,
     parent_snapshot_ids: tuple[str, ...],
     input_set_sha256: str | None,
+    excluded_source_ids: tuple[str, ...],
 ) -> RunManifest:
     manifest = RunManifest.create(
         strategy_name="dual_horizon_derivatives",
@@ -356,6 +358,7 @@ def _start_recovery_run(
         config={
             "source_mode": "local-canonical-recovery-v1",
             "canonical_input_set_sha256": input_set_sha256,
+            "excluded_source_ids": list(excluded_source_ids),
             "as_of": config.as_of.isoformat(),
         },
         seed=0,
@@ -383,6 +386,7 @@ def _blocked_recovery_result(
         code_sha=code_sha,
         parent_snapshot_ids=preflight.parent_snapshot_ids,
         input_set_sha256=preflight.input_set_sha256,
+        excluded_source_ids=preflight.excluded_source_ids,
     )
     acquisition_path = config.artifact_root / run.run_id / "data-acquisition.json"
     quality_path = config.artifact_root / run.run_id / "data-quality.json"
@@ -393,6 +397,7 @@ def _blocked_recovery_result(
         "snapshot_ids": [],
         "delay_snapshot_ids": {},
         "blocked_reasons": list(preflight.blocked_reasons),
+        "excluded_source_ids": list(preflight.excluded_source_ids),
         "holdout_accessed": False,
     }
     _write_exclusive_json(acquisition_path, payload)
@@ -406,6 +411,7 @@ def _blocked_recovery_result(
         acquisition_artifact=acquisition_path,
         quality_artifact=quality_path,
         blocked_reasons=preflight.blocked_reasons,
+        excluded_source_ids=preflight.excluded_source_ids,
     )
 
 
@@ -435,6 +441,7 @@ def recover_local_dual_horizon_snapshots(
         code_sha=code_sha,
         parent_snapshot_ids=preflight.parent_snapshot_ids,
         input_set_sha256=preflight.input_set_sha256,
+        excluded_source_ids=preflight.excluded_source_ids,
     )
     acquisition_path = config.artifact_root / run.run_id / "data-acquisition.json"
     quality_path = config.artifact_root / run.run_id / "data-quality.json"
@@ -456,6 +463,7 @@ def recover_local_dual_horizon_snapshots(
                 blocked_reasons=tuple(
                     sorted(item["identity_key"] for item in popular_build.shortages)
                 ),
+                excluded_source_ids=preflight.excluded_source_ids,
             )
             _finish_recovery_run(config, run.run_id, RunStatus.BLOCKED)
             payload = {
@@ -465,6 +473,7 @@ def recover_local_dual_horizon_snapshots(
                 "snapshot_ids": [],
                 "delay_snapshot_ids": {},
                 "blocked_reasons": list(preflight.blocked_reasons),
+                "excluded_source_ids": list(preflight.excluded_source_ids),
                 "holdout_accessed": False,
             }
             _write_exclusive_json(acquisition_path, payload)
@@ -477,6 +486,7 @@ def recover_local_dual_horizon_snapshots(
                 acquisition_artifact=acquisition_path,
                 quality_artifact=quality_path,
                 blocked_reasons=preflight.blocked_reasons,
+                excluded_source_ids=preflight.excluded_source_ids,
             )
 
     snapshot_config = json.dumps(
@@ -489,6 +499,7 @@ def recover_local_dual_horizon_snapshots(
             "source_mode": "local-canonical-recovery-v1",
             "canonical_input_snapshot_ids": list(preflight.parent_snapshot_ids),
             "canonical_input_set_sha256": preflight.input_set_sha256,
+            "excluded_source_ids": list(preflight.excluded_source_ids),
             "popular_universe_artifact_ids": [
                 str(item["artifact_id"]) for item in popular_build.artifacts
             ],
@@ -536,6 +547,7 @@ def recover_local_dual_horizon_snapshots(
         "delay_snapshot_ids": delay_snapshot_ids,
         "canonical_input_snapshot_ids": list(preflight.parent_snapshot_ids),
         "canonical_input_set_sha256": preflight.input_set_sha256,
+        "excluded_source_ids": list(preflight.excluded_source_ids),
         "popular_universe_artifacts": popular_build.artifacts,
         "holdout_accessed": False,
     }
@@ -550,4 +562,5 @@ def recover_local_dual_horizon_snapshots(
         acquisition_artifact=acquisition_path,
         quality_artifact=quality_path,
         blocked_reasons=(),
+        excluded_source_ids=preflight.excluded_source_ids,
     )
