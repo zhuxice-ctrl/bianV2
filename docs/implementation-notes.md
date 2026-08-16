@@ -218,3 +218,12 @@ merge to main automatically.
   `git diff --check`. No network download, development analysis, Holdout,
   paper, live, main merge, or remote push occurred. Full evidence is in
   `docs/evidence/2026-08-15-local-snapshot-recovery-with-exclusion-run.md`.
+
+
+## 2026-08-16 — Relative Funding Pressure development evidence
+
+- Single development-only run ID `9b0831fd-828c-40cf-9be8-5c21d999ab71`; analysis code SHA `9f201be9eeecdd1aa09da9d0f73251fd6b5e19e9`; snapshot code SHA `e4fc736`.
+- 14,879-input hash `fb6c5d3599dee1bf8018143df7c09a5d2f3cdb6047c091913ce9d7f24bb6f094`; permanent exclusion `funding|TONUSDT|native|monthly|2026-07-01T00:00:00+00:00`.
+- `relative_funding_pressure@1.0.0` lifecycle state `observed`; `candidate_factor_ids=[]`; no Holdout ledger created or accessed.
+- All six development gates failed: `BH_SURVIVING_SLICES_LT_2`, `INDEPENDENT_SLICES_LT_2`, `DIRECTION_AGREEMENT_LT_60PCT`, `ASSETS_LT_2`, `ASSET_SUPPORT_CONCENTRATION_GT_50PCT`, `REGIME_SUPPORT_CONCENTRATION_GT_50PCT`.
+- `ZERO_CROSS_SECTIONAL_MAD=5328` means missing, not zero: 444 valid 12-asset timestamp groups had a majority at the `0.0001` median, so cross-sectional MAD was zero; no imputation or zero conversion.
