@@ -231,7 +231,16 @@ Files: Read only the returned analysis artifact directory.
 
 - [ ] Step 1: Inspect required artifact files.
 
-The returned directory must contain factor-screening.json, factor-screening.md, decision.json, and, when registry evidence is produced, the lifecycle artifact referenced by the screening result. Read them with UTF-8 JSON parsing; do not edit them.
+The returned directory must contain the complete research decision packet defined by
+`bian_quant.reporting.decision.REQUIRED_ARTIFACTS`:
+`data-acquisition.json`, `data-quality.json`, `macro-regime.json`,
+`macro-regime.md`, `factor-screening.json`, `factor-screening.md`, and
+`decision-summary.md`. `decision.json` belongs to the separate paper-trading
+artifact contract and is not a research decision-packet requirement. When registry
+evidence is produced, also read the corresponding immutable lifecycle artifact at
+`<artifact_root>/factor-stages/<run_id>.lifecycle.json` and assert that its
+`run_id`, states, and gates agree with `factor-screening.json`. Read JSON as UTF-8;
+do not edit generated artifacts.
 
 - [ ] Step 2: Assert factor-specific evidence.
 
