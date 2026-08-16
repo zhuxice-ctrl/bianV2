@@ -227,3 +227,16 @@ merge to main automatically.
 - `relative_funding_pressure@1.0.0` lifecycle state `observed`; `candidate_factor_ids=[]`; no Holdout ledger created or accessed.
 - All six development gates failed: `BH_SURVIVING_SLICES_LT_2`, `INDEPENDENT_SLICES_LT_2`, `DIRECTION_AGREEMENT_LT_60PCT`, `ASSETS_LT_2`, `ASSET_SUPPORT_CONCENTRATION_GT_50PCT`, `REGIME_SUPPORT_CONCENTRATION_GT_50PCT`.
 - `ZERO_CROSS_SECTIONAL_MAD=5328` means missing, not zero: 444 valid 12-asset timestamp groups had a majority at the `0.0001` median, so cross-sectional MAD was zero; no imputation or zero conversion.
+
+## 2026-08-16 — Batch 4 audit formatting repair
+
+- Independent audit confirmed the Batch 4 development evidence, lifecycle state
+  `observed`, zero candidate list, protected-input hashes, and absent Holdout
+  ledgers.
+- The reported repository-wide Ruff format failure was real and limited to
+  `src/bian_quant/data/archive_availability.py` and
+  `tests/unit/data/test_archive_availability.py`. Codex applied only the
+  formatter's mechanical changes; no behavior or data changed.
+- After repair, the affected unit test passed (8 tests), the focused suite
+  passed (69 tests), and the full suite passed (520 passed, 7 skipped, 7
+  deselected). Ruff check/format, mypy, and `git diff --check` also passed.

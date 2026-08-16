@@ -126,9 +126,7 @@ def _make_metrics_zip_bytes(asset: str, first_event: datetime, rows: int = 3) ->
     lines = [header]
     for i in range(rows):
         event = first_event + timedelta(minutes=5 * i)
-        lines.append(
-            f"{event:%Y-%m-%d %H:%M:%S},{asset},100000,5000000000,1.1,1.2,1.05,1.15"
-        )
+        lines.append(f"{event:%Y-%m-%d %H:%M:%S},{asset},100000,5000000000,1.1,1.2,1.05,1.15")
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(f"{asset}-metrics.csv", "\n".join(lines) + "\n")

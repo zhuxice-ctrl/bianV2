@@ -187,3 +187,35 @@ exitCode=0. PASS.
 whitespace_check=clean
 files_checked=2
 ```
+
+## Codex audit and formatting repair
+
+The Aily report correctly identified the only failed gate: the repository-wide
+format check found two pre-existing files requiring Ruff formatting. Codex
+applied only Ruff's mechanical formatting to:
+
+```text
+src/bian_quant/data/archive_availability.py
+tests/unit/data/test_archive_availability.py
+```
+
+No behavior, data, artifact, or analysis code changed. The affected unit test
+passed independently (`8 passed in 1.87s`). The focused regression suite was
+then rerun and passed:
+
+```text
+69 passed in 183.68s (0:03:03)
+```
+
+The final repository-wide gates passed after the repair:
+
+```text
+ruff check: All checks passed!
+ruff format --check: 173 files already formatted
+mypy: Success: no issues found in 97 source files
+pytest: 520 passed, 7 skipped, 7 deselected in 316.56s (0:05:16)
+git diff --check: passed
+```
+
+The original Aily failure remains recorded above as historical run output; the
+current branch has no outstanding formatting failure.

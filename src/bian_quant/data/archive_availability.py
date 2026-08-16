@@ -61,9 +61,7 @@ class ArchiveAvailabilityEntry(BaseModel):
         if any((period.hour, period.minute, period.second, period.microsecond)):
             raise ValueError("first_available_period must be UTC midnight")
         if self.granularity == SourceGranularity.MONTHLY and period.day != 1:
-            raise ValueError(
-                "monthly first_available_period must be the first day of the month"
-            )
+            raise ValueError("monthly first_available_period must be the first day of the month")
         return self
 
 
@@ -96,8 +94,7 @@ class ArchiveAvailabilityManifest(BaseModel):
         matches = [
             entry
             for entry in self.entries
-            if (entry.asset, entry.dataset, entry.granularity)
-            == (asset, dataset, granularity)
+            if (entry.asset, entry.dataset, entry.granularity) == (asset, dataset, granularity)
         ]
         if len(matches) != 1:
             raise ValueError("ARCHIVE_AVAILABILITY_MISSING")
@@ -178,9 +175,7 @@ def _earliest_event_time(
     return pd.Timestamp(earliest).to_pydatetime()
 
 
-def _verified_candidates(
-    raw_root: Path, *, assets: tuple[str, ...]
-) -> list[_VerifiedCandidate]:
+def _verified_candidates(raw_root: Path, *, assets: tuple[str, ...]) -> list[_VerifiedCandidate]:
     """Discover and verify all raw artifacts under *raw_root*.
 
     Only artifacts that pass integrity and identity verification are returned.
