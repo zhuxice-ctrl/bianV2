@@ -33,7 +33,10 @@ from bian_quant.regimes.macro import (
     render_macro_evidence_markdown,
 )
 from bian_quant.reporting.decision import DecisionEvidence, write_decision_packet
-from bian_quant.research.dual_horizon import run_dual_horizon_screening
+from bian_quant.research.dual_horizon import (
+    _apply_membership_lineage,
+    run_dual_horizon_screening,
+)
 from bian_quant.research.orderflow_development import (
     FamilySnapshot,
     ResearchFamilyLedger,
@@ -43,6 +46,7 @@ from bian_quant.research.orderflow_protocol import (
     build_orderflow_targets,
     compute_fee,
     compute_turnover_l1,
+    drift_weights_open_to_open,
 )
 
 REQUIRED_SNAPSHOTS = ("macro-1d", "macro-4h", "micro-1h", "micro-4h")
@@ -113,6 +117,7 @@ class OrderflowDevelopmentResult:
     factor_id: str
     protocol_sha: str
     reason_code_counts: dict[str, int]
+    development_gate_status: str
     error_code: str | None = None
 
 
@@ -521,9 +526,16 @@ def analyze_cataloged_orderflow_development(
             entries={"micro-1h": entry},
             oi_delay_entries={},
         )
-        _eligibility_frame, universe_artifact_ids = _load_popular_universe_eligibility(
+        eligibility_frame, universe_artifact_ids = _load_popular_universe_eligibility(
             snapshots, config
         )
+        if config.universe_policy is not None and eligibility_frame is None:
+            raise AnalysisBlocked("POPULAR_UNIVERSE_ARTIFACT_MISSING")
+        if eligibility_frame is not None:
+            frame = _apply_membership_lineage(frame, eligibility_frame)
+            if frame.empty:
+                raise AnalysisBlocked("EMPTY_AFTER_MEMBERSHIP_FILTER")
+        eligible_assets = sorted(frame["asset"].astype(str).unique().tolist())
 
         # --- Compute protocol hash ---
         protocol_payload = {
@@ -570,10 +582,14 @@ def analyze_cataloged_orderflow_development(
 
         # --- Compute labels for 1h, 2h, 4h ---
         horizon_details: dict[str, dict[str, Any]] = {}
+        label_values_by_horizon: dict[str, pd.Series] = {}
+        label_reasons_by_horizon: dict[str, pd.Series] = {}
         for holding_bars, horizon in [(1, "1h"), (2, "2h"), (4, "4h")]:
             label_values, label_reasons = forward_open_to_open_log_return(
                 frame, holding_bars=holding_bars
             )
+            label_values_by_horizon[horizon] = label_values
+            label_reasons_by_horizon[horizon] = label_reasons
             for reason in label_reasons:
                 if reason:
                     key = f"{horizon}:{reason}"
@@ -591,62 +607,76 @@ def analyze_cataloged_orderflow_development(
         signal_frame["signal"] = signal_values.values
 
         portfolio_diagnostics: list[dict[str, Any]] = []
-        prev_weights: pd.Series | None = None
-        taker_fee_bps = 2.0
+        previous_target: pd.Series | None = None
+        previous_open_returns: pd.Series | None = None
+        previous_open_reasons: pd.Series | None = None
+        taker_fee_bps = 4.0
 
         for ts, group in signal_frame.groupby("available_time", sort=True):
             valid = group.dropna(subset=["signal"])
-            if valid.empty:
-                continue
             signals_df = valid[["asset", "signal"]].copy()
             result = build_orderflow_targets(signals_df)
-
-            if result.reason:
-                if prev_weights is not None:
-                    turnover = compute_turnover_l1(
-                        pd.Series(0.0, index=result.weights.index),
-                        prev_weights.reindex(result.weights.index).fillna(0.0),
-                    )
-                else:
-                    turnover = 0.0
-                fee = compute_fee(turnover, taker_fee_bps)
-                portfolio_diagnostics.append(
-                    {
-                        "timestamp": str(ts),
-                        "reason": result.reason,
-                        "long_count": 0,
-                        "short_count": 0,
-                        "turnover_l1": turnover,
-                        "fee": fee,
-                    }
-                )
-                prev_weights = pd.Series(0.0, index=result.weights.index)
-                continue
-
-            if prev_weights is None:
-                turnover = 1.0
+            target = result.weights
+            held: pd.Series | None
+            drift_reason = ""
+            if previous_target is None:
+                held = pd.Series(0.0, index=target.index, dtype=float)
             else:
-                turnover = compute_turnover_l1(
-                    result.weights,
-                    prev_weights.reindex(result.weights.index).fillna(0.0),
+                assert previous_open_returns is not None
+                assert previous_open_reasons is not None
+                active = previous_target[previous_target != 0.0]
+                prior_reasons = previous_open_reasons.reindex(active.index).fillna(
+                    "MISSING_NEXT_BAR"
                 )
-            fee = compute_fee(turnover, taker_fee_bps)
+                if (prior_reasons != "").any():
+                    drift_reason = str(prior_reasons[prior_reasons != ""].iloc[0])
+                    held = None
+                else:
+                    try:
+                        held = drift_weights_open_to_open(
+                            previous_target,
+                            previous_open_returns,
+                        )
+                    except ValueError:
+                        drift_reason = "EXECUTION_BAR_INVALID"
+                        held = None
+
+            turnover: float | None
+            fee: float | None
+            if held is None:
+                turnover, fee = None, None
+            else:
+                turnover = compute_turnover_l1(target, held)
+                fee = compute_fee(turnover, taker_fee_bps)
             portfolio_diagnostics.append(
                 {
                     "timestamp": str(ts),
-                    "reason": "",
+                    "reason": result.reason or drift_reason,
                     "long_count": result.long_count,
                     "short_count": result.short_count,
+                    "target_assets": sorted(target.loc[target != 0.0].index.astype(str).tolist()),
                     "turnover_l1": turnover,
                     "fee": fee,
+                    "held_weight_l1": None if held is None else float(held.abs().sum()),
+                    "drift_applied": previous_target is not None and held is not None,
                 }
             )
-            prev_weights = result.weights
+            previous_target = target
+            previous_open_returns = pd.Series(
+                np.expm1(label_values_by_horizon["1h"].loc[group.index].to_numpy(dtype=float)),
+                index=group["asset"].astype(str).to_numpy(),
+                dtype=float,
+            )
+            previous_open_reasons = pd.Series(
+                label_reasons_by_horizon["1h"].loc[group.index].to_numpy(dtype=object),
+                index=group["asset"].astype(str).to_numpy(),
+                dtype=object,
+            )
 
         # --- Compute BH details ---
         bh_evaluations: list[Any] = []
-        for holding_bars, horizon in [(1, "1h"), (2, "2h"), (4, "4h")]:
-            label_values, _ = forward_open_to_open_log_return(frame, holding_bars=holding_bars)
+        for _holding_bars, horizon in [(1, "1h"), (2, "2h"), (4, "4h")]:
+            label_values = label_values_by_horizon[horizon]
             sig_frame = frame.copy()
             sig_frame["signal"] = signal_values.values
             sig_frame["label"] = label_values.values
@@ -688,6 +718,9 @@ def analyze_cataloged_orderflow_development(
             )
 
         bh_results = run_bh_inference(bh_evaluations, family_id=family_id)
+        bh_precheck_status = (
+            "available" if len(bh_evaluations) == 3 else "insufficient_horizon_coverage"
+        )
 
         if not bh_results.empty:
             with ResearchFamilyLedger(ledger_path) as ledger:
@@ -701,7 +734,8 @@ def analyze_cataloged_orderflow_development(
 
         evidence = {
             "run_id": run_id,
-            "status": "passed",
+            "status": "collected",
+            "development_gate_status": "not_evaluated",
             "factor_id": factor_id,
             "factor_version": factor_version,
             "family_id": family_id,
@@ -713,18 +747,27 @@ def analyze_cataloged_orderflow_development(
                 "snapshot_id": entry.manifest.snapshot_id,
                 "snapshot_name": entry.manifest.name,
                 "popular_universe_artifact_ids": universe_artifact_ids,
+                "eligible_assets": eligible_assets,
             },
             "holdout_accessed": False,
             "reason_code_counts": reason_code_counts,
             "horizon_details": horizon_details,
             "bh_details": bh_details,
+            "bh_precheck_status": bh_precheck_status,
+            "bh_scope": "aggregate_precheck_only",
             "portfolio_diagnostics": portfolio_diagnostics[:200],
             "portfolio_summary": {
                 "total_bars": len(portfolio_diagnostics),
                 "flat_bars": sum(1 for d in portfolio_diagnostics if d["reason"]),
-                "active_bars": sum(1 for d in portfolio_diagnostics if not d["reason"]),
-                "total_turnover_l1": float(sum(d["turnover_l1"] for d in portfolio_diagnostics)),
-                "total_fee": float(sum(d["fee"] for d in portfolio_diagnostics)),
+                "active_bars": sum(
+                    1 for d in portfolio_diagnostics if d["long_count"] > 0 and d["reason"] == ""
+                ),
+                "drifted_bars": sum(1 for d in portfolio_diagnostics if d["drift_applied"]),
+                "total_turnover_l1": float(
+                    sum(d["turnover_l1"] or 0.0 for d in portfolio_diagnostics)
+                ),
+                "total_fee": float(sum(d["fee"] or 0.0 for d in portfolio_diagnostics)),
+                "taker_fee_bps": taker_fee_bps,
             },
         }
 
@@ -732,13 +775,14 @@ def analyze_cataloged_orderflow_development(
 
         return OrderflowDevelopmentResult(
             run_id=run_id,
-            status="passed",
+            status="collected",
             artifact_path=artifact_path,
             snapshot_ids=(entry.manifest.snapshot_id,),
             holdout_accessed=False,
             factor_id=factor_id,
             protocol_sha=protocol_sha,
             reason_code_counts=reason_code_counts,
+            development_gate_status="not_evaluated",
         )
     except Exception as error:
         reason = str(error) if isinstance(error, AnalysisBlocked) else f"DEVELOPMENT_FAILED:{error}"
@@ -763,6 +807,7 @@ def analyze_cataloged_orderflow_development(
             factor_id=factor_id,
             protocol_sha="",
             reason_code_counts={},
+            development_gate_status="not_evaluated",
             error_code=reason,
         )
 

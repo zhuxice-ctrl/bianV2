@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bian_quant.data.acquisition import DualHorizonAcquisition
+from bian_quant.data.acquisition import DualHorizonAcquisition, PopularUniversePolicy
 from bian_quant.data.catalog import DatasetCatalog
 from bian_quant.data.contracts import DatasetLayer
 from bian_quant.data.snapshots import SnapshotSpec, publish_snapshot
@@ -406,11 +406,29 @@ def test_cataloged_orderflow_evidence_is_development_only(tmp_path: Path) -> Non
     """Verify orderflow development evidence is development-only (no Holdout)."""
     config = _config(tmp_path)
 
-    frame = _frame("2024-07-01", periods=200, frequency="1h")
-    frame["open"] = frame["close"]
-    for asset, ratio in [("BTCUSDT", 0.55), ("ETHUSDT", 0.45), ("BNBUSDT", 0.35)]:
-        mask = frame["asset"] == asset
-        frame.loc[mask, "taker_buy_base"] = frame.loc[mask, "volume"] * ratio
+    assets = ("ADAUSDT", "BNBUSDT", "BTCUSDT", "DOGEUSDT", "ETHUSDT", "SOLUSDT")
+    times = pd.date_range("2024-07-01", periods=200, freq="1h", tz="UTC")
+    rows: list[dict[str, object]] = []
+    for asset_index, asset in enumerate(assets):
+        for bar_index, timestamp in enumerate(times):
+            open_price = 100.0 + asset_index * 7.0 + bar_index * (0.02 + asset_index * 0.003)
+            volume = 1000.0 + bar_index + asset_index * 10.0
+            rows.append(
+                {
+                    "asset": asset,
+                    "event_time": timestamp,
+                    "available_time": timestamp,
+                    "open": open_price,
+                    "close": open_price,
+                    "high": open_price + 1.0,
+                    "low": open_price - 1.0,
+                    "volume": volume,
+                    "quote_volume": volume * open_price,
+                    "taker_buy_base": volume * (0.2 + asset_index * 0.12),
+                    "taker_buy_quote": volume * open_price * 0.45,
+                }
+            )
+    frame = pd.DataFrame(rows)
     frame["taker_buy_quote"] = frame["quote_volume"] * 0.45
 
     catalog = DatasetCatalog(config.catalog_path)
@@ -430,7 +448,8 @@ def test_cataloged_orderflow_evidence_is_development_only(tmp_path: Path) -> Non
 
     config.artifact_root.mkdir(parents=True, exist_ok=True)
     result = analyze_cataloged_orderflow_development(config, code_sha=CODE_SHA)
-    assert result.status == "passed"
+    assert result.status == "collected"
+    assert result.development_gate_status == "not_evaluated"
     assert result.holdout_accessed is False
     assert not (config.artifact_root / "holdout-access.sqlite").exists()
     assert result.factor_id == "taker_orderflow_imbalance"
@@ -442,7 +461,8 @@ def test_cataloged_orderflow_evidence_is_development_only(tmp_path: Path) -> Non
     import json as _json
 
     evidence = _json.loads(result.artifact_path.read_text(encoding="utf-8"))
-    assert evidence["status"] == "passed"
+    assert evidence["status"] == "collected"
+    assert evidence["development_gate_status"] == "not_evaluated"
     assert evidence["holdout_accessed"] is False
     assert evidence["factor_id"] == "taker_orderflow_imbalance"
     assert "protocol_sha" in evidence
@@ -453,3 +473,128 @@ def test_cataloged_orderflow_evidence_is_development_only(tmp_path: Path) -> Non
     assert "portfolio_diagnostics" in evidence
     assert "portfolio_summary" in evidence
     assert set(evidence["horizon_details"]) == {"1h", "2h", "4h"}
+    assert len(evidence["bh_details"]) == 3
+    assert evidence["portfolio_summary"]["active_bars"] > 0
+    assert evidence["portfolio_summary"]["drifted_bars"] > 0
+    assert evidence["portfolio_summary"]["taker_fee_bps"] == 4.0
+    assert any(item["held_weight_l1"] is not None for item in evidence["portfolio_diagnostics"])
+    assert any(item["drift_applied"] for item in evidence["portfolio_diagnostics"])
+
+
+def test_orderflow_evidence_applies_cataloged_popular_universe(tmp_path: Path) -> None:
+    """Only assets present in the cataloged popular-universe artifact may be used."""
+    config = _config(tmp_path)
+    assets = ("ADAUSDT", "BNBUSDT", "BTCUSDT", "DOGEUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT")
+    times = pd.date_range("2024-07-01", periods=48, freq="1h", tz="UTC")
+    rows: list[dict[str, object]] = []
+    for asset_index, asset in enumerate(assets):
+        for bar_index, timestamp in enumerate(times):
+            open_price = 100.0 + asset_index + bar_index * (0.01 + asset_index * 0.001)
+            volume = 1000.0 + asset_index + bar_index
+            rows.append(
+                {
+                    "asset": asset,
+                    "event_time": timestamp,
+                    "available_time": timestamp,
+                    "open": open_price,
+                    "close": open_price,
+                    "high": open_price + 1.0,
+                    "low": open_price - 1.0,
+                    "volume": volume,
+                    "quote_volume": volume * open_price,
+                    "taker_buy_base": volume * (0.15 + asset_index * 0.1),
+                    "taker_buy_quote": volume * open_price * 0.45,
+                }
+            )
+    frame = pd.DataFrame(rows)
+    artifact_id = "popular-universe-test"
+    catalog = DatasetCatalog(config.catalog_path)
+    publish_snapshot(
+        frame,
+        SnapshotSpec(
+            name="micro-1h",
+            layer=DatasetLayer.RESEARCH,
+            interval="1h",
+            horizon="micro",
+            parent_snapshot_ids=("parent-1",),
+            config_json=json.dumps(
+                {
+                    "assets": list(config.assets),
+                    "macro_start": config.macro_start.isoformat(),
+                    "micro_start": config.micro_start.isoformat(),
+                    "as_of": config.as_of.isoformat(),
+                    "code_sha": CODE_SHA,
+                    "popular_universe_artifact_ids": [artifact_id],
+                },
+                sort_keys=True,
+            ),
+        ),
+        config.research_root,
+        catalog,
+    )
+    universe_dir = config.artifact_root / "popular-universe"
+    universe_dir.mkdir(parents=True)
+    (universe_dir / f"{artifact_id}.json").write_text(
+        json.dumps(
+            {
+                "artifact_id": artifact_id,
+                "selection_time": times[0].isoformat(),
+                "members": [
+                    {"asset": asset, "rank": rank} for rank, asset in enumerate(assets[:6])
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = analyze_cataloged_orderflow_development(config, code_sha=CODE_SHA)
+    evidence = json.loads(result.artifact_path.read_text(encoding="utf-8"))
+
+    assert result.status == "collected"
+    assert evidence["input_identity"]["popular_universe_artifact_ids"] == [artifact_id]
+    assert evidence["input_identity"]["eligible_assets"] == list(assets[:6])
+    assert evidence["portfolio_summary"]["active_bars"] > 0
+    assert all("XRPUSDT" not in item["target_assets"] for item in evidence["portfolio_diagnostics"])
+
+
+def test_orderflow_evidence_blocks_when_locked_universe_has_no_artifact(tmp_path: Path) -> None:
+    """A popular-universe configuration must not silently fall back to all assets."""
+    seed_assets = tuple(f"ASSET{index:02d}USDT" for index in range(16))
+    policy = PopularUniversePolicy(
+        rule_version="popular-usdm-v1",
+        minimum_listing_days=30,
+        trailing_days=7,
+        max_selected=16,
+        min_selected=8,
+        seed_assets=seed_assets,
+    )
+    config = _config(tmp_path).model_copy(
+        update={
+            "assets": seed_assets,
+            "universe_policy": policy,
+            "archive_availability_path": tmp_path / "availability.json",
+        }
+    )
+    frame = _frame("2024-07-01", periods=24, frequency="1h")
+    frame["open"] = frame["close"]
+    frame["taker_buy_base"] = frame["volume"] * 0.5
+
+    catalog = DatasetCatalog(config.catalog_path)
+    publish_snapshot(
+        frame,
+        SnapshotSpec(
+            name="micro-1h",
+            layer=DatasetLayer.RESEARCH,
+            interval="1h",
+            horizon="micro",
+            parent_snapshot_ids=("parent-1",),
+            config_json=_snapshot_config(config),
+        ),
+        config.research_root,
+        catalog,
+    )
+
+    result = analyze_cataloged_orderflow_development(config, code_sha=CODE_SHA)
+
+    assert result.status == "blocked"
+    assert result.error_code == "POPULAR_UNIVERSE_ARTIFACT_MISSING"

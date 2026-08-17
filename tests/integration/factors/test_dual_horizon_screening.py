@@ -697,6 +697,7 @@ def test_orderflow_development_evidence_does_not_access_holdout(
 
     config.artifact_root.mkdir(parents=True, exist_ok=True)
     result = analyze_cataloged_orderflow_development(config, code_sha="a" * 40)
-    assert result.status == "passed"
+    assert result.status == "collected"
+    assert result.development_gate_status == "not_evaluated"
     assert result.holdout_accessed is False
     assert not (config.artifact_root / "holdout-access.sqlite").exists()
