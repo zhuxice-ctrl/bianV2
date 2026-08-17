@@ -32,6 +32,7 @@ class FakeEval:
     asset: str
     regime: str
     p_value: float
+    q: float = 0.2
 
 
 def _make_snapshot() -> FamilySnapshot:
@@ -133,8 +134,15 @@ def test_double_freeze_raises(tmp_path: object) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_bh_key_is_five_tuple() -> None:
-    assert BH_KEY_COLUMNS == ("factor_id", "horizon", "fold", "asset", "regime")
+def test_bh_key_is_six_tuple() -> None:
+    assert BH_KEY_COLUMNS == (
+        "factor_id",
+        "horizon",
+        "fold",
+        "asset",
+        "regime",
+        "q",
+    )
 
 
 def test_bh_single_p_value_unchanged() -> None:
@@ -271,3 +279,103 @@ def test_bh_results_update_rejected(tmp_path: object) -> None:
             ledger._conn.execute(  # noqa: SLF001
                 "UPDATE bh_results SET p_value = 0.99 WHERE 1=1",
             )
+
+
+# ---------------------------------------------------------------------------
+# Six-tuple schema migration and q-sensitivity BH
+# ---------------------------------------------------------------------------
+
+
+def test_run_bh_inference_emits_q_column() -> None:
+    evals = [
+        FakeEval("f1", "1h", "fold1", "BTC", "trending", 0.01, q=0.2),
+        FakeEval("f1", "1h", "fold1", "BTC", "trending", 0.02, q=0.1),
+    ]
+    df = run_bh_inference(evals)
+    assert "q" in df.columns
+    assert set(df["q"].tolist()) == {0.1, 0.2}
+
+
+def test_q_sensitivity_inflates_bh_denominator() -> None:
+    """q ∈ {0.1, 0.2, 0.3} p-values must all enter the BH denominator."""
+    # Three q values for the same slice → m = 3.
+    evals = [
+        FakeEval("f1", "1h", "fold1", "BTC", "trending", 0.01, q=0.1),
+        FakeEval("f1", "1h", "fold1", "BTC", "trending", 0.01, q=0.2),
+        FakeEval("f1", "1h", "fold1", "BTC", "trending", 0.5, q=0.3),
+    ]
+    df = run_bh_inference(evals)
+    # m = 3, sorted [0.01, 0.01, 0.5], ranks 1, 2, 3
+    # raw: 0.01*3/1=0.03, 0.01*3/2=0.015, 0.5*3/3=0.5
+    # monotone (cumulative min from right): [0.015, 0.015, 0.5]
+    assert np.allclose(np.sort(df["bh_adjusted"].values), [0.015, 0.015, 0.5])
+    # Compare against a single-q family (m = 1): the small p is adjusted to
+    # 0.01 (m=1) rather than 0.015 (m=3) — denominator inflation is visible.
+    single = run_bh_inference([FakeEval("f1", "1h", "fold1", "BTC", "trending", 0.01, q=0.2)])
+    assert single["bh_adjusted"].iloc[0] == pytest.approx(0.01)
+
+
+def test_fresh_ledger_has_six_tuple_bh_schema(tmp_path: object) -> None:
+    db = tmp_path / "ledger.db"  # type: ignore[operator]
+    with ResearchFamilyLedger(db) as ledger:
+        cols = {
+            row[1]
+            for row in ledger._conn.execute("PRAGMA table_info(bh_results)").fetchall()  # noqa: SLF001
+        }
+        assert "q" in cols
+
+
+def test_legacy_fivetuple_ledger_is_migrated(tmp_path: object) -> None:
+    """A pre-migration five-tuple ledger is migrated in place, history kept."""
+    db = tmp_path / "ledger.db"  # type: ignore[operator]
+    # Build a legacy five-tuple schema by hand.
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        """
+        CREATE TABLE research_family_members (
+            factor_id TEXT NOT NULL, family_id TEXT NOT NULL,
+            horizon TEXT NOT NULL, registered_at TEXT NOT NULL,
+            PRIMARY KEY (factor_id, horizon));
+        CREATE TABLE family_snapshots (
+            family_id TEXT PRIMARY KEY, protocol_sha TEXT NOT NULL,
+            bh_boundary TEXT NOT NULL, frozen_at TEXT NOT NULL);
+        CREATE TABLE bh_results (
+            factor_id TEXT NOT NULL, horizon TEXT NOT NULL, fold TEXT NOT NULL,
+            asset TEXT NOT NULL, regime TEXT NOT NULL,
+            p_value REAL NOT NULL, bh_adjusted REAL NOT NULL,
+            PRIMARY KEY (factor_id, horizon, fold, asset, regime));
+        INSERT INTO bh_results VALUES ('f1','1h','fold1','BTC','trending',0.01,0.02);
+        """,
+    )
+    conn.commit()
+    conn.close()
+
+    # Opening via ResearchFamilyLedger triggers the migration.
+    with ResearchFamilyLedger(db) as ledger:
+        cols = {
+            row[1]
+            for row in ledger._conn.execute("PRAGMA table_info(bh_results)").fetchall()  # noqa: SLF001
+        }
+        assert "q" in cols
+        row = ledger._conn.execute(  # noqa: SLF001
+            "SELECT q, p_value, bh_adjusted FROM bh_results",
+        ).fetchone()
+        assert row == (0.2, 0.01, 0.02)
+        # Legacy table preserved (history retained, not dropped).
+        legacy = ledger._conn.execute(  # noqa: SLF001
+            "SELECT name FROM sqlite_master WHERE name = 'bh_results_legacy_fivetuple'",
+        ).fetchone()
+        assert legacy is not None
+
+
+def test_migration_is_idempotent(tmp_path: object) -> None:
+    db = tmp_path / "ledger.db"  # type: ignore[operator]
+    with ResearchFamilyLedger(db) as ledger:
+        ledger.freeze_family(_make_snapshot())
+    # Re-opening must be a no-op (no error, schema unchanged).
+    with ResearchFamilyLedger(db) as ledger:
+        cols = {
+            row[1]
+            for row in ledger._conn.execute("PRAGMA table_info(bh_results)").fetchall()  # noqa: SLF001
+        }
+        assert "q" in cols

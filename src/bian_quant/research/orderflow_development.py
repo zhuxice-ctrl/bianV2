@@ -5,8 +5,14 @@ This module provides:
   triggers (BEFORE UPDATE/DELETE → RAISE(ABORT)).
 - ``benjamini_hochberg``: BH multiple-testing correction.
 - ``run_bh_inference``: BH correction across a full family, with the
-  five-tuple key ``(factor_id, horizon, fold, asset, regime)`` and
+  six-tuple key ``(factor_id, horizon, fold, asset, regime, q)`` and
   denominator = count of all valid p-values in the family.
+
+The BH key carries the ``q`` dimension so that q-sensitivity p-values
+(q ∈ {0.1, 0.2, 0.3}) all enter the family BH denominator — omitting q
+would amount to running 3× the tests while only reporting the best q,
+which is classic multiple-testing evasion and is forbidden by the
+family freeze.
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-BH_KEY_COLUMNS = ("factor_id", "horizon", "fold", "asset", "regime")
+BH_KEY_COLUMNS = ("factor_id", "horizon", "fold", "asset", "regime", "q")
 
 
 @dataclass(frozen=True)
@@ -57,9 +63,10 @@ def _create_ledger_schema(conn: sqlite3.Connection) -> None:
             fold        TEXT NOT NULL,
             asset       TEXT NOT NULL,
             regime      TEXT NOT NULL,
+            q           REAL NOT NULL DEFAULT 0.2,
             p_value     REAL NOT NULL,
             bh_adjusted REAL NOT NULL,
-            PRIMARY KEY (factor_id, horizon, fold, asset, regime)
+            PRIMARY KEY (factor_id, horizon, fold, asset, regime, q)
         );
 
         CREATE TRIGGER IF NOT EXISTS no_update_members
@@ -101,6 +108,66 @@ def _create_ledger_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_bh_results_to_six_tuple(conn: sqlite3.Connection) -> None:
+    """Migrate a legacy five-tuple ``bh_results`` table to the six-tuple schema.
+
+    The legacy table (Batch 4) had the five-tuple primary key
+    ``(factor_id, horizon, fold, asset, regime)`` and no ``q`` column.
+    The family freeze requires the six-tuple key including ``q`` so that
+    q-sensitivity p-values do not collide on the primary key.
+
+    Migration is append-only-preserving: legacy rows are copied verbatim
+    with ``q = 0.2`` (the primary value every legacy row represented),
+    the old table is *renamed* (not dropped) to ``bh_results_legacy_fivetuple``
+    so history is retained, and immutability triggers are recreated on
+    the new table.  The migration is idempotent: it is a no-op when the
+    ``q`` column already exists or the legacy rename has already run.
+    """
+    cur = conn.execute("PRAGMA table_info(bh_results)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "q" in columns:
+        # Already six-tuple; ensure the legacy rename marker is absent.
+        return
+
+    # Legacy five-tuple table present — migrate.
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS bh_results_six_tuple (
+            factor_id   TEXT NOT NULL,
+            horizon     TEXT NOT NULL,
+            fold        TEXT NOT NULL,
+            asset       TEXT NOT NULL,
+            regime      TEXT NOT NULL,
+            q           REAL NOT NULL DEFAULT 0.2,
+            p_value     REAL NOT NULL,
+            bh_adjusted REAL NOT NULL,
+            PRIMARY KEY (factor_id, horizon, fold, asset, regime, q)
+        );
+
+        INSERT INTO bh_results_six_tuple
+            (factor_id, horizon, fold, asset, regime, q, p_value, bh_adjusted)
+        SELECT factor_id, horizon, fold, asset, regime, 0.2, p_value, bh_adjusted
+        FROM bh_results;
+
+        ALTER TABLE bh_results RENAME TO bh_results_legacy_fivetuple;
+
+        ALTER TABLE bh_results_six_tuple RENAME TO bh_results;
+
+        CREATE TRIGGER IF NOT EXISTS no_update_bh
+        BEFORE UPDATE ON bh_results
+        BEGIN
+            SELECT RAISE(ABORT, 'bh_results is append-only');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS no_delete_bh
+        BEFORE DELETE ON bh_results
+        BEGIN
+            SELECT RAISE(ABORT, 'bh_results is append-only');
+        END;
+        """,
+    )
+
+
 class ResearchFamilyLedger:
     """Append-only ledger for research family membership and BH inference.
 
@@ -112,6 +179,7 @@ class ResearchFamilyLedger:
         self._db_path = str(db_path)
         self._conn = sqlite3.connect(self._db_path)
         _create_ledger_schema(self._conn)
+        _migrate_bh_results_to_six_tuple(self._conn)
         self._conn.commit()
 
     def close(self) -> None:
@@ -189,17 +257,19 @@ class ResearchFamilyLedger:
         """Store BH-adjusted p-values. Returns number of rows inserted."""
         rows_inserted = 0
         for _, row in results.iterrows():
+            q = float(row.get("q", 0.2))
             try:
                 self._conn.execute(
                     "INSERT INTO bh_results "
-                    "(factor_id, horizon, fold, asset, regime, p_value, bh_adjusted) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "(factor_id, horizon, fold, asset, regime, q, p_value, bh_adjusted) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         str(row["factor_id"]),
                         str(row["horizon"]),
                         str(row["fold"]),
                         str(row["asset"]),
                         str(row["regime"]),
+                        q,
                         float(row["p_value"]),
                         float(row["bh_adjusted"]),
                     ),
@@ -246,25 +316,26 @@ def run_bh_inference(
     """Run BH correction across all evaluations in a family.
 
     The BH denominator is the count of all valid p-values across the
-    entire family and all horizons. The BH key is the five-tuple
-    ``(factor_id, horizon, fold, asset, regime)``.
+    entire family and all horizons. The BH key is the six-tuple
+    ``(factor_id, horizon, fold, asset, regime, q)``.
 
     Parameters
     ----------
     evaluations
         List of objects with attributes: ``factor_name`` (or
         ``factor_id``), ``horizon``, ``fold``, ``asset``, ``regime``,
-        ``p_value``.
+        ``p_value``, and optionally ``q`` (defaults to ``0.2``).
 
     Returns
     -------
-    DataFrame with columns: factor_id, horizon, fold, asset, regime,
+    DataFrame with columns: factor_id, horizon, fold, asset, regime, q,
     p_value, bh_adjusted.
     """
     records: list[dict[str, object]] = []
     for ev in evaluations:
         factor_id = getattr(ev, "factor_name", getattr(ev, "factor_id", ""))
         horizon = getattr(ev, "horizon", "primary")
+        q = float(getattr(ev, "q", 0.2))
         records.append(
             {
                 "factor_id": factor_id,
@@ -272,6 +343,7 @@ def run_bh_inference(
                 "fold": ev.fold,
                 "asset": ev.asset,
                 "regime": ev.regime,
+                "q": q,
                 "p_value": ev.p_value,
             },
         )
