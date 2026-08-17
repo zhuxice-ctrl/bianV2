@@ -25,6 +25,7 @@ from bian_quant.reporting.decision import (
     zero_candidate_evidence,
 )
 from bian_quant.research.operations import (
+    _read_snapshot,
     analyze_cataloged_dual_horizon,
     evaluate_candidate_holdout,
     resolve_dual_horizon_snapshots,
@@ -368,3 +369,33 @@ def test_observed_factor_leaves_holdout_ledger_untouched(tmp_path: Path) -> None
             snapshot_id=ids["micro-4h"],
         )
     assert not (config.artifact_root / "holdout-access.sqlite").exists()
+
+
+def test_snapshot_reader_loads_taker_columns(tmp_path: Path) -> None:
+    """Verify _read_snapshot loads taker_buy_base and taker_buy_quote."""
+    frame = _frame("2024-07-01", periods=10, frequency="1h")
+    frame["taker_buy_base"] = frame["volume"] * 0.5
+    frame["taker_buy_quote"] = frame["quote_volume"] * 0.5
+    catalog = DatasetCatalog(tmp_path / "catalog.sqlite")
+    manifest = publish_snapshot(
+        frame,
+        SnapshotSpec(
+            name="test-taker",
+            layer=DatasetLayer.RESEARCH,
+            interval="1h",
+            horizon="micro",
+            parent_snapshot_ids=("parent-1",),
+            config_json="{}",
+        ),
+        tmp_path / "research",
+        catalog,
+    )
+    entry = catalog.get(manifest.snapshot_id)
+    result = _read_snapshot(entry)
+    assert {
+        "event_time",
+        "volume",
+        "quote_volume",
+        "taker_buy_base",
+        "taker_buy_quote",
+    } <= set(result.columns)

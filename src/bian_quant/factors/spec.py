@@ -37,6 +37,8 @@ class FactorSpec(BaseModel):
     valid_regimes: list[str]
     failure_conditions: list[str]
     parent_factors: list[str]
+    research_family: str | None = None
+    universe_id: str | None = None
 
     @field_validator("required_columns", "valid_regimes", "failure_conditions")
     @classmethod

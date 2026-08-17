@@ -120,3 +120,23 @@ def test_invalid_winsor_limits_are_rejected() -> None:
     payload["winsor_limits"] = (0.9, 0.1)
     with pytest.raises(ValueError, match="winsor_limits"):
         FactorSpec.model_validate(payload)
+
+
+def test_spec_defaults_family_and_universe_to_none() -> None:
+    spec = sample_spec()
+    assert spec.research_family is None
+    assert spec.universe_id is None
+
+
+def test_spec_keeps_family_and_universe_metadata() -> None:
+    spec = sample_spec().model_copy(
+        update={"research_family": "microstructure_orderflow", "universe_id": "popular-usdm-v1"}
+    )
+    assert spec.research_family == "microstructure_orderflow"
+    assert spec.universe_id == "popular-usdm-v1"
+
+
+def test_spec_family_and_universe_are_immutable() -> None:
+    spec = sample_spec().model_copy(update={"research_family": "microstructure_orderflow"})
+    with pytest.raises((TypeError, ValueError, AttributeError)):
+        spec.research_family = "other"  # type: ignore[misc]

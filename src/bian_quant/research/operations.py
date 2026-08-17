@@ -49,6 +49,8 @@ SNAPSHOT_COLUMNS = (
     "sum_open_interest_value",
     "oi_available_time",
     "availability_assumption",
+    "taker_buy_base",
+    "taker_buy_quote",
 )
 
 
