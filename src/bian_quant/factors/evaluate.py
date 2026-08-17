@@ -16,6 +16,7 @@ class FactorEvaluation:
     """Evaluation result for a single factor in a single fold/asset/regime slice."""
 
     factor_name: str
+    horizon: str = "primary"
     fold: str
     asset: str
     regime: str
@@ -78,6 +79,7 @@ def evaluate_factor(
     metadata: pd.DataFrame,
     *,
     fold: str,
+    horizon: str = "primary",
     winsor_limits: tuple[float, float] = (0.01, 0.99),
     train_factor: pd.Series | None = None,
 ) -> list[FactorEvaluation]:
@@ -168,6 +170,7 @@ def evaluate_factor(
         results.append(
             FactorEvaluation(
                 factor_name=str(factor.name or "factor"),
+                horizon=horizon,
                 fold=fold,
                 asset=str(asset),
                 regime=str(regime),
