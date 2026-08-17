@@ -16,7 +16,6 @@ class FactorEvaluation:
     """Evaluation result for a single factor in a single fold/asset/regime slice."""
 
     factor_name: str
-    horizon: str = "primary"
     fold: str
     asset: str
     regime: str
@@ -28,6 +27,7 @@ class FactorEvaluation:
     p_value: float
     ci_lower: float
     ci_upper: float
+    horizon: str = "primary"
 
 
 def _winsorize(series: pd.Series, lower: float, upper: float) -> pd.Series:

@@ -66,6 +66,20 @@ def test_get_snapshot_returns_none_for_unknown_family(tmp_path: object) -> None:
         assert ledger.get_snapshot("nonexistent") is None
 
 
+def test_family_snapshot_mismatch_is_rejected(tmp_path: object) -> None:
+    db = tmp_path / "ledger.db"  # type: ignore[operator]
+    with ResearchFamilyLedger(db) as ledger:
+        snapshot = _make_snapshot()
+        ledger.freeze_family(snapshot)
+        with pytest.raises(ValueError, match="FAMILY_MEMBERSHIP_MISMATCH"):
+            ledger.assert_frozen(
+                snapshot.family_id,
+                ("other@1.0.0",),
+                protocol_sha=snapshot.protocol_sha,
+                bh_boundary=snapshot.bh_boundary,
+            )
+
+
 def test_update_on_members_is_rejected(tmp_path: object) -> None:
     db = tmp_path / "ledger.db"  # type: ignore[operator]
     with ResearchFamilyLedger(db) as ledger:

@@ -75,7 +75,7 @@ def test_label_is_isolated_from_factor_modules() -> None:
 
 def _label_frame(n_bars: int = 5, *, start: str = "2024-07-01") -> pd.DataFrame:
     times = pd.date_range(start, periods=n_bars, freq="h", tz="UTC")
-    opens = [100.0 * (1.1 ** i) for i in range(n_bars)]
+    opens = [100.0 * (1.1**i) for i in range(n_bars)]
     return pd.DataFrame(
         {
             "asset": "BTCUSDT",
@@ -164,6 +164,15 @@ def test_oolabel_multi_asset() -> None:
     btc_mask = frame["asset"] == "BTC"
     btc_values = values[btc_mask]
     assert btc_values.iloc[0] == pytest.approx(np.log(121.0 / 110.0))
+
+
+def test_oolabel_sorts_each_asset_by_event_time() -> None:
+    frame = _label_frame(5).sample(frac=1.0, random_state=7).reset_index(drop=True)
+    values, reasons = forward_open_to_open_log_return(frame, holding_bars=1)
+    first_time = frame["event_time"].min()
+    row = frame[frame["event_time"] == first_time].index[0]
+    assert reasons.loc[row] == ""
+    assert values.loc[row] == pytest.approx(np.log(121.0 / 110.0))
 
 
 def test_oolabel_holding_bars_must_be_positive() -> None:

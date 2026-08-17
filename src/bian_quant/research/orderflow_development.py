@@ -5,7 +5,7 @@ This module provides:
   triggers (BEFORE UPDATE/DELETE → RAISE(ABORT)).
 - ``benjamini_hochberg``: BH multiple-testing correction.
 - ``run_bh_inference``: BH correction across a full family, with the
-  six-tuple key ``(factor_id, horizon, fold, asset, regime)`` and
+  five-tuple key ``(factor_id, horizon, fold, asset, regime)`` and
   denominator = count of all valid p-values in the family.
 """
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -165,6 +166,25 @@ class ResearchFamilyLedger:
             bh_boundary=row[2],
         )
 
+    def assert_frozen(
+        self,
+        family_id: str,
+        members: tuple[str, ...],
+        *,
+        protocol_sha: str,
+        bh_boundary: str,
+    ) -> None:
+        """Fail closed if a frozen family identity has changed."""
+        snapshot = self.get_snapshot(family_id)
+        if snapshot is None:
+            raise ValueError(f"FAMILY_SNAPSHOT_MISSING:{family_id}")
+        if (
+            snapshot.members != tuple(sorted(members))
+            or snapshot.protocol_sha != protocol_sha
+            or snapshot.bh_boundary != bh_boundary
+        ):
+            raise ValueError(f"FAMILY_MEMBERSHIP_MISMATCH:{family_id}")
+
     def store_bh_results(self, results: pd.DataFrame) -> int:
         """Store BH-adjusted p-values. Returns number of rows inserted."""
         rows_inserted = 0
@@ -219,7 +239,7 @@ def benjamini_hochberg(p_values: np.ndarray) -> np.ndarray:
 
 
 def run_bh_inference(
-    evaluations: list,
+    evaluations: list[Any],
     *,
     family_id: str = "microstructure_orderflow",
 ) -> pd.DataFrame:

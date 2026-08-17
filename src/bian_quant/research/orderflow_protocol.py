@@ -132,7 +132,20 @@ def drift_weights_open_to_open(
     ValueError
         If ``1 + portfolio_return <= 0`` (nonpositive denominator).
     """
-    aligned = pd.DataFrame({"target": target, "ret": open_returns}).fillna(0.0)
+    index = target.index.union(open_returns.index)
+    aligned = pd.DataFrame(
+        {
+            "target": target.reindex(index).fillna(0.0),
+            "ret": open_returns.reindex(index),
+        }
+    )
+    active = aligned["target"] != 0.0
+    if (
+        aligned.loc[active, "ret"].isna().any()
+        or not np.isfinite(aligned.loc[active, "ret"].to_numpy(dtype=float)).all()
+    ):
+        raise ValueError("EXECUTION_BAR_INVALID: active asset open return is missing")
+    aligned["ret"] = aligned["ret"].fillna(0.0)
     portfolio_return = float((aligned["target"] * aligned["ret"]).sum())
     denominator = 1.0 + portfolio_return
     if denominator <= 0:

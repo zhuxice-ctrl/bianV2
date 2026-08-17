@@ -35,29 +35,31 @@ def taker_orderflow_imbalance(
     if missing_cols:
         raise ValueError(f"missing required columns: {sorted(missing_cols)}")
 
-    work = frame[
-        ["asset", "event_time", "available_time", "volume", "taker_buy_base"]
-    ].copy()
+    work = frame[["asset", "event_time", "available_time", "volume", "taker_buy_base"]].copy()
     work["_values"] = np.nan
     work["_reasons"] = ""
     work["_buy_share"] = np.nan
 
     # --- identify invalid inputs ---
-    vol_zero = work["volume"] == 0
-    vol_nan = work["volume"].isna()
-    taker_missing = work["taker_buy_base"].isna()
+    vol_zero = ~np.isfinite(work["volume"].to_numpy(dtype=float)) | (work["volume"] <= 0)
+    taker_missing = ~np.isfinite(work["taker_buy_base"].to_numpy(dtype=float))
 
-    work.loc[vol_zero | vol_nan, "_reasons"] = "TAKER_VOLUME_ZERO"
-    work.loc[
-        taker_missing & ~vol_zero & ~vol_nan, "_reasons"
-    ] = "TAKER_FIELD_MISSING"
+    work.loc[vol_zero, "_reasons"] = "TAKER_VOLUME_ZERO"
+    work.loc[taker_missing & ~vol_zero, "_reasons"] = "TAKER_FIELD_MISSING"
 
     # --- compute buy_share for valid rows ---
     valid_mask = work["_reasons"] == ""
     work.loc[valid_mask, "_buy_share"] = (
-        work.loc[valid_mask, "taker_buy_base"]
-        / work.loc[valid_mask, "volume"]
+        work.loc[valid_mask, "taker_buy_base"] / work.loc[valid_mask, "volume"]
     )
+
+    invalid_ratio = valid_mask & (
+        ~np.isfinite(work["_buy_share"].to_numpy(dtype=float))
+        | (work["_buy_share"] < 0)
+        | (work["_buy_share"] > 1)
+    )
+    work.loc[invalid_ratio, "_reasons"] = "TAKER_RATIO_INVALID"
+    valid_mask = work["_reasons"] == ""
 
     # --- cross-sectional median/MAD per available_time ---
     for _ts, group in work.loc[valid_mask].groupby("available_time", sort=True):
@@ -67,8 +69,7 @@ def taker_orderflow_imbalance(
             continue
         median = float(peers.median())
         mad = float((peers - median).abs().median())
-        if mad == 0:
-            work.loc[group.index, "_values"] = 0.0
+        if mad <= 0:
             work.loc[group.index, "_reasons"] = "ZERO_CROSS_SECTIONAL_MAD_TAKER"
             continue
         z = (peers - median) / (mad * MAD_SCALE)

@@ -47,12 +47,12 @@ def test_signal_clips_at_five() -> None:
     """One extreme outlier should clip at 5."""
     frame = _make_frame(n_assets=5, n_bars=1)
     # make one asset have an extreme buy share
-    frame.loc[frame["asset"] == "ASSET0", "taker_buy_base"] = frame.loc[
-        frame["asset"] == "ASSET0", "volume"
-    ] * 0.99
-    frame.loc[frame["asset"] == "ASSET1", "taker_buy_base"] = frame.loc[
-        frame["asset"] == "ASSET1", "volume"
-    ] * 0.01
+    frame.loc[frame["asset"] == "ASSET0", "taker_buy_base"] = (
+        frame.loc[frame["asset"] == "ASSET0", "volume"] * 0.99
+    )
+    frame.loc[frame["asset"] == "ASSET1", "taker_buy_base"] = (
+        frame.loc[frame["asset"] == "ASSET1", "volume"] * 0.01
+    )
     values, reasons = taker_orderflow_imbalance(frame)
     assert values.abs().max() <= 5.0
 
@@ -63,7 +63,7 @@ def test_signal_zero_mad_all_equal() -> None:
     frame["taker_buy_base"] = frame["volume"] * 0.5
     values, reasons = taker_orderflow_imbalance(frame)
     assert (reasons == "ZERO_CROSS_SECTIONAL_MAD_TAKER").all()
-    assert (values == 0.0).all()
+    assert values.isna().all()
 
 
 def test_signal_volume_zero() -> None:
@@ -95,7 +95,20 @@ def test_buy_share_range_zero_to_one() -> None:
     # Normal data: buy < vol
     values, reasons = taker_orderflow_imbalance(frame)
     assert (reasons == "").sum() > 0
-    # If buy > vol, that's data corruption but we don't enforce here
+    frame.loc[frame["asset"] == "ASSET0", "taker_buy_base"] = (
+        2.0 * frame.loc[frame["asset"] == "ASSET0", "volume"]
+    )
+    _, invalid_reasons = taker_orderflow_imbalance(frame)
+    assert invalid_reasons.loc[frame["asset"] == "ASSET0"].iloc[0] == "TAKER_RATIO_INVALID"
+
+
+def test_signal_rejects_negative_or_nonfinite_volume() -> None:
+    frame = _make_frame(n_assets=3, n_bars=1)
+    frame.loc[frame["asset"] == "ASSET0", "volume"] = -1.0
+    frame.loc[frame["asset"] == "ASSET1", "volume"] = np.inf
+    _, reasons = taker_orderflow_imbalance(frame)
+    assert reasons.loc[frame["asset"] == "ASSET0"].iloc[0] == "TAKER_VOLUME_ZERO"
+    assert reasons.loc[frame["asset"] == "ASSET1"].iloc[0] == "TAKER_VOLUME_ZERO"
 
 
 def test_signal_row_order_independence() -> None:
@@ -105,6 +118,16 @@ def test_signal_row_order_independence() -> None:
     v2, r2 = taker_orderflow_imbalance(shuffled)
     # Same values regardless of row order
     assert np.allclose(np.sort(v1.values), np.sort(v2.values))
+
+
+def test_invalid_ratio_is_excluded_from_peer_statistics() -> None:
+    frame = _make_frame(n_assets=4, n_bars=1)
+    frame.loc[frame["asset"] == "ASSET0", "taker_buy_base"] = (
+        2.0 * frame.loc[frame["asset"] == "ASSET0", "volume"]
+    )
+    values, reasons = taker_orderflow_imbalance(frame)
+    assert reasons.loc[frame["asset"] == "ASSET0"].iloc[0] == "TAKER_RATIO_INVALID"
+    assert pd.isna(values.loc[frame["asset"] == "ASSET0"].iloc[0])
 
 
 def test_signal_future_prefix_invariance() -> None:

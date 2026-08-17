@@ -77,7 +77,13 @@ def forward_open_to_open_log_return(
     values.name = f"forward_open_to_open_log_return_{holding_bars}"
     reasons.name = "forward_open_to_open_reason"
 
-    for _asset, asset_frame in frame.groupby("asset", sort=True):
+    working = frame.copy()
+    working["event_time"] = pd.to_datetime(working["event_time"], utc=True, errors="coerce")
+    if working["event_time"].isna().any():
+        raise ValueError("event_time must be UTC-coercible")
+
+    for _asset, asset_frame in working.groupby("asset", sort=True):
+        asset_frame = asset_frame.sort_values("event_time")
         idx = asset_frame.index
         et = asset_frame["event_time"].to_numpy()
         opens = asset_frame["open"].to_numpy(dtype=float)
@@ -109,9 +115,7 @@ def forward_open_to_open_log_return(
 
             trigger: list[str] = []
             for j in range(i + 1, exit_bar + 1):
-                for field_name, arr in zip(
-                    _EXECUTION_FIELDS, (opens, vols, qvs), strict=True
-                ):
+                for field_name, arr in zip(_EXECUTION_FIELDS, (opens, vols, qvs), strict=True):
                     val = arr[j]
                     if (not np.isfinite(val) or val <= 0) and field_name not in trigger:
                         trigger.append(field_name)

@@ -254,6 +254,13 @@ def test_drift_handles_missing_assets() -> None:
     assert drifted.loc["C"] == pytest.approx(0.0)
 
 
+def test_drift_rejects_missing_return_for_active_asset() -> None:
+    target = pd.Series({"A": 0.5, "B": -0.5})
+    open_returns = pd.Series({"A": 0.1})
+    with pytest.raises(ValueError, match="EXECUTION_BAR_INVALID"):
+        drift_weights_open_to_open(target, open_returns)
+
+
 def test_prefix_invariance_drift() -> None:
     """Adding a zero-weight asset should not change drifted weights."""
     target = pd.Series({"A": 0.5, "B": -0.5})
