@@ -27,6 +27,7 @@ from bian_quant.reporting.decision import (
 from bian_quant.research.operations import (
     _read_snapshot,
     analyze_cataloged_dual_horizon,
+    analyze_cataloged_orderflow_development,
     evaluate_candidate_holdout,
     resolve_dual_horizon_snapshots,
 )
@@ -399,3 +400,56 @@ def test_snapshot_reader_loads_taker_columns(tmp_path: Path) -> None:
         "taker_buy_base",
         "taker_buy_quote",
     } <= set(result.columns)
+
+
+def test_cataloged_orderflow_evidence_is_development_only(tmp_path: Path) -> None:
+    """Verify orderflow development evidence is development-only (no Holdout)."""
+    config = _config(tmp_path)
+
+    frame = _frame("2024-07-01", periods=200, frequency="1h")
+    frame["open"] = frame["close"]
+    for asset, ratio in [("BTCUSDT", 0.55), ("ETHUSDT", 0.45), ("BNBUSDT", 0.35)]:
+        mask = frame["asset"] == asset
+        frame.loc[mask, "taker_buy_base"] = frame.loc[mask, "volume"] * ratio
+    frame["taker_buy_quote"] = frame["quote_volume"] * 0.45
+
+    catalog = DatasetCatalog(config.catalog_path)
+    manifest = publish_snapshot(
+        frame,
+        SnapshotSpec(
+            name="micro-1h",
+            layer=DatasetLayer.RESEARCH,
+            interval="1h",
+            horizon="micro",
+            parent_snapshot_ids=("parent-1",),
+            config_json=_snapshot_config(config),
+        ),
+        config.research_root,
+        catalog,
+    )
+
+    config.artifact_root.mkdir(parents=True, exist_ok=True)
+    result = analyze_cataloged_orderflow_development(config, code_sha=CODE_SHA)
+    assert result.status == "passed"
+    assert result.holdout_accessed is False
+    assert not (config.artifact_root / "holdout-access.sqlite").exists()
+    assert result.factor_id == "taker_orderflow_imbalance"
+    assert result.snapshot_ids == (manifest.snapshot_id,)
+    assert result.protocol_sha
+    # reason_code_counts may be empty if all signals are valid
+
+    # Verify evidence artifact was written
+    import json as _json
+
+    evidence = _json.loads(result.artifact_path.read_text(encoding="utf-8"))
+    assert evidence["status"] == "passed"
+    assert evidence["holdout_accessed"] is False
+    assert evidence["factor_id"] == "taker_orderflow_imbalance"
+    assert "protocol_sha" in evidence
+    assert "input_identity" in evidence
+    assert "reason_code_counts" in evidence
+    assert "horizon_details" in evidence
+    assert "bh_details" in evidence
+    assert "portfolio_diagnostics" in evidence
+    assert "portfolio_summary" in evidence
+    assert set(evidence["horizon_details"]) == {"1h", "2h", "4h"}

@@ -20,9 +20,13 @@ from bian_quant.experiments.holdout import HoldoutLedger
 from bian_quant.experiments.models import LockedHoldout, RunManifest, RunStatus
 from bian_quant.experiments.registry import ExperimentRegistry
 from bian_quant.factors.dual_horizon import compute_dual_horizon_factor_columns
-from bian_quant.factors.labels import forward_log_return
+from bian_quant.factors.labels import (
+    forward_log_return,
+    forward_open_to_open_log_return,
+)
 from bian_quant.factors.registry import FactorRegistry
 from bian_quant.factors.spec import FactorSpec, FactorState
+from bian_quant.factors.taker_orderflow import taker_orderflow_imbalance
 from bian_quant.regimes.macro import (
     classify_macro_history,
     macro_evidence_payload,
@@ -30,6 +34,16 @@ from bian_quant.regimes.macro import (
 )
 from bian_quant.reporting.decision import DecisionEvidence, write_decision_packet
 from bian_quant.research.dual_horizon import run_dual_horizon_screening
+from bian_quant.research.orderflow_development import (
+    FamilySnapshot,
+    ResearchFamilyLedger,
+    run_bh_inference,
+)
+from bian_quant.research.orderflow_protocol import (
+    build_orderflow_targets,
+    compute_fee,
+    compute_turnover_l1,
+)
 
 REQUIRED_SNAPSHOTS = ("macro-1d", "macro-4h", "micro-1h", "micro-4h")
 SNAPSHOT_COLUMNS = (
@@ -85,6 +99,21 @@ class HoldoutEvaluationResult:
     factor_state: FactorState
     artifact_path: Path
     reason_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OrderflowDevelopmentResult:
+    """Development-only evidence result for orderflow factor."""
+
+    run_id: str
+    status: str
+    artifact_path: Path
+    snapshot_ids: tuple[str, ...]
+    holdout_accessed: bool
+    factor_id: str
+    protocol_sha: str
+    reason_code_counts: dict[str, int]
+    error_code: str | None = None
 
 
 def resolve_dual_horizon_snapshots(
@@ -429,6 +458,313 @@ def evaluate_candidate_holdout(
                 },
             )
             raise
+
+
+def analyze_cataloged_orderflow_development(
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    snapshot_code_sha: str | None = None,
+) -> OrderflowDevelopmentResult:
+    """Run cataloged orderflow development evidence (Development-only).
+
+    Reads only the locked micro-1h snapshot, computes taker orderflow
+    signal and open-to-open labels, builds portfolio diagnostics, and
+    writes development evidence.  Never accesses Holdout, paper, live,
+    or recovery interfaces.
+
+    A real cataloged Development run requires a separate explicit
+    authorization.
+    """
+    from math import erfc, sqrt
+
+    snapshot_code_sha = snapshot_code_sha or code_sha
+    factor_id = "taker_orderflow_imbalance"
+    factor_version = "1.0.0"
+    family_id = "microstructure_orderflow"
+
+    try:
+        # --- Resolve micro-1h snapshot ---
+        catalog = DatasetCatalog(config.catalog_path)
+        expected = {
+            "assets": list(config.assets),
+            "macro_start": config.macro_start.isoformat(),
+            "micro_start": config.micro_start.isoformat(),
+            "as_of": config.as_of.isoformat(),
+            "code_sha": snapshot_code_sha,
+        }
+        matches: list[CatalogEntry] = []
+        for entry in catalog.find_by_name("micro-1h"):
+            try:
+                identity = json.loads(entry.manifest.config_json)
+            except json.JSONDecodeError as error:
+                raise AnalysisBlocked("SNAPSHOT_CONFIG_INVALID:micro-1h") from error
+            if all(identity.get(key) == value for key, value in expected.items()):
+                matches.append(entry)
+        if not matches:
+            raise AnalysisBlocked("SNAPSHOT_MISSING:micro-1h")
+        if len(matches) != 1:
+            raise AnalysisBlocked("SNAPSHOT_AMBIGUOUS:micro-1h")
+        entry = matches[0]
+        if entry.manifest.layer != DatasetLayer.RESEARCH:
+            raise AnalysisBlocked("SNAPSHOT_LAYER_INVALID:micro-1h")
+        if not entry.path.is_file():
+            raise AnalysisBlocked("SNAPSHOT_FILE_MISSING:micro-1h")
+
+        # --- Read snapshot ---
+        frame = _read_snapshot(entry)
+        if frame.empty:
+            raise AnalysisBlocked("SNAPSHOT_EMPTY")
+
+        # --- Resolve popular-universe eligibility ---
+        snapshots = CatalogedSnapshots(
+            entries={"micro-1h": entry},
+            oi_delay_entries={},
+        )
+        _eligibility_frame, universe_artifact_ids = _load_popular_universe_eligibility(
+            snapshots, config
+        )
+
+        # --- Compute protocol hash ---
+        protocol_payload = {
+            "factor_id": factor_id,
+            "version": factor_version,
+            "family": family_id,
+            "code_sha": code_sha,
+            "snapshot_code_sha": snapshot_code_sha,
+            "snapshot_id": entry.manifest.snapshot_id,
+        }
+        protocol_sha = hashlib.sha256(
+            json.dumps(protocol_payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+
+        # --- Freeze and assert family ledger ---
+        ledger_path = config.artifact_root / "research-family-ledger.sqlite"
+        family_members = (f"{factor_id}@{factor_version}",)
+        with ResearchFamilyLedger(ledger_path) as ledger:
+            snapshot = ledger.get_snapshot(family_id)
+            if snapshot is None:
+                ledger.freeze_family(
+                    FamilySnapshot(
+                        family_id=family_id,
+                        members=family_members,
+                        protocol_sha=protocol_sha,
+                        bh_boundary="development",
+                    )
+                )
+            ledger.assert_frozen(
+                family_id,
+                family_members,
+                protocol_sha=protocol_sha,
+                bh_boundary="development",
+            )
+
+        # --- Compute signal ---
+        signal_values, signal_reasons = taker_orderflow_imbalance(frame)
+
+        # --- Reason-code counts ---
+        reason_code_counts: dict[str, int] = {}
+        for reason in signal_reasons:
+            if reason:
+                reason_code_counts[reason] = reason_code_counts.get(reason, 0) + 1
+
+        # --- Compute labels for 1h, 2h, 4h ---
+        horizon_details: dict[str, dict[str, Any]] = {}
+        for holding_bars, horizon in [(1, "1h"), (2, "2h"), (4, "4h")]:
+            label_values, label_reasons = forward_open_to_open_log_return(
+                frame, holding_bars=holding_bars
+            )
+            for reason in label_reasons:
+                if reason:
+                    key = f"{horizon}:{reason}"
+                    reason_code_counts[key] = reason_code_counts.get(key, 0) + 1
+
+            valid_count = int(label_values.notna().sum())
+            horizon_details[horizon] = {
+                "holding_bars": holding_bars,
+                "valid_count": valid_count,
+                "missing_count": int(label_values.isna().sum()),
+            }
+
+        # --- Compute portfolio diagnostics ---
+        signal_frame = frame.copy()
+        signal_frame["signal"] = signal_values.values
+
+        portfolio_diagnostics: list[dict[str, Any]] = []
+        prev_weights: pd.Series | None = None
+        taker_fee_bps = 2.0
+
+        for ts, group in signal_frame.groupby("available_time", sort=True):
+            valid = group.dropna(subset=["signal"])
+            if valid.empty:
+                continue
+            signals_df = valid[["asset", "signal"]].copy()
+            result = build_orderflow_targets(signals_df)
+
+            if result.reason:
+                if prev_weights is not None:
+                    turnover = compute_turnover_l1(
+                        pd.Series(0.0, index=result.weights.index),
+                        prev_weights.reindex(result.weights.index).fillna(0.0),
+                    )
+                else:
+                    turnover = 0.0
+                fee = compute_fee(turnover, taker_fee_bps)
+                portfolio_diagnostics.append(
+                    {
+                        "timestamp": str(ts),
+                        "reason": result.reason,
+                        "long_count": 0,
+                        "short_count": 0,
+                        "turnover_l1": turnover,
+                        "fee": fee,
+                    }
+                )
+                prev_weights = pd.Series(0.0, index=result.weights.index)
+                continue
+
+            if prev_weights is None:
+                turnover = 1.0
+            else:
+                turnover = compute_turnover_l1(
+                    result.weights,
+                    prev_weights.reindex(result.weights.index).fillna(0.0),
+                )
+            fee = compute_fee(turnover, taker_fee_bps)
+            portfolio_diagnostics.append(
+                {
+                    "timestamp": str(ts),
+                    "reason": "",
+                    "long_count": result.long_count,
+                    "short_count": result.short_count,
+                    "turnover_l1": turnover,
+                    "fee": fee,
+                }
+            )
+            prev_weights = result.weights
+
+        # --- Compute BH details ---
+        bh_evaluations: list[Any] = []
+        for holding_bars, horizon in [(1, "1h"), (2, "2h"), (4, "4h")]:
+            label_values, _ = forward_open_to_open_log_return(frame, holding_bars=holding_bars)
+            sig_frame = frame.copy()
+            sig_frame["signal"] = signal_values.values
+            sig_frame["label"] = label_values.values
+
+            ics: list[float] = []
+            for _ts, group in sig_frame.groupby("available_time", sort=True):
+                valid = group.dropna(subset=["signal", "label"])
+                if len(valid) < 3:
+                    continue
+                ic = valid["signal"].corr(valid["label"], method="spearman")
+                if np.isfinite(ic):
+                    ics.append(float(ic))
+
+            if len(ics) < 2:
+                continue
+
+            mean_ic = float(np.mean(ics))
+            std_ic = float(np.std(ics, ddof=1))
+            n_ic = len(ics)
+            if std_ic > 0:
+                t_stat = mean_ic / (std_ic / sqrt(n_ic))
+                p_value = float(erfc(abs(t_stat) / sqrt(2.0)))
+            else:
+                p_value = 1.0
+
+            bh_evaluations.append(
+                type(
+                    "Ev",
+                    (),
+                    {
+                        "factor_name": factor_id,
+                        "horizon": horizon,
+                        "fold": "development",
+                        "asset": "all",
+                        "regime": "all",
+                        "p_value": p_value,
+                    },
+                )()
+            )
+
+        bh_results = run_bh_inference(bh_evaluations, family_id=family_id)
+
+        if not bh_results.empty:
+            with ResearchFamilyLedger(ledger_path) as ledger:
+                ledger.store_bh_results(bh_results)
+
+        bh_details = bh_results.to_dict(orient="records") if not bh_results.empty else []
+
+        # --- Write evidence ---
+        run_id = f"orderflow-dev-{code_sha[:8]}"
+        artifact_path = config.artifact_root / "orderflow-development" / f"{run_id}.json"
+
+        evidence = {
+            "run_id": run_id,
+            "status": "passed",
+            "factor_id": factor_id,
+            "factor_version": factor_version,
+            "family_id": family_id,
+            "protocol_sha": protocol_sha,
+            "code_sha": code_sha,
+            "snapshot_code_sha": snapshot_code_sha,
+            "snapshot_ids": [entry.manifest.snapshot_id],
+            "input_identity": {
+                "snapshot_id": entry.manifest.snapshot_id,
+                "snapshot_name": entry.manifest.name,
+                "popular_universe_artifact_ids": universe_artifact_ids,
+            },
+            "holdout_accessed": False,
+            "reason_code_counts": reason_code_counts,
+            "horizon_details": horizon_details,
+            "bh_details": bh_details,
+            "portfolio_diagnostics": portfolio_diagnostics[:200],
+            "portfolio_summary": {
+                "total_bars": len(portfolio_diagnostics),
+                "flat_bars": sum(1 for d in portfolio_diagnostics if d["reason"]),
+                "active_bars": sum(1 for d in portfolio_diagnostics if not d["reason"]),
+                "total_turnover_l1": float(sum(d["turnover_l1"] for d in portfolio_diagnostics)),
+                "total_fee": float(sum(d["fee"] for d in portfolio_diagnostics)),
+            },
+        }
+
+        _write_exclusive_json(artifact_path, evidence)
+
+        return OrderflowDevelopmentResult(
+            run_id=run_id,
+            status="passed",
+            artifact_path=artifact_path,
+            snapshot_ids=(entry.manifest.snapshot_id,),
+            holdout_accessed=False,
+            factor_id=factor_id,
+            protocol_sha=protocol_sha,
+            reason_code_counts=reason_code_counts,
+        )
+    except Exception as error:
+        reason = str(error) if isinstance(error, AnalysisBlocked) else f"DEVELOPMENT_FAILED:{error}"
+        run_id = f"orderflow-dev-{code_sha[:8]}"
+        artifact_path = config.artifact_root / "orderflow-development" / f"{run_id}.json"
+        if not artifact_path.exists():
+            _write_exclusive_json(
+                artifact_path,
+                {
+                    "run_id": run_id,
+                    "status": "blocked",
+                    "error_code": reason,
+                    "holdout_accessed": False,
+                },
+            )
+        return OrderflowDevelopmentResult(
+            run_id=run_id,
+            status="blocked",
+            artifact_path=artifact_path,
+            snapshot_ids=(),
+            holdout_accessed=False,
+            factor_id=factor_id,
+            protocol_sha="",
+            reason_code_counts={},
+            error_code=reason,
+        )
 
 
 def _load_popular_universe_eligibility(

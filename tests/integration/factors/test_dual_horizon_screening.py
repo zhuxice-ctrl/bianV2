@@ -616,3 +616,87 @@ class TestRunDualHorizonScreening:
             "observed",
             "researching",
         }
+
+
+def test_orderflow_development_evidence_does_not_access_holdout(
+    tmp_path: Path,
+) -> None:
+    """Verify orderflow development evidence never touches Holdout."""
+    import json as _json
+
+    from bian_quant.data.acquisition import DualHorizonAcquisition
+    from bian_quant.data.catalog import DatasetCatalog
+    from bian_quant.data.contracts import DatasetLayer
+    from bian_quant.data.snapshots import SnapshotSpec, publish_snapshot
+    from bian_quant.research.operations import (
+        analyze_cataloged_orderflow_development,
+    )
+
+    base = DualHorizonAcquisition.from_yaml(
+        Path("configs/experiments/dual_horizon_derivatives.yaml")
+    )
+    config = base.model_copy(
+        update={
+            "raw_root": tmp_path / "raw",
+            "canonical_root": tmp_path / "canonical",
+            "research_root": tmp_path / "research",
+            "artifact_root": tmp_path / "artifacts",
+            "catalog_path": tmp_path / "catalog.sqlite",
+            "experiment_registry_path": tmp_path / "experiments.sqlite",
+            "factor_registry_path": tmp_path / "factors.sqlite",
+        }
+    )
+
+    dates = pd.date_range("2024-07-01", periods=100, freq="1h", tz="UTC")
+    rows: list[dict[str, Any]] = []
+    for asset in ("BTCUSDT", "ETHUSDT", "BNBUSDT"):
+        for i, t in enumerate(dates):
+            close = 100.0 + i * 0.01
+            vol = 1000.0 + i
+            rows.append(
+                {
+                    "asset": asset,
+                    "event_time": t,
+                    "available_time": t,
+                    "open": close,
+                    "close": close,
+                    "high": close + 1,
+                    "low": close - 1,
+                    "volume": vol,
+                    "quote_volume": vol * close,
+                    "taker_buy_base": vol
+                    * (0.55 if asset == "BTCUSDT" else 0.45 if asset == "ETHUSDT" else 0.35),  # noqa: E501
+                    "taker_buy_quote": vol * close * 0.45,
+                }
+            )
+    frame = pd.DataFrame(rows)
+
+    catalog = DatasetCatalog(config.catalog_path)
+    publish_snapshot(
+        frame,
+        SnapshotSpec(
+            name="micro-1h",
+            layer=DatasetLayer.RESEARCH,
+            interval="1h",
+            horizon="micro",
+            parent_snapshot_ids=("parent-1",),
+            config_json=_json.dumps(
+                {
+                    "assets": list(config.assets),
+                    "macro_start": config.macro_start.isoformat(),
+                    "micro_start": config.micro_start.isoformat(),
+                    "as_of": config.as_of.isoformat(),
+                    "code_sha": "a" * 40,
+                },
+                sort_keys=True,
+            ),
+        ),
+        config.research_root,
+        catalog,
+    )
+
+    config.artifact_root.mkdir(parents=True, exist_ok=True)
+    result = analyze_cataloged_orderflow_development(config, code_sha="a" * 40)
+    assert result.status == "passed"
+    assert result.holdout_accessed is False
+    assert not (config.artifact_root / "holdout-access.sqlite").exists()
