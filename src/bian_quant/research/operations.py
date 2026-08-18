@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -37,11 +37,13 @@ from bian_quant.research.dual_horizon import (
     _apply_membership_lineage,
     run_dual_horizon_screening,
 )
+from bian_quant.research.orderflow_batch7 import build_orderflow_gate_inputs
 from bian_quant.research.orderflow_development import (
     FamilySnapshot,
     ResearchFamilyLedger,
     run_bh_inference,
 )
+from bian_quant.research.orderflow_gate import GatePreconditions, evaluate_development_gate
 from bian_quant.research.orderflow_protocol import (
     build_orderflow_targets,
     compute_fee,
@@ -118,6 +120,22 @@ class OrderflowDevelopmentResult:
     protocol_sha: str
     reason_code_counts: dict[str, int]
     development_gate_status: str
+    error_code: str | None = None
+
+
+@dataclass(frozen=True)
+class OrderflowGateRunResult:
+    """Result of a real, Development-only orderflow gate run."""
+
+    run_id: str
+    status: str
+    gate_verdict: str
+    artifact_path: Path
+    snapshot_ids: tuple[str, ...]
+    holdout_accessed: bool
+    development_rows: int
+    slice_count: int
+    preregistered_unit_count: int
     error_code: str | None = None
 
 
@@ -808,6 +826,172 @@ def analyze_cataloged_orderflow_development(
             protocol_sha="",
             reason_code_counts={},
             development_gate_status="not_evaluated",
+            error_code=reason,
+        )
+
+
+def analyze_cataloged_orderflow_gate(
+    config: DualHorizonAcquisition,
+    *,
+    code_sha: str,
+    snapshot_code_sha: str | None = None,
+) -> OrderflowGateRunResult:
+    """Run the fully wired orderflow Development gate on locked data.
+
+    This is the only production entry point for Batch 7.  It reads one locked
+    research snapshot, filters it to the cataloged popular universe, builds
+    in-memory slice evaluations, and writes a Development-only report.  It
+    never accesses Holdout, Candidate, Paper, Live, recovery, or download APIs.
+    """
+    snapshot_code_sha = snapshot_code_sha or code_sha
+    factor_id = "taker_orderflow_imbalance"
+    family_id = "microstructure_orderflow"
+    run_id = f"orderflow-gate-dev-{code_sha[:8]}"
+    artifact_path = config.artifact_root / "orderflow-development-gate" / f"{run_id}.json"
+
+    try:
+        catalog = DatasetCatalog(config.catalog_path)
+        expected = {
+            "assets": list(config.assets),
+            "macro_start": config.macro_start.isoformat(),
+            "micro_start": config.micro_start.isoformat(),
+            "as_of": config.as_of.isoformat(),
+            "code_sha": snapshot_code_sha,
+        }
+        matches: list[CatalogEntry] = []
+        for entry in catalog.find_by_name("micro-1h"):
+            identity = json.loads(entry.manifest.config_json)
+            if all(identity.get(key) == value for key, value in expected.items()):
+                matches.append(entry)
+        if len(matches) != 1:
+            raise AnalysisBlocked(
+                "SNAPSHOT_MISSING:micro-1h" if not matches else "SNAPSHOT_AMBIGUOUS:micro-1h"
+            )
+        entry = matches[0]
+        if entry.manifest.layer != DatasetLayer.RESEARCH:
+            raise AnalysisBlocked("SNAPSHOT_LAYER_INVALID:micro-1h")
+        if not entry.path.is_file():
+            raise AnalysisBlocked("SNAPSHOT_FILE_MISSING:micro-1h")
+
+        frame = _read_snapshot(entry)
+        if frame.empty:
+            raise AnalysisBlocked("SNAPSHOT_EMPTY")
+        snapshots = CatalogedSnapshots(entries={"micro-1h": entry}, oi_delay_entries={})
+        eligibility_frame, universe_artifact_ids = _load_popular_universe_eligibility(
+            snapshots, config
+        )
+        if config.universe_policy is not None and eligibility_frame is None:
+            raise AnalysisBlocked("POPULAR_UNIVERSE_ARTIFACT_MISSING")
+        if eligibility_frame is not None:
+            frame = _apply_membership_lineage(frame, eligibility_frame)
+        if frame.empty:
+            raise AnalysisBlocked("EMPTY_AFTER_MEMBERSHIP_FILTER")
+
+        protocol_payload = {
+            "factor_id": factor_id,
+            "version": "1.0.0",
+            "family": family_id,
+            "code_sha": code_sha,
+            "snapshot_code_sha": snapshot_code_sha,
+            "snapshot_id": entry.manifest.snapshot_id,
+        }
+        protocol_sha = hashlib.sha256(
+            json.dumps(protocol_payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        ledger_path = config.artifact_root / "research-family-ledger.sqlite"
+        family_members = (f"{factor_id}@1.0.0",)
+        with ResearchFamilyLedger(ledger_path) as ledger:
+            snapshot = ledger.get_snapshot(family_id)
+            if snapshot is None:
+                ledger.freeze_family(
+                    FamilySnapshot(
+                        family_id=family_id,
+                        members=family_members,
+                        protocol_sha=protocol_sha,
+                        bh_boundary="development",
+                    )
+                )
+            ledger.assert_frozen(
+                family_id,
+                family_members,
+                protocol_sha=protocol_sha,
+                bh_boundary="development",
+            )
+
+        gate_inputs = build_orderflow_gate_inputs(
+            frame,
+            development_start=config.factor_protocol.development_start,
+            development_end_exclusive=config.factor_protocol.development_end_exclusive,
+        )
+        report = evaluate_development_gate(
+            gate_inputs.slices,
+            gate_inputs.preregistered_units,
+            GatePreconditions(
+                universe_artifact_ok=bool(universe_artifact_ids),
+                snapshot_identity_ok=True,
+                family_members_frozen_ok=True,
+                protocol_sha_ok=True,
+            ),
+        )
+
+        bh_rows = run_bh_inference(list(gate_inputs.slices), family_id=family_id)
+        if not bh_rows.empty:
+            with ResearchFamilyLedger(ledger_path) as ledger:
+                ledger.store_bh_results(bh_rows)
+
+        evidence = {
+            "run_id": run_id,
+            "status": "completed",
+            "gate_verdict": report.verdict.value,
+            "factor_id": factor_id,
+            "factor_version": "1.0.0",
+            "family_id": family_id,
+            "protocol_sha": protocol_sha,
+            "code_sha": code_sha,
+            "snapshot_code_sha": snapshot_code_sha,
+            "snapshot_ids": [entry.manifest.snapshot_id],
+            "popular_universe_artifact_ids": universe_artifact_ids,
+            "development_rows": gate_inputs.development_rows,
+            "fold_count": gate_inputs.fold_count,
+            "slice_count": len(gate_inputs.slices),
+            "preregistered_unit_count": len(gate_inputs.preregistered_units),
+            "holdout_accessed": False,
+            "gate_report": asdict(report),
+        }
+        _write_exclusive_json(artifact_path, evidence)
+        return OrderflowGateRunResult(
+            run_id=run_id,
+            status="completed",
+            gate_verdict=report.verdict.value,
+            artifact_path=artifact_path,
+            snapshot_ids=(entry.manifest.snapshot_id,),
+            holdout_accessed=False,
+            development_rows=gate_inputs.development_rows,
+            slice_count=len(gate_inputs.slices),
+            preregistered_unit_count=len(gate_inputs.preregistered_units),
+        )
+    except Exception as error:
+        reason = str(error) if isinstance(error, AnalysisBlocked) else f"DEVELOPMENT_FAILED:{error}"
+        if not artifact_path.exists():
+            _write_exclusive_json(
+                artifact_path,
+                {
+                    "run_id": run_id,
+                    "status": "blocked",
+                    "error_code": reason,
+                    "holdout_accessed": False,
+                },
+            )
+        return OrderflowGateRunResult(
+            run_id=run_id,
+            status="blocked",
+            gate_verdict="blocked",
+            artifact_path=artifact_path,
+            snapshot_ids=(),
+            holdout_accessed=False,
+            development_rows=0,
+            slice_count=0,
+            preregistered_unit_count=0,
             error_code=reason,
         )
 
