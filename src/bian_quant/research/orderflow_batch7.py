@@ -98,8 +98,10 @@ def build_orderflow_gate_inputs(
     fold_count = 0
     horizons = tuple(cfg.required_horizons)
     qs = tuple(sorted({cfg.primary_q, *cfg.sensitivity_qs}))
+    all_signals, _ = taker_orderflow_imbalance(source)
 
     for asset, asset_frame in source.groupby("asset", sort=True):
+        source_positions = asset_frame.index.to_numpy(dtype=int)
         work = asset_frame.reset_index(drop=True)
         index = pd.DatetimeIndex(work["available_time"])
         if len(work) < 100:
@@ -115,7 +117,7 @@ def build_orderflow_gate_inputs(
             embargo=6,
         )
         fold_count += len(folds)
-        signals, _ = taker_orderflow_imbalance(work)
+        signals = all_signals.iloc[source_positions].reset_index(drop=True)
         labels: dict[str, pd.Series] = {}
         reasons: dict[str, pd.Series] = {}
         for horizon in horizons:
