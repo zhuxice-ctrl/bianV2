@@ -977,7 +977,7 @@ def analyze_cataloged_orderflow_gate(
             "slice_count": len(gate_inputs.slices),
             "preregistered_unit_count": len(gate_inputs.preregistered_units),
             "holdout_accessed": False,
-            "gate_report": asdict(report),
+            "gate_report": _orderflow_json_safe(asdict(report)),
         }
         _write_exclusive_json(artifact_path, evidence)
         return OrderflowGateRunResult(
@@ -1015,6 +1015,17 @@ def analyze_cataloged_orderflow_gate(
             preregistered_unit_count=0,
             error_code=reason,
         )
+
+
+def _orderflow_json_safe(value: Any) -> Any:
+    """Convert non-finite numeric evidence values to JSON null."""
+    if isinstance(value, dict):
+        return {key: _orderflow_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_orderflow_json_safe(item) for item in value]
+    if isinstance(value, (float, np.floating)):
+        return float(value) if np.isfinite(value) else None
+    return value
 
 
 def _load_popular_universe_eligibility(
