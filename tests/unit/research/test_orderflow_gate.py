@@ -9,6 +9,10 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import numpy as np
+import pytest
+
+from bian_quant.research.orderflow_development import benjamini_hochberg
 from bian_quant.research.orderflow_gate import (
     GatePreconditions,
     GateVerdict,
@@ -79,20 +83,44 @@ def _ok_preconditions() -> GatePreconditions:
     )
 
 
+def _complete_grid(
+    primary_slices: list[SliceEvaluation], units: list[PreregisteredUnit]
+) -> list[SliceEvaluation]:
+    """Fill a synthetic family across every registered horizon and q."""
+    primary_by_unit = {f"{sl.fold}|{sl.asset}|{sl.regime}": sl for sl in primary_slices}
+    result: list[SliceEvaluation] = []
+    for horizon in ("1h", "2h", "4h"):
+        for q in (0.1, 0.2, 0.3):
+            for unit in units:
+                source = primary_by_unit.get(unit.key)
+                if horizon == "1h" and q == 0.2 and source is not None:
+                    result.append(source)
+                else:
+                    result.append(
+                        _slice(
+                            horizon=horizon,
+                            q=q,
+                            fold=unit.fold,
+                            asset=unit.asset,
+                            regime=unit.regime,
+                            p_value=0.9,
+                            bars=frozenset(range(1000, 1100)),
+                        )
+                    )
+    return result
+
+
 def _passing_family() -> tuple[list[SliceEvaluation], list[PreregisteredUnit]]:
     """A family that passes the gate: 2 assets, 2 regimes, BH-significant."""
-    slices = [
+    primary = [
         _slice(asset="BTC", regime="trending", bars=frozenset(range(0, 100))),
         _slice(asset="ETH", regime="ranging", bars=frozenset(range(100, 200))),
-        # q-sensitivity p-values enter the BH denominator but are non-primary.
-        _slice(asset="BTC", regime="trending", q=0.1, horizon="1h", bars=frozenset(range(0, 100))),
-        _slice(asset="ETH", regime="ranging", q=0.1, horizon="1h", bars=frozenset(range(100, 200))),
     ]
     units = [
         _unit(asset="BTC", regime="trending"),
         _unit(asset="ETH", regime="ranging"),
     ]
-    return slices, units
+    return _complete_grid(primary, units), units
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +130,7 @@ def _passing_family() -> tuple[list[SliceEvaluation], list[PreregisteredUnit]]:
 
 def test_non_primary_horizons_cannot_rescue_primary_failure() -> None:
     """Tamper 2h/4h p-values to fully significant; 1h fail must stay fail."""
-    slices = [
+    primary = [
         # 1h primary: non-significant p-values → BH survivor count below minimum.
         _slice(asset="BTC", regime="trending", p_value=0.9, bars=frozenset(range(0, 100))),
         _slice(asset="ETH", regime="ranging", p_value=0.8, bars=frozenset(range(100, 200))),
@@ -112,7 +140,7 @@ def test_non_primary_horizons_cannot_rescue_primary_failure() -> None:
         _slice(horizon="4h", asset="BTC", regime="trending", p_value=0.0001),
         _slice(horizon="4h", asset="ETH", regime="ranging", p_value=0.0001),
     ]
-    report = evaluate_development_gate(slices, _passing_family()[1], _ok_preconditions())
+    report = evaluate_development_gate(primary, _passing_family()[1], _ok_preconditions())
     assert report.verdict == GateVerdict.INSUFFICIENT
     # No 2h/4h slice appears among primary survivors.
     assert all(s.horizon == "1h" and s.q == 0.2 for s in report.surviving_slices)
@@ -136,6 +164,51 @@ def test_bh_denominator_counts_q_sensitivity_and_missing() -> None:
     report = evaluate_development_gate(slices, _passing_family()[1], _ok_preconditions())
     # Three valid p-values (q=0.2×2 + q=0.1×1); the NaN q=0.3 excluded.
     assert report.coverage.bh_denominator == 3
+
+
+def test_missing_registered_grid_cell_is_insufficient() -> None:
+    slices, units = _passing_family()
+    report = evaluate_development_gate(slices[:-1], units, _ok_preconditions())
+    assert report.verdict == GateVerdict.INSUFFICIENT
+    assert "PREREGISTERED_SLICE_MISSING" in report.reason_codes
+
+
+def test_duplicate_six_tuple_is_insufficient() -> None:
+    slices, units = _passing_family()
+    report = evaluate_development_gate([*slices, slices[0]], units, _ok_preconditions())
+    assert report.verdict == GateVerdict.INSUFFICIENT
+    assert "DUPLICATE_SLICE_KEY" in report.reason_codes
+
+
+def test_diagnostics_reuse_full_family_bh_adjustment() -> None:
+    slices, units = _passing_family()
+    report = evaluate_development_gate(slices, units, _ok_preconditions())
+    all_adjusted = benjamini_hochberg(np.array([float(sl.p_value) for sl in slices], dtype=float))
+    expected = next(
+        float(adj)
+        for sl, adj in zip(slices, all_adjusted, strict=True)
+        if sl.horizon == "2h" and sl.q == 0.1
+    )
+    diagnostic = next(diag for diag in report.diagnostics if diag.horizon == "2h" and diag.q == 0.1)
+    assert diagnostic.adjusted_p_values[0][3] == pytest.approx(expected)
+
+
+def test_direction_consistency_uses_all_primary_slices() -> None:
+    primary = [
+        _slice(asset="BTC", regime="trend", p_value=0.001, direction_estimate=0.5),
+        _slice(asset="ETH", regime="range", p_value=0.001, direction_estimate=0.5),
+        _slice(asset="SOL", regime="trend", p_value=0.9, direction_estimate=-0.5),
+        _slice(asset="BNB", regime="range", p_value=0.9, direction_estimate=-0.5),
+    ]
+    units = [
+        _unit(asset="BTC", regime="trend"),
+        _unit(asset="ETH", regime="range"),
+        _unit(asset="SOL", regime="trend"),
+        _unit(asset="BNB", regime="range"),
+    ]
+    report = evaluate_development_gate(_complete_grid(primary, units), units, _ok_preconditions())
+    assert report.verdict == GateVerdict.FAIL
+    assert "DIRECTION_CONSISTENCY_BELOW_MINIMUM" in report.reason_codes
 
 
 # ---------------------------------------------------------------------------
@@ -189,13 +262,13 @@ def test_insufficient_coverage_never_passes_or_fails() -> None:
 
 def test_below_min_surviving_slices_is_insufficient() -> None:
     """Only one BH survivor → gate cannot judge → insufficient."""
-    slices = [
+    primary = [
         _slice(asset="BTC", regime="trending", p_value=0.001, bars=frozenset(range(0, 100))),
         # Second primary slice non-significant.
         _slice(asset="ETH", regime="ranging", p_value=0.9, bars=frozenset(range(100, 200))),
     ]
     units = [_unit(asset="BTC", regime="trending"), _unit(asset="ETH", regime="ranging")]
-    report = evaluate_development_gate(slices, units, _ok_preconditions())
+    report = evaluate_development_gate(_complete_grid(primary, units), units, _ok_preconditions())
     assert report.verdict == GateVerdict.INSUFFICIENT
     assert len(report.surviving_slices) < 2
 
@@ -207,7 +280,7 @@ def test_below_min_surviving_slices_is_insufficient() -> None:
 
 def test_direction_inconsistency_causes_fail() -> None:
     """<60% direction consistency → fail; sign-flip rescue is forbidden."""
-    slices = [
+    primary = [
         _slice(
             asset="BTC", regime="trending", direction_estimate=0.5, bars=frozenset(range(0, 100))
         ),
@@ -223,7 +296,7 @@ def test_direction_inconsistency_causes_fail() -> None:
         _unit(asset="ETH", regime="ranging"),
         _unit(asset="SOL", regime="volatile"),
     ]
-    report = evaluate_development_gate(slices, units, _ok_preconditions())
+    report = evaluate_development_gate(_complete_grid(primary, units), units, _ok_preconditions())
     # 1 of 3 matches positive → 33% < 60%.
     assert report.verdict == GateVerdict.FAIL
     assert "DIRECTION_CONSISTENCY_BELOW_MINIMUM" in report.reason_codes
@@ -236,7 +309,7 @@ def test_direction_inconsistency_causes_fail() -> None:
 
 def test_same_asset_overlapping_slices_removed() -> None:
     """Two same-asset slices with intersecting bar indices are both dropped."""
-    slices = [
+    primary = [
         # Both BTC, overlapping bar index sets.
         _slice(asset="BTC", regime="trending", bars=frozenset(range(0, 100))),
         _slice(asset="BTC", regime="ranging", bars=frozenset(range(50, 150))),
@@ -248,7 +321,7 @@ def test_same_asset_overlapping_slices_removed() -> None:
         _unit(asset="BTC", regime="ranging"),
         _unit(asset="ETH", regime="ranging"),
     ]
-    report = evaluate_development_gate(slices, units, _ok_preconditions())
+    report = evaluate_development_gate(_complete_grid(primary, units), units, _ok_preconditions())
     # Both BTC slices removed by independence; only ETH survives → <2 → insufficient.
     surviving_assets = {s.asset for s in report.surviving_slices}
     assert "BTC" not in surviving_assets
@@ -263,7 +336,7 @@ def test_same_asset_overlapping_slices_removed() -> None:
 def test_single_asset_concentration_exceeds_max() -> None:
     """All survivors on one asset → asset concentration 100% → fail."""
     # Two BTC slices on disjoint bar sets (independent), different regimes.
-    slices = [
+    primary = [
         _slice(asset="BTC", regime="trending", bars=frozenset(range(0, 100))),
         _slice(asset="BTC", regime="ranging", bars=frozenset(range(100, 200))),
     ]
@@ -271,14 +344,14 @@ def test_single_asset_concentration_exceeds_max() -> None:
         _unit(asset="BTC", regime="trending"),
         _unit(asset="BTC", regime="ranging"),
     ]
-    report = evaluate_development_gate(slices, units, _ok_preconditions())
+    report = evaluate_development_gate(_complete_grid(primary, units), units, _ok_preconditions())
     assert report.verdict == GateVerdict.FAIL
     assert "ASSET_CONCENTRATION_EXCEEDS_MAX" in report.reason_codes
 
 
 def test_single_regime_concentration_exceeds_max() -> None:
     """All survivors on one regime → regime concentration 100% → fail."""
-    slices = [
+    primary = [
         _slice(asset="BTC", regime="trending", bars=frozenset(range(0, 100))),
         _slice(asset="ETH", regime="trending", bars=frozenset(range(100, 200))),
     ]
@@ -286,7 +359,7 @@ def test_single_regime_concentration_exceeds_max() -> None:
         _unit(asset="BTC", regime="trending"),
         _unit(asset="ETH", regime="trending"),
     ]
-    report = evaluate_development_gate(slices, units, _ok_preconditions())
+    report = evaluate_development_gate(_complete_grid(primary, units), units, _ok_preconditions())
     assert report.verdict == GateVerdict.FAIL
     assert "REGIME_CONCENTRATION_EXCEEDS_MAX" in report.reason_codes
 

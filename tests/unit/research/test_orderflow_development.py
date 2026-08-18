@@ -246,6 +246,15 @@ def test_run_bh_inference_with_nan_p_values() -> None:
     assert eth["bh_adjusted"].iloc[0] == pytest.approx(0.02)
 
 
+def test_run_bh_inference_rejects_duplicate_six_tuple() -> None:
+    evals = [
+        FakeEval("f1", "1h", "fold1", "BTC", "trending", 0.01, q=0.2),
+        FakeEval("f1", "1h", "fold1", "BTC", "trending", 0.02, q=0.2),
+    ]
+    with pytest.raises(ValueError, match="DUPLICATE_BH_KEY"):
+        run_bh_inference(evals)
+
+
 def test_bh_results_stored_in_ledger(tmp_path: object) -> None:
     db = tmp_path / "ledger.db"  # type: ignore[operator]
     evals = [
@@ -366,6 +375,41 @@ def test_legacy_fivetuple_ledger_is_migrated(tmp_path: object) -> None:
             "SELECT name FROM sqlite_master WHERE name = 'bh_results_legacy_fivetuple'",
         ).fetchone()
         assert legacy is not None
+
+
+def test_migrated_bh_results_remain_immutable(tmp_path: object) -> None:
+    """Migration must reattach append-only triggers to the new table."""
+    db = tmp_path / "ledger.db"  # type: ignore[operator]
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        """
+        CREATE TABLE research_family_members (
+            factor_id TEXT NOT NULL, family_id TEXT NOT NULL,
+            horizon TEXT NOT NULL, registered_at TEXT NOT NULL,
+            PRIMARY KEY (factor_id, horizon));
+        CREATE TABLE family_snapshots (
+            family_id TEXT PRIMARY KEY, protocol_sha TEXT NOT NULL,
+            bh_boundary TEXT NOT NULL, frozen_at TEXT NOT NULL);
+        CREATE TABLE bh_results (
+            factor_id TEXT NOT NULL, horizon TEXT NOT NULL, fold TEXT NOT NULL,
+            asset TEXT NOT NULL, regime TEXT NOT NULL,
+            p_value REAL NOT NULL, bh_adjusted REAL NOT NULL,
+            PRIMARY KEY (factor_id, horizon, fold, asset, regime));
+        INSERT INTO bh_results VALUES ('f1','1h','fold1','BTC','trending',0.01,0.02);
+        """,
+    )
+    conn.commit()
+    conn.close()
+
+    with ResearchFamilyLedger(db) as ledger:
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            ledger._conn.execute(  # noqa: SLF001
+                "UPDATE bh_results SET p_value = 0.99 WHERE 1=1",
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            ledger._conn.execute(  # noqa: SLF001
+                "DELETE FROM bh_results WHERE 1=1",
+            )
 
 
 def test_migration_is_idempotent(tmp_path: object) -> None:

@@ -138,6 +138,8 @@ class GateConfig:
     min_bh_denominator: int = 1
     max_exclusion_ratio: float = 0.5
     registered_direction: str = REGISTERED_DIRECTION
+    registered_factor_ids: tuple[str, ...] = ("taker_orderflow_imbalance",)
+    required_horizons: tuple[str, ...] = ("1h", "2h", "4h")
 
 
 @dataclass(frozen=True)
@@ -176,6 +178,10 @@ class CoverageReport:
     bh_denominator: int
     min_bh_denominator: int
     insufficient_cell_slice_keys: tuple[str, ...]
+    missing_slice_keys: tuple[str, ...] = ()
+    duplicate_slice_keys: tuple[str, ...] = ()
+    unexpected_slice_keys: tuple[str, ...] = ()
+    missing_p_value_slice_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -214,6 +220,31 @@ class GateReport:
 
 def _slice_key(sl: SliceEvaluation) -> str:
     return f"{sl.fold}|{sl.asset}|{sl.regime}"
+
+
+def _full_slice_key(
+    factor_id: str,
+    horizon: str,
+    q: float,
+    fold: str,
+    asset: str,
+    regime: str,
+) -> str:
+    return f"{factor_id}|{horizon}|q={q:g}|{fold}|{asset}|{regime}"
+
+
+def _registered_qs(config: GateConfig) -> tuple[float, ...]:
+    return tuple(sorted({float(config.primary_q), *(float(q) for q in config.sensitivity_qs)}))
+
+
+def _expected_slice_keys(units: Sequence[PreregisteredUnit], config: GateConfig) -> set[str]:
+    return {
+        _full_slice_key(factor_id, horizon, q, unit.fold, unit.asset, unit.regime)
+        for factor_id in config.registered_factor_ids
+        for horizon in config.required_horizons
+        for q in _registered_qs(config)
+        for unit in units
+    }
 
 
 def _effective_p_value(sl: SliceEvaluation) -> float:
@@ -398,7 +429,30 @@ def evaluate_development_gate(
             diagnostics=(),
         )
 
-    # --- 1. Family BH across all slices (six-tuple, NaN-aware denominator) ---
+    # --- 1. Validate the complete pre-registered slice grid ---
+    unit_counts: dict[str, int] = {}
+    for unit in preregistered_units:
+        unit_counts[unit.key] = unit_counts.get(unit.key, 0) + 1
+    duplicate_unit_keys = tuple(sorted(key for key, count in unit_counts.items() if count > 1))
+
+    observed_counts: dict[str, int] = {}
+    for sl in slices:
+        key = _full_slice_key(sl.factor_id, sl.horizon, sl.q, sl.fold, sl.asset, sl.regime)
+        observed_counts[key] = observed_counts.get(key, 0) + 1
+    expected_keys = _expected_slice_keys(preregistered_units, cfg)
+    observed_keys = set(observed_counts)
+    missing_slice_keys = tuple(sorted(expected_keys - observed_keys))
+    duplicate_slice_keys = tuple(sorted(key for key, count in observed_counts.items() if count > 1))
+    unexpected_slice_keys = tuple(sorted(observed_keys - expected_keys))
+    missing_p_value_slice_keys = tuple(
+        sorted(
+            _full_slice_key(sl.factor_id, sl.horizon, sl.q, sl.fold, sl.asset, sl.regime)
+            for sl in slices
+            if not np.isfinite(_effective_p_value(sl))
+        )
+    )
+
+    # --- 2. Family BH across all slices (six-tuple, NaN-aware denominator) ---
     adjusted, denominator = _family_bh(list(slices))
     adj_by_key: dict[tuple[str, str, float, str, str, str], float] = {}
     for sl, adj in zip(slices, adjusted, strict=True):
@@ -443,17 +497,39 @@ def evaluate_development_gate(
         bh_denominator=denominator,
         min_bh_denominator=cfg.min_bh_denominator,
         insufficient_cell_slice_keys=insufficient_cells,
+        missing_slice_keys=missing_slice_keys,
+        duplicate_slice_keys=duplicate_slice_keys,
+        unexpected_slice_keys=unexpected_slice_keys,
+        missing_p_value_slice_keys=missing_p_value_slice_keys,
     )
 
-    # --- 5. Diagnostics for non-primary horizons/q (never affects verdict) ---
+    # --- 5. Diagnostics use the same full-family BH adjustment as the verdict. ---
     diagnostics: list[HorizonDiagnostics] = []
     non_primary_groups: dict[tuple[str, float], list[SliceEvaluation]] = {}
+    adjusted_by_group: dict[tuple[str, float], list[tuple[str, str, str, float]]] = {}
     for sl in slices:
         if sl.horizon == cfg.primary_horizon and sl.q == cfg.primary_q:
             continue
         non_primary_groups.setdefault((sl.horizon, sl.q), []).append(sl)
-    for (horizon, q), group in sorted(non_primary_groups.items()):
-        diagnostics.append(compute_horizon_diagnostics(group, horizon, q))
+    for sl, adjusted_value in zip(slices, adjusted, strict=True):
+        if sl.horizon == cfg.primary_horizon and sl.q == cfg.primary_q:
+            continue
+        adjusted_by_group.setdefault((sl.horizon, sl.q), []).append(
+            (
+                sl.fold,
+                sl.asset,
+                sl.regime,
+                float(adjusted_value) if np.isfinite(adjusted_value) else float("nan"),
+            )
+        )
+    for (horizon, q), _group in sorted(non_primary_groups.items()):
+        diagnostics.append(
+            HorizonDiagnostics(
+                horizon=horizon,
+                q=q,
+                adjusted_p_values=tuple(adjusted_by_group[(horizon, q)]),
+            )
+        )
 
     # --- 6. Verdict decision ---
     reason_codes: list[str] = []
@@ -469,11 +545,30 @@ def evaluate_development_gate(
         reason_codes.append("EXCLUSION_RATIO_EXCEEDS_TOLERANCE")
     if insufficient_cells:
         reason_codes.append("INSUFFICIENT_CELL")
+    if duplicate_unit_keys:
+        reason_codes.append("DUPLICATE_PREREGISTERED_UNIT")
+    if missing_slice_keys:
+        reason_codes.append("PREREGISTERED_SLICE_MISSING")
+    if duplicate_slice_keys:
+        reason_codes.append("DUPLICATE_SLICE_KEY")
+    if unexpected_slice_keys:
+        reason_codes.append("UNREGISTERED_SLICE")
+    if missing_p_value_slice_keys:
+        reason_codes.append("MISSING_P_VALUE")
+    if any(not np.isfinite(sl.direction_estimate) for sl in slices):
+        reason_codes.append("MISSING_DIRECTION_ESTIMATE")
 
     coverage_blocking = (
         bool(zero_bar_units)
         or denominator < cfg.min_bh_denominator
         or (total_attempted and exclusion_ratio > cfg.max_exclusion_ratio)
+        or bool(insufficient_cells)
+        or bool(duplicate_unit_keys)
+        or bool(missing_slice_keys)
+        or bool(duplicate_slice_keys)
+        or bool(unexpected_slice_keys)
+        or bool(missing_p_value_slice_keys)
+        or any(not np.isfinite(sl.direction_estimate) for sl in slices)
     )
     if coverage_blocking:
         return GateReport(
@@ -523,9 +618,16 @@ def evaluate_development_gate(
     if regime_concentration and max(regime_concentration.values()) > cfg.max_concentration:
         fail_reasons.append("REGIME_CONCENTRATION_EXCEEDS_MAX")
 
-    # 6d. Direction consistency → FAIL
-    direction_matches = sum(1 for sl in survivors if _direction_matches(sl, cfg))
-    direction_consistency = direction_matches / len(survivors)
+    # 6d. Direction consistency → FAIL. The denominator is all valid primary
+    # slices, not only BH survivors; otherwise opposite, non-significant
+    # slices could be silently omitted from the registered-direction check.
+    eligible_primary = [
+        sl
+        for sl in primary_candidates
+        if sl.n_effective >= cfg.min_n_effective and np.isfinite(sl.direction_estimate)
+    ]
+    direction_matches = sum(1 for sl in eligible_primary if _direction_matches(sl, cfg))
+    direction_consistency = direction_matches / len(eligible_primary) if eligible_primary else 0.0
     if direction_consistency < cfg.min_direction_consistency:
         fail_reasons.append("DIRECTION_CONSISTENCY_BELOW_MINIMUM")
 

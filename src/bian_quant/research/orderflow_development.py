@@ -126,12 +126,15 @@ def _migrate_bh_results_to_six_tuple(conn: sqlite3.Connection) -> None:
     cur = conn.execute("PRAGMA table_info(bh_results)")
     columns = {row[1] for row in cur.fetchall()}
     if "q" in columns:
-        # Already six-tuple; ensure the legacy rename marker is absent.
+        _ensure_bh_immutability_triggers(conn)
         return
 
     # Legacy five-tuple table present — migrate.
     conn.executescript(
         """
+        DROP TRIGGER IF EXISTS no_update_bh;
+        DROP TRIGGER IF EXISTS no_delete_bh;
+
         CREATE TABLE IF NOT EXISTS bh_results_six_tuple (
             factor_id   TEXT NOT NULL,
             horizon     TEXT NOT NULL,
@@ -153,19 +156,52 @@ def _migrate_bh_results_to_six_tuple(conn: sqlite3.Connection) -> None:
 
         ALTER TABLE bh_results_six_tuple RENAME TO bh_results;
 
-        CREATE TRIGGER IF NOT EXISTS no_update_bh
+        """,
+    )
+    _ensure_bh_immutability_triggers(conn)
+
+
+def _ensure_bh_immutability_triggers(conn: sqlite3.Connection) -> None:
+    """Attach append-only triggers to both current and legacy BH tables."""
+    conn.executescript(
+        """
+        DROP TRIGGER IF EXISTS no_update_bh;
+        DROP TRIGGER IF EXISTS no_delete_bh;
+        DROP TRIGGER IF EXISTS no_update_bh_legacy;
+        DROP TRIGGER IF EXISTS no_delete_bh_legacy;
+
+        CREATE TRIGGER no_update_bh
         BEFORE UPDATE ON bh_results
         BEGIN
             SELECT RAISE(ABORT, 'bh_results is append-only');
         END;
 
-        CREATE TRIGGER IF NOT EXISTS no_delete_bh
+        CREATE TRIGGER no_delete_bh
         BEFORE DELETE ON bh_results
         BEGIN
             SELECT RAISE(ABORT, 'bh_results is append-only');
         END;
-        """,
+        """
     )
+    legacy = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bh_results_legacy_fivetuple'"
+    ).fetchone()
+    if legacy is not None:
+        conn.executescript(
+            """
+            CREATE TRIGGER no_update_bh_legacy
+            BEFORE UPDATE ON bh_results_legacy_fivetuple
+            BEGIN
+                SELECT RAISE(ABORT, 'legacy bh_results is append-only');
+            END;
+
+            CREATE TRIGGER no_delete_bh_legacy
+            BEFORE DELETE ON bh_results_legacy_fivetuple
+            BEGIN
+                SELECT RAISE(ABORT, 'legacy bh_results is append-only');
+            END;
+            """
+        )
 
 
 class ResearchFamilyLedger:
@@ -180,6 +216,7 @@ class ResearchFamilyLedger:
         self._conn = sqlite3.connect(self._db_path)
         _create_ledger_schema(self._conn)
         _migrate_bh_results_to_six_tuple(self._conn)
+        _ensure_bh_immutability_triggers(self._conn)
         self._conn.commit()
 
     def close(self) -> None:
@@ -332,10 +369,15 @@ def run_bh_inference(
     p_value, bh_adjusted.
     """
     records: list[dict[str, object]] = []
+    seen_keys: set[tuple[str, str, str, str, str, float]] = set()
     for ev in evaluations:
         factor_id = getattr(ev, "factor_name", getattr(ev, "factor_id", ""))
         horizon = getattr(ev, "horizon", "primary")
         q = float(getattr(ev, "q", 0.2))
+        key = (str(factor_id), str(horizon), str(ev.fold), str(ev.asset), str(ev.regime), q)
+        if key in seen_keys:
+            raise ValueError("DUPLICATE_BH_KEY:" + "|".join(map(str, key)))
+        seen_keys.add(key)
         records.append(
             {
                 "factor_id": factor_id,
