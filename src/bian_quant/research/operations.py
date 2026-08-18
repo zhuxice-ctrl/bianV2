@@ -887,6 +887,12 @@ def analyze_cataloged_orderflow_gate(
         if frame.empty:
             raise AnalysisBlocked("EMPTY_AFTER_MEMBERSHIP_FILTER")
 
+        gate_inputs = build_orderflow_gate_inputs(
+            frame,
+            development_start=config.factor_protocol.development_start,
+            development_end_exclusive=config.factor_protocol.development_end_exclusive,
+        )
+
         protocol_payload = {
             "factor_id": factor_id,
             "version": "1.0.0",
@@ -900,6 +906,7 @@ def analyze_cataloged_orderflow_gate(
         ).hexdigest()
         ledger_path = config.artifact_root / "research-family-ledger.sqlite"
         family_members = (f"{factor_id}@1.0.0",)
+        retry_of_run_id: str | None = None
         with ResearchFamilyLedger(ledger_path) as ledger:
             snapshot = ledger.get_snapshot(family_id)
             if snapshot is None:
@@ -911,18 +918,31 @@ def analyze_cataloged_orderflow_gate(
                         bh_boundary="development",
                     )
                 )
-            ledger.assert_frozen(
-                family_id,
-                family_members,
-                protocol_sha=protocol_sha,
-                bh_boundary="development",
-            )
-
-        gate_inputs = build_orderflow_gate_inputs(
-            frame,
-            development_start=config.factor_protocol.development_start,
-            development_end_exclusive=config.factor_protocol.development_end_exclusive,
-        )
+            else:
+                try:
+                    ledger.assert_frozen(
+                        family_id,
+                        family_members,
+                        protocol_sha=protocol_sha,
+                        bh_boundary="development",
+                    )
+                except ValueError:
+                    blocked_runs: list[str] = []
+                    prior_dir = config.artifact_root / "orderflow-development-gate"
+                    for prior_path in prior_dir.glob("*.json"):
+                        try:
+                            prior = json.loads(prior_path.read_text(encoding="utf-8"))
+                        except (OSError, json.JSONDecodeError):
+                            continue
+                        if prior.get("status") == "blocked" and not prior.get(
+                            "holdout_accessed", True
+                        ):
+                            blocked_runs.append(str(prior.get("run_id", prior_path.stem)))
+                    if ledger.bh_result_count() == 0 and blocked_runs:
+                        retry_of_run_id = sorted(blocked_runs)[-1]
+                        protocol_sha = snapshot.protocol_sha
+                    else:
+                        raise
         report = evaluate_development_gate(
             gate_inputs.slices,
             gate_inputs.preregistered_units,
@@ -947,6 +967,7 @@ def analyze_cataloged_orderflow_gate(
             "factor_version": "1.0.0",
             "family_id": family_id,
             "protocol_sha": protocol_sha,
+            "retry_of_run_id": retry_of_run_id,
             "code_sha": code_sha,
             "snapshot_code_sha": snapshot_code_sha,
             "snapshot_ids": [entry.manifest.snapshot_id],

@@ -317,6 +317,11 @@ class ResearchFamilyLedger:
         self._conn.commit()
         return rows_inserted
 
+    def bh_result_count(self) -> int:
+        """Return the number of materialized BH rows in the current ledger."""
+        row = self._conn.execute("SELECT COUNT(*) FROM bh_results").fetchone()
+        return int(row[0]) if row is not None else 0
+
 
 def benjamini_hochberg(p_values: np.ndarray) -> np.ndarray:
     """Compute BH-adjusted p-values.
@@ -374,6 +379,8 @@ def run_bh_inference(
         factor_id = getattr(ev, "factor_name", getattr(ev, "factor_id", ""))
         horizon = getattr(ev, "horizon", "primary")
         q = float(getattr(ev, "q", 0.2))
+        raw_p_value = getattr(ev, "p_value", float("nan"))
+        p_value = float("nan") if raw_p_value is None else float(raw_p_value)
         key = (str(factor_id), str(horizon), str(ev.fold), str(ev.asset), str(ev.regime), q)
         if key in seen_keys:
             raise ValueError("DUPLICATE_BH_KEY:" + "|".join(map(str, key)))
@@ -386,7 +393,7 @@ def run_bh_inference(
                 "asset": ev.asset,
                 "regime": ev.regime,
                 "q": q,
-                "p_value": ev.p_value,
+                "p_value": p_value,
             },
         )
     df = pd.DataFrame(records)
