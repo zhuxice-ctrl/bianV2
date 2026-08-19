@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
-import re
 from typing import Any, Literal
 
 import yaml
@@ -294,7 +294,11 @@ def _normalize_text(value: str) -> str:
 def _contains_empirical_metric(value: str) -> bool:
     lowered_value = value.lower()
     for token in _EMPIRICAL_METRIC_TOKENS:
-        pattern = r"(?<![a-z0-9])" + r"[\s_]*".join(re.escape(part) for part in token.split("_")) + r"(?![a-z0-9])"
+        pattern = (
+            r"(?<![a-z0-9])"
+            + r"[\s_]*".join(re.escape(part) for part in token.split("_"))
+            + r"(?![a-z0-9])"
+        )
         if re.search(pattern, lowered_value):
             return True
     return False
@@ -326,10 +330,10 @@ def _verdict_for_reasons(reason_codes: tuple[str, ...]) -> AuditVerdict:
         "MISSING_AVAILABLE_TIME_COLUMN",
         "MISSING_PARENT_FACTORS",
     }
+    if any(code in blocked_reasons for code in reason_codes):
+        return "BLOCKED"
     if any(code in rejected_reasons for code in reason_codes):
         return "REJECTED"
     if "FORBIDDEN_FACTOR_OVERLAP" in reason_codes:
         return "DEFERRED"
-    if any(code in blocked_reasons for code in reason_codes):
-        return "BLOCKED"
     return "REJECTED"

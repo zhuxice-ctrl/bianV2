@@ -45,6 +45,18 @@ def test_missing_available_time_definition_blocks_without_auxiliary_delay() -> N
     assert "causal_timing:blocked" in result.checks
 
 
+def test_missing_available_time_definition_remains_blocked_with_invalid_rule() -> None:
+    payload = proposal_payload()
+    payload["exit_rule"] = ""
+    result = audit_proposal(
+        payload,
+        available_time_definition=None,
+        forbidden_factors_path=FORBIDDEN_FACTORS,
+    )
+    assert result.verdict == "BLOCKED"
+    assert {"MISSING_AVAILABLE_TIME_DEFINITION", "MISSING_EXIT_RULE"} <= set(result.reason_codes)
+
+
 def test_missing_exit_rule_is_rejected() -> None:
     payload = proposal_payload()
     payload["exit_rule"] = ""
