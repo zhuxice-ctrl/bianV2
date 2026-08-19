@@ -25,3 +25,4 @@ Notes:
 - `available_time_definition=None` now blocks every proposal instead of allowing static-timing checks to be skipped.
 - Empirical-metric rejection now scans user-provided proposal text values, including `economic_hypothesis` and `formula`.
 - Direct forbidden-wrapper matches now defer even without matching family/channel context.
+
