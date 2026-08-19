@@ -31,6 +31,7 @@ from bian_quant.factors.primitives import (
     validate_node,
     zscore,
 )
+from bian_quant.factors.proposals import FactorProposal
 
 
 @dataclass(frozen=True)
@@ -208,6 +209,55 @@ def generate_candidates(
     return candidates
 
 
+def generate_proposals(
+    config_path: Path | str,
+    *,
+    code_sha: str = "",
+) -> list[FactorProposal]:
+    """Normalize deterministic candidates into proposal-only records."""
+
+    config = _load_search_space(config_path)
+    if config.get("mode", "proposal_only") != "proposal_only":
+        raise ValueError("generate_proposals requires mode=proposal_only")
+
+    windows = [int(window) for window in config.get("windows", [6, 12, 24, 48, 168])]
+    template_hashes = {node.expression_hash for _, node in _build_templates(windows)}
+
+    proposals: list[FactorProposal] = []
+    for generation_rank, candidate in enumerate(
+        generate_candidates(config_path, code_sha=code_sha)
+    ):
+        source_type = (
+            "registered_template"
+            if candidate.expression_hash in template_hashes
+            else "seeded_grammar"
+        )
+        payload = {
+            "factor_id": candidate.factor_id,
+            "factor_version": "1.0.0",
+            "research_family": _proposal_family(candidate.expression_tree),
+            "economic_hypothesis": _proposal_hypothesis(candidate.expression_tree, source_type),
+            "formula": _formula_for_expression(candidate.expression_tree),
+            "direction": _proposal_direction(candidate.expression_tree),
+            "required_columns": _proposal_required_columns(candidate.expression_tree),
+            "signal_time": "close_time",
+            "decision_time": "close_time",
+            "entry_price": "next_continuous_bar_open",
+            "holding_rule": "hold_for_4_bars",
+            "exit_rule": "time_exit_or_invalid_execution_bar",
+            "missing_policy": "preserve_missing_and_exclude",
+            "parent_factors": candidate.parent_factors,
+            "source_type": source_type,
+            "proposal_status": "proposal_only",
+        }
+        proposal = FactorProposal.model_validate(payload)
+        if generation_rank >= 20:
+            raise ValueError("proposal generation exceeded hard cap")
+        proposals.append(proposal)
+
+    return proposals
+
+
 def _parents_for_expression(name: str, node: ExprNode, base_factors: list[str]) -> tuple[str, ...]:
     """Resolve auditable parent factor families from template names and columns."""
     families: set[str] = set()
@@ -224,3 +274,91 @@ def _parents_for_expression(name: str, node: ExprNode, base_factors: list[str]) 
     ):
         families.add("price")
     return tuple(factor for factor in base_factors if factor.partition(".")[0] in families)
+
+
+def _formula_for_expression(node: ExprNode) -> str:
+    """Render a stable formula string for proposal records."""
+
+    if node.op == "column":
+        return node.required_columns[0]
+    if node.op == "safe_ratio":
+        left, right = (_formula_for_expression(child) for child in node.children)
+        epsilon = float(node.params[0]) if node.params else 1e-10
+        return f"safe_ratio({left}, {right}, epsilon={epsilon:g})"
+    if node.op == "clip":
+        child = _formula_for_expression(node.children[0])
+        lower, upper = node.params
+        return f"clip({child}, lower={lower}, upper={upper})"
+    if len(node.children) == 1:
+        child = _formula_for_expression(node.children[0])
+        args = ", ".join(str(param) for param in node.params)
+        return f"{node.op}({child}, {args})" if args else f"{node.op}({child})"
+    if len(node.children) == 2:
+        left, right = (_formula_for_expression(child) for child in node.children)
+        return f"{node.op}({left}, {right})"
+    return node._canonical()
+
+
+def _proposal_required_columns(node: ExprNode) -> tuple[str, ...]:
+    ordered = ["open_time", *node.required_columns, "available_time"]
+    if "open" not in node.required_columns:
+        ordered.append("open")
+    return tuple(dict.fromkeys(ordered))
+
+
+def _proposal_family(node: ExprNode) -> str:
+    required = set(node.required_columns)
+    has_price = bool(required & {"close", "open", "high", "low"})
+    has_volume = "volume" in required
+    has_derivatives = bool(required & {"funding_rate", "open_interest"})
+
+    if has_price and has_volume and has_derivatives:
+        return "cross_market_structure"
+    if has_price and has_volume:
+        return "price_volume"
+    if has_price and has_derivatives:
+        return "price_derivatives"
+    if has_volume and has_derivatives:
+        return "flow_derivatives"
+    if has_derivatives:
+        return "derivatives_crowding"
+    if has_volume:
+        return "volume_liquidity"
+    return "price_dynamics"
+
+
+def _proposal_hypothesis(node: ExprNode, source_type: str) -> str:
+    if source_type == "registered_template":
+        if node.op == "percent_change":
+            return "Recent price momentum may persist into the next tradable bar."
+        if node.op == "rolling_std":
+            return "Recent realized volatility may signal a temporary change in market regime."
+        if node.op == "rolling_mean" and "volume" in node.required_columns:
+            return "Sustained volume pressure may confirm participation behind the current move."
+        if node.op == "zscore":
+            return (
+                "Large deviations from a recent baseline may precede normalization or continuation."
+            )
+        if node.op == "rolling_rank":
+            return (
+                "Relative position inside the recent window may capture trend persistence "
+                "or exhaustion."
+            )
+
+    channels = ", ".join(dict.fromkeys(node.required_columns))
+    return (
+        "A deterministic combination of approved primitives over "
+        f"{channels} may reveal a review-worthy short-horizon market relationship."
+    )
+
+
+def _proposal_direction(node: ExprNode) -> str:
+    if node.op in {"percent_change", "rolling_mean"}:
+        return "positive"
+    if node.op in {"rolling_std", "zscore", "rolling_rank", "safe_ratio", "subtract"}:
+        return "two_sided"
+    if node.op == "delta" and any(
+        column_name in node.required_columns for column_name in ("volume", "open_interest")
+    ):
+        return "positive"
+    return "two_sided"

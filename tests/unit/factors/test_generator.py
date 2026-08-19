@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bian_quant.factors.generator import generate_candidates
+from bian_quant.factors.generator import generate_candidates, generate_proposals
 from bian_quant.factors.primitives import (
     ExprNode,
     add,
@@ -21,9 +21,13 @@ from bian_quant.factors.primitives import (
     validate_node,
     zscore,
 )
+from bian_quant.factors.proposals import FactorProposal
 
 SEARCH_SPACE = str(
     Path(__file__).resolve().parents[3] / "configs" / "factors" / "search_space.yaml"
+)
+PROPOSAL_FACTORY = str(
+    Path(__file__).resolve().parents[3] / "configs" / "factors" / "proposal_factory.yaml"
 )
 
 
@@ -154,6 +158,26 @@ allowed_binary: [add, subtract, multiply, safe_ratio]
         )
         assert len(generate_candidates(config_path, code_sha="abc")) <= 20
 
+    def test_generate_candidates_ignores_proposal_allowed_columns(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "search_space.yaml"
+        config_path.write_text(
+            """seed: 7
+max_candidates: 10
+max_tree_depth: 3
+base_factors: [price.momentum]
+windows: [6]
+allowed_columns: [funding_rate]
+allowed_unary: [lag]
+allowed_binary: []
+""",
+            encoding="utf-8",
+        )
+
+        candidates = generate_candidates(config_path, code_sha="abc")
+
+        assert candidates
+        assert all("funding_rate" not in c.expression_tree.required_columns for c in candidates)
+
 
 class TestResearchOnlyState:
     def test_candidates_have_generation_rank(self) -> None:
@@ -180,6 +204,31 @@ class TestResearchOnlyState:
         candidates = generate_candidates(SEARCH_SPACE, code_sha="abc")
         for c in candidates:
             assert c.required_lookback >= 0
+
+
+class TestProposalGeneration:
+    def test_generation_returns_proposal_only_records(self) -> None:
+        proposals = generate_proposals(PROPOSAL_FACTORY, code_sha="abc")
+        assert proposals
+        assert all(isinstance(item, FactorProposal) for item in proposals)
+        assert all(item.proposal_status == "proposal_only" for item in proposals)
+        assert len(proposals) <= 20
+        assert all(
+            item.required_columns and item.entry_price and item.exit_rule for item in proposals
+        )
+
+    def test_generator_does_not_call_formal_registry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "bian_quant.factors.registry.FactorRegistry",
+            lambda *_: (_ for _ in ()).throw(AssertionError("registry access is forbidden")),
+        )
+        generate_proposals(PROPOSAL_FACTORY, code_sha="abc")
+
+    def test_proposal_order_is_deterministic(self) -> None:
+        first = generate_proposals(PROPOSAL_FACTORY, code_sha="abc")
+        second = generate_proposals(PROPOSAL_FACTORY, code_sha="abc")
+
+        assert [item.identity_sha256 for item in first] == [item.identity_sha256 for item in second]
 
 
 def test_nested_temporal_lookback_is_additive() -> None:
