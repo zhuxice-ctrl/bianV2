@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+import re
 from typing import Any, Literal
 
 import yaml
@@ -131,14 +132,20 @@ def audit_proposal(
         reason_codes.append("MISSING_AVAILABLE_TIME_COLUMN")
         checks[0] = "required_execution_fields:fail"
 
-    if available_time_definition:
-        timing_reason = _timing_reason(available_time_definition, str(payload.get("decision_time", "")))
+    normalized_available_time_definition = str(available_time_definition or "").strip()
+    if normalized_available_time_definition:
+        timing_reason = _timing_reason(
+            normalized_available_time_definition,
+            str(payload.get("decision_time", "")),
+        )
         if timing_reason is not None:
             reason_codes.append(timing_reason)
             checks[1] = "causal_timing:fail"
-    elif _requires_auxiliary_delay_definition(required_columns):
+    else:
         reason_codes.append("MISSING_AVAILABLE_TIME_DEFINITION")
-        checks[3] = "auxiliary_delay_declarations:blocked"
+        checks[1] = "causal_timing:blocked"
+        if _requires_auxiliary_delay_definition(required_columns):
+            checks[3] = "auxiliary_delay_declarations:blocked"
 
     if str(payload.get("entry_price", "")).strip() != "next_continuous_bar_open":
         reason_codes.append("INVALID_NEXT_CONTINUOUS_BAR_OPEN")
@@ -217,12 +224,12 @@ def _requires_auxiliary_delay_definition(required_columns: tuple[str, ...]) -> b
 
 
 def _empirical_metric_reason(payload: Mapping[str, Any]) -> str | None:
-    known_protocol_fields = set(FactorProposal.model_fields)
-    for key in payload:
-        normalized = key.strip().lower()
-        if normalized in known_protocol_fields:
-            continue
-        if any(token in normalized for token in _EMPIRICAL_METRIC_TOKENS):
+    known_protocol_fields = {field_name.lower() for field_name in FactorProposal.model_fields}
+    for key, value in payload.items():
+        normalized_key = str(key).strip().lower()
+        if normalized_key not in known_protocol_fields and _contains_empirical_metric(str(key)):
+            return "EMPIRICAL_METRIC_PRESENT"
+        if _payload_contains_empirical_metric(value):
             return "EMPIRICAL_METRIC_PRESENT"
     return None
 
@@ -275,13 +282,32 @@ def _has_forbidden_overlap(
             _normalize_text(pattern) in formula or _normalize_text(pattern) in factor_id
             for pattern in entry.prohibited_wrapper_patterns
         )
-        if direct_name_match or (wrapper_match and (channel_match or family_match)):
+        if direct_name_match or wrapper_match or (channel_match and family_match):
             return True
     return False
 
 
 def _normalize_text(value: str) -> str:
     return "".join(value.lower().split())
+
+
+def _contains_empirical_metric(value: str) -> bool:
+    lowered_value = value.lower()
+    for token in _EMPIRICAL_METRIC_TOKENS:
+        pattern = r"(?<![a-z0-9])" + r"[\s_]*".join(re.escape(part) for part in token.split("_")) + r"(?![a-z0-9])"
+        if re.search(pattern, lowered_value):
+            return True
+    return False
+
+
+def _payload_contains_empirical_metric(value: Any) -> bool:
+    if isinstance(value, str):
+        return _contains_empirical_metric(value)
+    if isinstance(value, Mapping):
+        return any(_payload_contains_empirical_metric(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_payload_contains_empirical_metric(item) for item in value)
+    return False
 
 
 def _verdict_for_reasons(reason_codes: tuple[str, ...]) -> AuditVerdict:
