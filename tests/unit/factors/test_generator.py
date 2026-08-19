@@ -158,7 +158,9 @@ allowed_binary: [add, subtract, multiply, safe_ratio]
         )
         assert len(generate_candidates(config_path, code_sha="abc")) <= 20
 
-    def test_generate_candidates_ignores_proposal_allowed_columns(self, tmp_path: Path) -> None:
+    def test_generate_candidates_honors_allowed_columns_for_grammar_samples(
+        self, tmp_path: Path
+    ) -> None:
         config_path = tmp_path / "search_space.yaml"
         config_path.write_text(
             """seed: 7
@@ -176,7 +178,42 @@ allowed_binary: []
         candidates = generate_candidates(config_path, code_sha="abc")
 
         assert candidates
-        assert all("funding_rate" not in c.expression_tree.required_columns for c in candidates)
+        grammar_candidates = candidates[5:]
+        assert grammar_candidates
+        assert all(
+            set(candidate.expression_tree.required_columns) <= {"funding_rate"}
+            for candidate in grammar_candidates
+        )
+        assert any(
+            candidate.expression_tree.required_columns == ("funding_rate",)
+            for candidate in grammar_candidates
+        )
+
+    def test_generate_candidates_defaults_to_legacy_grammar_columns(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "search_space.yaml"
+        config_path.write_text(
+            """seed: 7
+max_candidates: 10
+max_tree_depth: 3
+base_factors: [price.momentum]
+windows: [6]
+allowed_unary: [lag]
+allowed_binary: []
+""",
+            encoding="utf-8",
+        )
+
+        candidates = generate_candidates(config_path, code_sha="abc")
+
+        grammar_candidates = candidates[5:]
+        assert {
+            candidate.expression_tree.required_columns[0] for candidate in grammar_candidates
+        } == {
+            "close",
+            "volume",
+            "high",
+            "low",
+        }
 
 
 class TestResearchOnlyState:
@@ -223,6 +260,28 @@ class TestProposalGeneration:
             lambda *_: (_ for _ in ()).throw(AssertionError("registry access is forbidden")),
         )
         generate_proposals(PROPOSAL_FACTORY, code_sha="abc")
+
+    def test_generate_proposals_honors_allowed_columns(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "proposal_factory.yaml"
+        config_path.write_text(
+            """mode: proposal_only
+seed: 7
+max_candidates: 10
+max_tree_depth: 3
+base_factors: [price.momentum]
+windows: [6]
+allowed_columns: [funding_rate]
+allowed_unary: [lag]
+allowed_binary: []
+""",
+            encoding="utf-8",
+        )
+
+        proposals = generate_proposals(config_path, code_sha="abc")
+
+        assert proposals
+        assert any(item.source_type == "seeded_grammar" for item in proposals)
+        assert any("funding_rate" in item.formula for item in proposals)
 
     def test_proposal_order_is_deterministic(self) -> None:
         first = generate_proposals(PROPOSAL_FACTORY, code_sha="abc")

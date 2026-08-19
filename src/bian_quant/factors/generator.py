@@ -164,6 +164,13 @@ def generate_candidates(
     windows = config.get("windows", [6, 12, 24, 48, 168])
     allowed_unary = config.get("allowed_unary", ["lag", "delta", "zscore", "rolling_rank"])
     allowed_binary = config.get("allowed_binary", ["add", "subtract", "multiply", "safe_ratio"])
+    allowed_columns_config = config.get("allowed_columns")
+    if allowed_columns_config is None:
+        grammar_columns = ["close", "volume", "high", "low"]
+    elif isinstance(allowed_columns_config, str):
+        grammar_columns = [allowed_columns_config]
+    else:
+        grammar_columns = [str(column_name) for column_name in allowed_columns_config]
 
     # Compute search manifest hash
     manifest_str = yaml.dump(config, sort_keys=True, default_flow_style=False)
@@ -173,7 +180,7 @@ def generate_candidates(
     templates = _build_templates(windows)
     # 2. Grammar samples (seeded, deterministic)
     grammar_samples = _build_grammar_samples(
-        windows, allowed_unary, allowed_binary, ["close", "volume", "high", "low"], seed
+        windows, allowed_unary, allowed_binary, grammar_columns, seed
     )
 
     # Combine and deduplicate by expression hash
