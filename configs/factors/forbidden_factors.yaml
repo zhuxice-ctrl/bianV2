@@ -1,0 +1,29 @@
+factors:
+  - factor_id: relative_funding_pressure
+    factor_version: 1.0.0
+    research_family: funding_dynamics
+    formula_summary: Cross-sectional funding crowding normalized against same-time peer funding.
+    required_input_channels:
+      - funding_rate
+      - funding_available_time
+      - funding_interval_hours
+    prohibited_wrapper_patterns:
+      - rolling_zscore(funding_rate
+      - zscore(funding_rate
+      - relative_funding_pressure
+      - funding_pressure
+  - factor_id: taker_orderflow_imbalance
+    factor_version: 1.0.0
+    research_family: microstructure_orderflow
+    formula_summary: Active buy share normalized against same-bar peers using robust cross-sectional scaling.
+    required_input_channels:
+      - taker_buy_base
+      - taker_buy_quote
+      - volume
+      - quote_volume
+      - available_time
+    prohibited_wrapper_patterns:
+      - taker_buy_base/volume
+      - taker_buy_quote/quote_volume
+      - active_buy_share
+      - taker_orderflow_imbalance
