@@ -1,7 +1,7 @@
 # Task 4 Report
 
 - Status: completed
-- Commit SHA: `pending at report-write time; see task handoff`
+- Commit SHA: `610b7ef` (implementation snapshot)
 - Scope: fixed positional audit pairing after stable sorting and limited the decision queue to five unique proposal identities
 
 Verification commands:
