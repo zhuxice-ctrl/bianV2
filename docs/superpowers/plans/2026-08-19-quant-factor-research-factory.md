@@ -282,7 +282,7 @@ Expected: collection fails because the artifact writer is absent.
 
 - [ ] **Step 3: Implement canonical artifact writing**
 
-Implement `write_proposal_run(root, proposals, run_id, code_sha, config_sha256, audits)` using an exclusive run directory, UTF-8 JSON with sorted keys and compact separators, stable list ordering by `(research_family, factor_id, factor_version, identity_sha256)`, SHA-256 for every artifact, and atomic temporary-file replacement within the new directory. Include boundary assertions in `run_manifest.json`: `mode=proposal_only`, `holdout_accessed=false`, `paper_trading=false`, `live_trading=false`, `data_read=false`, and `network_access=false`.
+Implement `write_proposal_run(root, proposals, run_id, code_sha, config_sha256, audits)` using an exclusive run directory, UTF-8 JSON with sorted keys and compact separators, stable list ordering by `(research_family, factor_id, factor_version, identity_sha256)`, SHA-256 for every artifact, and atomic temporary-file replacement within the new directory. Preserve positional audit alignment before sorting or require audits keyed by proposal identity. Deduplicate the decision queue by proposal identity and cap it at five entries. Include boundary assertions in `run_manifest.json`: `mode=proposal_only`, `holdout_accessed=false`, `paper_trading=false`, `live_trading=false`, `data_read=false`, and `network_access=false`.
 
 - [ ] **Step 4: Run focused artifact tests**
 
