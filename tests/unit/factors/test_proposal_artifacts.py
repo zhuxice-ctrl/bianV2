@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from bian_quant.factors.proposal_artifacts import write_proposal_run
+from bian_quant.factors.proposal_audit import ProposalAuditResult
 from bian_quant.factors.proposals import FactorProposal
 from tests.unit.factors.test_proposals import proposal_payload
 
@@ -19,6 +20,13 @@ def valid_proposal(**overrides: object) -> FactorProposal:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _markdown_table_rows(path: Path) -> list[list[str]]:
+    table_lines = [
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("|")
+    ]
+    return [[cell.strip() for cell in line.strip("|").split("|")] for line in table_lines[2:]]
 
 
 def test_write_run_creates_all_required_artifacts(tmp_path: Path) -> None:
@@ -104,3 +112,71 @@ def test_manifest_records_boundary_assertions_and_artifact_hashes(tmp_path: Path
     for artifact_name, artifact_meta in manifest["artifacts"].items():
         assert artifact_meta["sha256"] == _sha256(result.paths[artifact_name])
         assert artifact_meta["bytes"] == result.paths[artifact_name].stat().st_size
+
+
+def test_positional_audits_stay_paired_with_unsorted_proposals(tmp_path: Path) -> None:
+    zeta = valid_proposal(factor_id="zeta_factor", research_family="volume_liquidity")
+    alpha = valid_proposal(factor_id="alpha_factor", research_family="price_dynamics")
+
+    result = write_proposal_run(
+        tmp_path,
+        proposals=[zeta, alpha],
+        run_id="run-1",
+        code_sha="abc",
+        audits=[
+            ProposalAuditResult(verdict="BLOCKED", reason_codes=("ZETA_ONLY",)),
+            ProposalAuditResult(verdict="REJECTED", reason_codes=("ALPHA_ONLY",)),
+        ],
+    )
+
+    registry_payload = json.loads(
+        result.paths["candidate_registry.json"].read_text(encoding="utf-8")
+    )
+
+    assert [proposal["factor_id"] for proposal in registry_payload["proposals"]] == [
+        "alpha_factor",
+        "zeta_factor",
+    ]
+    assert registry_payload["proposals"][0]["audit_verdict"] == "REJECTED"
+    assert registry_payload["proposals"][0]["audit_reason_codes"] == ["ALPHA_ONLY"]
+    assert registry_payload["proposals"][1]["audit_verdict"] == "BLOCKED"
+    assert registry_payload["proposals"][1]["audit_reason_codes"] == ["ZETA_ONLY"]
+
+
+def test_decision_queue_caps_at_five_unique_identities(tmp_path: Path) -> None:
+    unique_proposals = [
+        valid_proposal(factor_id=f"factor_{index}", research_family="price_dynamics")
+        for index in range(6)
+    ]
+    inputs = [
+        unique_proposals[5],
+        unique_proposals[2],
+        unique_proposals[4],
+        unique_proposals[2],
+        unique_proposals[1],
+        unique_proposals[3],
+        unique_proposals[0],
+    ]
+
+    result = write_proposal_run(
+        tmp_path,
+        proposals=inputs,
+        run_id="run-1",
+        code_sha="abc",
+    )
+
+    registry_payload = json.loads(
+        result.paths["candidate_registry.json"].read_text(encoding="utf-8")
+    )
+    queue_rows = _markdown_table_rows(result.paths["decision_queue.md"])
+
+    assert len(registry_payload["proposals"]) == len(inputs)
+    assert len(queue_rows) == 5
+    assert [row[2] for row in queue_rows] == [
+        "factor_0",
+        "factor_1",
+        "factor_2",
+        "factor_3",
+        "factor_4",
+    ]
+    assert len({row[4] for row in queue_rows}) == 5

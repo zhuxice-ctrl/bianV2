@@ -43,6 +43,12 @@ class ProposalRunArtifacts:
     artifact_sha256: dict[str, str]
 
 
+@dataclass(frozen=True)
+class _AuditedProposal:
+    proposal: FactorProposal
+    audit: ProposalAuditResult | None
+
+
 def write_proposal_run(
     root: Path | str,
     *,
@@ -61,8 +67,18 @@ def write_proposal_run(
     run_directory = root_path / run_id
     run_directory.mkdir(parents=False, exist_ok=False)
 
-    ordered_proposals = tuple(sorted(_normalize_proposals(proposals), key=_proposal_sort_key))
-    audit_map = _normalize_audits(ordered_proposals, audits)
+    normalized_proposals = tuple(_normalize_proposals(proposals))
+    normalized_audits = _normalize_audits(normalized_proposals, audits)
+    ordered_records = tuple(
+        sorted(
+            (
+                _AuditedProposal(proposal=proposal, audit=audit)
+                for proposal, audit in zip(normalized_proposals, normalized_audits, strict=True)
+            ),
+            key=lambda record: _proposal_sort_key(record.proposal),
+        )
+    )
+    ordered_proposals = tuple(record.proposal for record in ordered_records)
 
     registry_payload = {
         "code_sha": code_sha,
@@ -71,16 +87,14 @@ def write_proposal_run(
         "proposal_count": len(ordered_proposals),
         "proposals": [
             {
-                **proposal.model_dump(mode="json"),
-                "audit_reason_codes": list(audit_map[proposal.identity_sha256].reason_codes)
-                if proposal.identity_sha256 in audit_map
+                **record.proposal.model_dump(mode="json"),
+                "audit_reason_codes": list(record.audit.reason_codes)
+                if record.audit is not None
                 else [],
-                "audit_verdict": audit_map[proposal.identity_sha256].verdict
-                if proposal.identity_sha256 in audit_map
-                else "NOT_RUN",
-                "identity_sha256": proposal.identity_sha256,
+                "audit_verdict": record.audit.verdict if record.audit is not None else "NOT_RUN",
+                "identity_sha256": record.proposal.identity_sha256,
             }
-            for proposal in ordered_proposals
+            for record in ordered_records
         ],
         "run_id": run_id,
     }
@@ -88,9 +102,9 @@ def write_proposal_run(
     artifact_bytes: dict[str, bytes] = {
         "candidate_registry.json": _canonical_json_bytes(registry_payload),
         "candidate_summary.md": _render_candidate_summary(run_id, code_sha, ordered_proposals),
-        "audit_report.md": _render_audit_report(ordered_proposals, audit_map),
+        "audit_report.md": _render_audit_report(ordered_records),
         "deduplication_report.md": _render_deduplication_report(ordered_proposals),
-        "decision_queue.md": _render_decision_queue(ordered_proposals, audit_map),
+        "decision_queue.md": _render_decision_queue(ordered_records),
     }
 
     manifest_payload = {
@@ -143,21 +157,19 @@ def _normalize_audits(
     audits: Mapping[str, ProposalAuditResult | Mapping[str, Any]]
     | Sequence[ProposalAuditResult | Mapping[str, Any]]
     | None,
-) -> dict[str, ProposalAuditResult]:
+) -> tuple[ProposalAuditResult | None, ...]:
     if audits is None:
-        return {}
+        return tuple(None for _ in proposals)
     if isinstance(audits, Mapping):
-        return {
+        normalized_by_identity = {
             str(identity_sha256): _coerce_audit_result(audit_result)
             for identity_sha256, audit_result in audits.items()
         }
+        return tuple(normalized_by_identity.get(proposal.identity_sha256) for proposal in proposals)
     normalized_audits = list(audits)
     if len(normalized_audits) != len(proposals):
         raise ValueError("audit sequence must align with proposal sequence")
-    return {
-        proposal.identity_sha256: _coerce_audit_result(audit_result)
-        for proposal, audit_result in zip(proposals, normalized_audits, strict=True)
-    }
+    return tuple(_coerce_audit_result(audit_result) for audit_result in normalized_audits)
 
 
 def _coerce_audit_result(
@@ -204,14 +216,9 @@ def _render_candidate_summary(
 
 
 def _render_audit_report(
-    proposals: Sequence[FactorProposal],
-    audit_map: Mapping[str, ProposalAuditResult],
+    records: Sequence[_AuditedProposal],
 ) -> bytes:
-    verdicts = [
-        audit_map[proposal.identity_sha256].verdict
-        for proposal in proposals
-        if proposal.identity_sha256 in audit_map
-    ]
+    verdicts = [record.audit.verdict for record in records if record.audit is not None]
     verdict_counts = Counter(verdicts)
     lines = [
         "# Audit Report",
@@ -225,11 +232,10 @@ def _render_audit_report(
         "| Factor | Verdict | Reason Codes |",
         "| --- | --- | --- |",
     ]
-    for proposal in proposals:
-        audit_result = audit_map.get(proposal.identity_sha256)
-        verdict = audit_result.verdict if audit_result is not None else "NOT_RUN"
-        reason_codes = ", ".join(audit_result.reason_codes) if audit_result else "none"
-        lines.append(f"| {proposal.factor_id} | {verdict} | {reason_codes} |")
+    for record in records:
+        verdict = record.audit.verdict if record.audit is not None else "NOT_RUN"
+        reason_codes = ", ".join(record.audit.reason_codes) if record.audit else "none"
+        lines.append(f"| {record.proposal.factor_id} | {verdict} | {reason_codes} |")
     return _markdown_bytes(lines)
 
 
@@ -257,8 +263,7 @@ def _render_deduplication_report(proposals: Sequence[FactorProposal]) -> bytes:
 
 
 def _render_decision_queue(
-    proposals: Sequence[FactorProposal],
-    audit_map: Mapping[str, ProposalAuditResult],
+    records: Sequence[_AuditedProposal],
 ) -> bytes:
     lines = [
         "# Decision Queue",
@@ -266,14 +271,21 @@ def _render_decision_queue(
         "| Queue Rank | Research Family | Factor | Verdict | Identity SHA-256 |",
         "| --- | --- | --- | --- | --- |",
     ]
-    for rank, proposal in enumerate(proposals, start=1):
-        verdict = audit_map.get(
-            proposal.identity_sha256,
-            ProposalAuditResult(verdict="PASS"),
-        ).verdict
+    seen_identities: set[str] = set()
+    queue_records: list[_AuditedProposal] = []
+    for record in records:
+        identity_sha256 = record.proposal.identity_sha256
+        if identity_sha256 in seen_identities:
+            continue
+        seen_identities.add(identity_sha256)
+        queue_records.append(record)
+        if len(queue_records) == 5:
+            break
+    for rank, record in enumerate(queue_records, start=1):
+        verdict = record.audit.verdict if record.audit is not None else "PASS"
         lines.append(
-            f"| {rank} | {proposal.research_family} | {proposal.factor_id} | "
-            f"{verdict} | {proposal.identity_sha256} |"
+            f"| {rank} | {record.proposal.research_family} | {record.proposal.factor_id} | "
+            f"{verdict} | {record.proposal.identity_sha256} |"
         )
     return _markdown_bytes(lines)
 
