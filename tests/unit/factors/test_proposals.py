@@ -39,6 +39,20 @@ def test_promotion_state_is_rejected() -> None:
         FactorProposal.model_validate(payload)
 
 
+def test_missing_parent_factors_is_rejected() -> None:
+    payload = proposal_payload()
+    payload.pop("parent_factors")
+    with pytest.raises(ValidationError):
+        FactorProposal.model_validate(payload)
+
+
+def test_missing_proposal_status_is_rejected() -> None:
+    payload = proposal_payload()
+    payload.pop("proposal_status")
+    with pytest.raises(ValidationError):
+        FactorProposal.model_validate(payload)
+
+
 def test_required_columns_and_execution_fields_are_non_empty() -> None:
     payload = proposal_payload()
     payload["required_columns"] = []

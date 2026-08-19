@@ -27,9 +27,9 @@ class FactorProposal(BaseModel):
     holding_rule: str = Field(min_length=1)
     exit_rule: str = Field(min_length=1)
     missing_policy: str = Field(min_length=1)
-    parent_factors: tuple[str, ...] = Field(default_factory=tuple)
+    parent_factors: tuple[str, ...]
     source_type: str = Field(min_length=1)
-    proposal_status: Literal["proposal_only"] = "proposal_only"
+    proposal_status: Literal["proposal_only"]
 
     @field_validator(
         "factor_id",
