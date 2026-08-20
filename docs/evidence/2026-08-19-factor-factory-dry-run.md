@@ -42,14 +42,10 @@ uv run ruff check src/bian_quant/factors scripts tests/unit/factors tests/integr
 Result:
 
 ```text
-I001 [*] Import block is un-sorted or un-formatted
- --> tests\unit\factors\test_proposals.py:1:1
-
-E501 Line too long (115 > 100)
- --> tests\unit\factors\test_proposals.py:12:101
+All checks passed!
 ```
 
-Exit code: 1.
+Exit code: 0. Ruff check passed after commit `39ee2b0`; the earlier formatting failure in `tests/unit/factors/test_proposals.py` is no longer current.
 
 ### Ruff format check
 
