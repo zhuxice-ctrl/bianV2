@@ -56,6 +56,8 @@ def write_proposal_run(
     run_id: str,
     code_sha: str,
     config_sha256: str = "",
+    original_input_count: int | None = None,
+    duplicate_identity_count: int | None = None,
     audits: Mapping[str, ProposalAuditResult | Mapping[str, Any]]
     | Sequence[ProposalAuditResult | Mapping[str, Any]]
     | None = None,
@@ -79,12 +81,19 @@ def write_proposal_run(
         )
     )
     ordered_proposals = tuple(record.proposal for record in ordered_records)
+    deduplicated_count = len(ordered_proposals)
+    input_count = deduplicated_count if original_input_count is None else original_input_count
+    duplicate_count = (
+        max(0, input_count - deduplicated_count)
+        if duplicate_identity_count is None
+        else duplicate_identity_count
+    )
 
     registry_payload = {
         "code_sha": code_sha,
         "config_sha256": config_sha256,
         "mode": "proposal_only",
-        "proposal_count": len(ordered_proposals),
+        "proposal_count": deduplicated_count,
         "proposals": [
             {
                 **record.proposal.model_dump(mode="json"),
@@ -103,7 +112,11 @@ def write_proposal_run(
         "candidate_registry.json": _canonical_json_bytes(registry_payload),
         "candidate_summary.md": _render_candidate_summary(run_id, code_sha, ordered_proposals),
         "audit_report.md": _render_audit_report(ordered_records),
-        "deduplication_report.md": _render_deduplication_report(ordered_proposals),
+        "deduplication_report.md": _render_deduplication_report(
+            ordered_proposals,
+            input_count=input_count,
+            duplicate_count=duplicate_count,
+        ),
         "decision_queue.md": _render_decision_queue(ordered_records),
     }
 
@@ -118,8 +131,13 @@ def write_proposal_run(
         "boundary_assertions": dict(_BOUNDARY_ASSERTIONS),
         "code_sha": code_sha,
         "config_sha256": config_sha256,
+        "deduplication": {
+            "deduplicated_count": deduplicated_count,
+            "duplicate_identity_count": duplicate_count,
+            "input_count": input_count,
+        },
         "mode": "proposal_only",
-        "proposal_count": len(ordered_proposals),
+        "proposal_count": deduplicated_count,
         "proposal_identities": [proposal.identity_sha256 for proposal in ordered_proposals],
         "run_id": run_id,
     }
@@ -239,17 +257,30 @@ def _render_audit_report(
     return _markdown_bytes(lines)
 
 
-def _render_deduplication_report(proposals: Sequence[FactorProposal]) -> bytes:
+def _render_deduplication_report(
+    proposals: Sequence[FactorProposal],
+    *,
+    input_count: int | None = None,
+    duplicate_count: int | None = None,
+) -> bytes:
     identity_counts = Counter(proposal.identity_sha256 for proposal in proposals)
     duplicate_identities = tuple(
         identity_sha256 for identity_sha256, count in sorted(identity_counts.items()) if count > 1
     )
+    deduplicated_count = len(identity_counts)
+    resolved_input_count = deduplicated_count if input_count is None else input_count
+    resolved_duplicate_count = (
+        max(0, resolved_input_count - deduplicated_count)
+        if duplicate_count is None
+        else duplicate_count
+    )
     lines = [
         "# Deduplication Report",
         "",
-        f"- input_count: `{len(proposals)}`",
-        f"- unique_identity_count: `{len(identity_counts)}`",
-        f"- duplicate_identity_count: `{len(proposals) - len(identity_counts)}`",
+        f"- input_count: `{resolved_input_count}`",
+        f"- deduplicated_count: `{deduplicated_count}`",
+        f"- unique_identity_count: `{deduplicated_count}`",
+        f"- duplicate_identity_count: `{resolved_duplicate_count}`",
     ]
     if duplicate_identities:
         lines.extend(["", "| Identity SHA-256 | Count |", "| --- | --- |"])

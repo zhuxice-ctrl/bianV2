@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 CONFIG = Path(__file__).resolve().parents[3] / "configs" / "factors" / "proposal_factory.yaml"
@@ -35,6 +36,7 @@ def _forbidden_import_guard() -> Iterator[None]:
         "bian_quant.experiments.holdout",
         "bian_quant.experiments.registry",
         "bian_quant.factors.registry",
+        "bian_quant.live",
         "bian_quant.paper",
     )
     blocked_tokens = {"account", "exchange", "holdout"}
@@ -113,3 +115,50 @@ def test_factory_run_is_proposal_only_and_has_no_registry_or_data_access(
         "paper_trading": False,
     }
     assert not list(tmp_path.glob("**/*.sqlite"))
+
+
+def test_cli_repeated_runs_append_new_run_directories(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with _forbidden_import_guard():
+        module = _load_runner_module()
+        first_exit = module.main(
+            [
+                "--config",
+                str(CONFIG),
+                "--output-root",
+                str(tmp_path),
+                "--code-sha",
+                "abc",
+            ]
+        )
+        first_stdout = capsys.readouterr().out
+        second_exit = module.main(
+            [
+                "--config",
+                str(CONFIG),
+                "--output-root",
+                str(tmp_path),
+                "--code-sha",
+                "abc",
+            ]
+        )
+        second_stdout = capsys.readouterr().out
+
+    first_payload = json.loads(first_stdout)
+    second_payload = json.loads(second_stdout)
+    first_run_directory = Path(first_payload["run_directory"])
+    second_run_directory = Path(second_payload["run_directory"])
+
+    assert first_exit == 0
+    assert second_exit == 0
+    assert first_payload["status"] == "completed"
+    assert second_payload["status"] == "completed"
+    assert first_payload["config_sha256"] == second_payload["config_sha256"]
+    assert first_payload["proposal_count"] >= second_payload["deduplicated_count"]
+    assert first_payload["run_id"] != second_payload["run_id"]
+    assert first_run_directory.exists()
+    assert second_run_directory.exists()
+    assert first_run_directory.parent == second_run_directory.parent == tmp_path
+    assert first_run_directory != second_run_directory
+    assert len(list(tmp_path.iterdir())) == 2

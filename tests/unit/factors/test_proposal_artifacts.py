@@ -102,6 +102,11 @@ def test_manifest_records_boundary_assertions_and_artifact_hashes(tmp_path: Path
         "network_access": False,
         "paper_trading": False,
     }
+    assert manifest["deduplication"] == {
+        "deduplicated_count": 1,
+        "duplicate_identity_count": 0,
+        "input_count": 1,
+    }
     assert set(manifest["artifacts"]) == {
         "audit_report.md",
         "candidate_registry.json",
@@ -180,3 +185,28 @@ def test_decision_queue_caps_at_five_unique_identities(tmp_path: Path) -> None:
         "factor_4",
     ]
     assert len({row[4] for row in queue_rows}) == 5
+
+
+def test_deduplication_report_can_record_original_input_counts(tmp_path: Path) -> None:
+    proposal = valid_proposal()
+
+    result = write_proposal_run(
+        tmp_path,
+        proposals=[proposal],
+        run_id="run-1",
+        code_sha="abc",
+        original_input_count=3,
+        duplicate_identity_count=2,
+    )
+
+    report = result.paths["deduplication_report.md"].read_text(encoding="utf-8")
+    manifest = json.loads(result.paths["run_manifest.json"].read_text(encoding="utf-8"))
+
+    assert "- input_count: `3`" in report
+    assert "- deduplicated_count: `1`" in report
+    assert "- duplicate_identity_count: `2`" in report
+    assert manifest["deduplication"] == {
+        "deduplicated_count": 1,
+        "duplicate_identity_count": 2,
+        "input_count": 3,
+    }

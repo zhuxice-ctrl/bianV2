@@ -64,9 +64,10 @@ def run_factory(
     """Generate, audit, deduplicate, and persist proposal-only factor artifacts."""
 
     resolved_config_path = _resolve_repo_path(config_path)
+    resolved_output_root = _resolve_repo_path(output_root)
     factory_config = _load_factory_config(resolved_config_path)
     config_sha256 = _config_sha256(factory_config)
-    run_id = _build_run_id(config_sha256=config_sha256, code_sha=code_sha)
+    base_run_id = _build_run_id(config_sha256=config_sha256, code_sha=code_sha)
 
     proposals = generate_proposals(resolved_config_path, code_sha=code_sha)
     forbidden_factors_path = _forbidden_factors_path(factory_config)
@@ -85,12 +86,15 @@ def run_factory(
         )
 
     deduplicated_proposals = _deduplicate_proposals(proposals)
+    run_id = _allocate_run_id(resolved_output_root, base_run_id)
     artifacts = write_proposal_run(
-        output_root,
+        resolved_output_root,
         proposals=deduplicated_proposals,
         run_id=run_id,
         code_sha=code_sha,
         config_sha256=config_sha256,
+        original_input_count=len(proposals),
+        duplicate_identity_count=len(proposals) - len(deduplicated_proposals),
         audits=audits_by_identity,
     )
 
@@ -149,6 +153,15 @@ def _deduplicate_proposals(proposals: list[FactorProposal]) -> list[FactorPropos
 def _build_run_id(*, config_sha256: str, code_sha: str) -> str:
     normalized_code_sha = re.sub(r"[^a-zA-Z0-9._-]+", "-", code_sha.strip()) or "unknown"
     return f"proposal-factory-{config_sha256[:12]}-{normalized_code_sha[:16]}"
+
+
+def _allocate_run_id(output_root: Path, base_run_id: str) -> str:
+    candidate = base_run_id
+    suffix = 2
+    while (output_root / candidate).exists():
+        candidate = f"{base_run_id}-{suffix:02d}"
+        suffix += 1
+    return candidate
 
 
 def _build_result(
