@@ -1,0 +1,48 @@
+prompt_files:
+  supervisor: prompts/supervisor.md
+  family_worker: prompts/family_worker.md
+structured_output:
+  schema: schemas/factor_proposal.yaml
+  proposal_status: proposal_only
+family_dispatch:
+  price_dynamics:
+    research_families:
+      - price_dynamics
+  volume_liquidity:
+    research_families:
+      - volume_liquidity
+  price_volume:
+    research_families:
+      - price_volume
+  derivatives_stack:
+    research_families:
+      - price_derivatives
+      - flow_derivatives
+      - derivatives_crowding
+  cross_market_structure:
+    research_families:
+      - cross_market_structure
+required_fields:
+  - factor_id
+  - factor_version
+  - research_family
+  - economic_hypothesis
+  - formula
+  - direction
+  - required_columns
+  - signal_time
+  - decision_time
+  - entry_price
+  - holding_rule
+  - exit_rule
+  - missing_policy
+  - parent_factors
+  - source_type
+  - proposal_status
+reason_codes:
+  unstructured_output: STOP_UNSTRUCTURED_OUTPUT
+  missing_required_field: STOP_MISSING_REQUIRED_FIELD
+  invalid_enum: STOP_INVALID_ENUM
+  duplicate_factor_id: STOP_DUPLICATE_FACTOR_ID
+  autonomous_promotion_attempt: STOP_AUTONOMOUS_PROMOTION_ATTEMPT
+  boundary_violation: STOP_BOUNDARY_VIOLATION

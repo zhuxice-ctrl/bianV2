@@ -1,0 +1,19 @@
+hard_caps:
+  max_total_proposals: 20
+  max_proposals_per_family: 4
+  max_hypotheses_per_proposal: 1
+stops:
+  - code: STOP_HARD_CAP_REACHED
+    trigger: proposed output exceeds a configured hard cap
+  - code: STOP_UNSTRUCTURED_OUTPUT
+    trigger: output is not a schema-valid structured proposal object
+  - code: STOP_MISSING_REQUIRED_FIELD
+    trigger: any required FactorProposal field is absent or blank
+  - code: STOP_INVALID_ENUM
+    trigger: direction or proposal_status falls outside the allowed enum set
+  - code: STOP_DUPLICATE_FACTOR_ID
+    trigger: duplicate factor_id appears within the same run
+  - code: STOP_AUTONOMOUS_PROMOTION_ATTEMPT
+    trigger: worker attempts approval, promotion, registry mutation, Paper, or Live routing
+  - code: STOP_BOUNDARY_VIOLATION
+    trigger: request implies Holdout, external trading, credentials, account access, or raw data paths

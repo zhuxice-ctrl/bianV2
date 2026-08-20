@@ -1,0 +1,79 @@
+type: object
+additionalProperties: false
+required:
+  - factor_id
+  - factor_version
+  - research_family
+  - economic_hypothesis
+  - formula
+  - direction
+  - required_columns
+  - signal_time
+  - decision_time
+  - entry_price
+  - holding_rule
+  - exit_rule
+  - missing_policy
+  - parent_factors
+  - source_type
+  - proposal_status
+properties:
+  factor_id:
+    type: string
+    minLength: 1
+    pattern: ^[a-z0-9][a-z0-9._-]*$
+  factor_version:
+    type: string
+    minLength: 1
+    pattern: ^\d+\.\d+\.\d+$
+  research_family:
+    type: string
+    minLength: 1
+  economic_hypothesis:
+    type: string
+    minLength: 1
+  formula:
+    type: string
+    minLength: 1
+  direction:
+    type: string
+    enum:
+      - positive
+      - negative
+      - two_sided
+  required_columns:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      minLength: 1
+  signal_time:
+    type: string
+    minLength: 1
+  decision_time:
+    type: string
+    minLength: 1
+  entry_price:
+    type: string
+    minLength: 1
+  holding_rule:
+    type: string
+    minLength: 1
+  exit_rule:
+    type: string
+    minLength: 1
+  missing_policy:
+    type: string
+    minLength: 1
+  parent_factors:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  source_type:
+    type: string
+    minLength: 1
+  proposal_status:
+    type: string
+    enum:
+      - proposal_only
