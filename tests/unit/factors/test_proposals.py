@@ -1,15 +1,21 @@
-from pydantic import ValidationError
 import pytest
+from pydantic import ValidationError
 
 from bian_quant.factors.proposals import FactorProposal
 
 
 def proposal_payload() -> dict[str, object]:
+    economic_hypothesis = "".join(
+        [
+            "Abnormal volume confirms a price breakout and increases ",
+            "continuation probability.",
+        ]
+    )
     return {
         "factor_id": "volume_surge_breakout",
         "factor_version": "1.0.0",
         "research_family": "volume_liquidity",
-        "economic_hypothesis": "Abnormal volume confirms a price breakout and increases continuation probability.",
+        "economic_hypothesis": economic_hypothesis,
         "formula": "zscore(volume, 24)",
         "direction": "positive",
         "required_columns": ["open_time", "close", "volume", "available_time"],
