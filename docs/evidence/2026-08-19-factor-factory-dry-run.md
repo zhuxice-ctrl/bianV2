@@ -6,10 +6,10 @@ This note records the Task 7 verification pass for the factor-factory proposal p
 
 ```text
 command: uv run python scripts/run_factor_factory.py --config configs/factors/proposal_factory.yaml --output-root var/artifacts/factor-factory-dry-run --code-sha bfb2b0b
-code SHA: bfb2b0b
-config SHA-256: e94468b53f7fddfe1438f8742f202206ad06ea5f951b07d1a434f7ee77bb574f
-run ID: proposal-factory-e94468b53f7f-bfb2b0b-02
-artifact directory: F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-e94468b53f7f-bfb2b0b-02
+code SHA: c7ff71b
+config SHA-256: f617ef440f4a8a09862c47d2c4184f396bfd6fede07fed6939014c7001bacd42
+run ID: proposal-factory-f617ef440f4a-c7ff71b
+artifact directory: F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-f617ef440f4a-c7ff71b
 mode: proposal_only
 ```
 
@@ -26,7 +26,7 @@ uv run pytest -p no:cov tests/unit/factors/test_proposals.py tests/unit/factors/
 Result:
 
 ```text
-54 passed in 5.89s
+56 passed in 2.11s
 ```
 
 No Development test was invoked.
@@ -96,32 +96,32 @@ Exit code: 0.
 The local dry run produced a new run directory and exactly six proposal-run artifacts:
 
 ```text
-F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-e94468b53f7f-bfb2b0b-02/audit_report.md
-F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-e94468b53f7f-bfb2b0b-02/candidate_registry.json
-F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-e94468b53f7f-bfb2b0b-02/candidate_summary.md
-F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-e94468b53f7f-bfb2b0b-02/decision_queue.md
-F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-e94468b53f7f-bfb2b0b-02/deduplication_report.md
-F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-e94468b53f7f-bfb2b0b-02/run_manifest.json
+F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-f617ef440f4a-c7ff71b/audit_report.md
+F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-f617ef440f4a-c7ff71b/candidate_registry.json
+F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-f617ef440f4a-c7ff71b/candidate_summary.md
+F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-f617ef440f4a-c7ff71b/decision_queue.md
+F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-f617ef440f4a-c7ff71b/deduplication_report.md
+F:/bianV2/var/artifacts/factor-factory-dry-run/proposal-factory-f617ef440f4a-c7ff71b/run_manifest.json
 ```
 
 Artifact SHA-256 values:
 
 ```text
-audit_report.md: 05a50b355594584912a0adb9b0076b60540e9a3c0a60b8e79bd33353406c150f
-candidate_registry.json: df19670a616ab0849d1dddd84662fa12e38bdfb4adff1232cb96000a6df612da
-candidate_summary.md: fd672d94082dbf889efbafad1bb3a65593735cb3e4b6e8bb36b378e0b6beeed1
-decision_queue.md: 7407355aaab77b720c8e7787d7e44b9c7d6dab4479a92c6119b1ee395063f7b4
-deduplication_report.md: 6e55b1d6228bc2e1a3abf3d7b23997c97311b4389d0bf124fee1b7272867848c
-run_manifest.json: 65ade38f904a29ac1daf4a70d0ce77dd33338098097d0c162d9ad32682fe6901
+audit_report.md: 4d29c755e7d6729fa0154d59afbddb6f7dfadd9786b89fe3d7cfe5f776f42ee1
+candidate_registry.json: 45559de52b0b7c87a6b52e5ff87d9fb0342c9def99b8c5476b3a7ff1fe8e91af
+candidate_summary.md: c865624626b82829fd301c36604814390baffa31c0309395fee1ff41dd3081b3
+decision_queue.md: 4b65a9e2a68c980b61167d4e72555c2e5ae9b282258a8ee6d078cd7ec2a35104
+deduplication_report.md: 4aae6ae5bcdc2f48aa7da952ed2f270570e592fb6ed20e6520fa5b477bd352eb
+run_manifest.json: bfc7d672d7e7abf3cf642ac0806c36b94eef8d8829b161151dbf73981b785a55
 ```
 
 Counts:
 
 ```text
-proposal_count: 20
-deduplicated_count: 20
+proposal_count: 8
+deduplicated_count: 8
 duplicate_identity_count: 0
-audit_verdict_counts: PASS=20, BLOCKED=0, DEFERRED=0, REJECTED=0
+audit_verdict_counts: PASS=8, BLOCKED=0, DEFERRED=0, REJECTED=0
 reason_code_counts: none observed; every audited proposal had an empty reason-code list
 ```
 
@@ -142,13 +142,14 @@ The dry run stayed in `proposal_only` mode. It exposed zero empirical metrics in
 The run manifest also recorded the following summary fields:
 
 ```text
-code_sha=bfb2b0b
-config_sha256=e94468b53f7fddfe1438f8742f202206ad06ea5f951b07d1a434f7ee77bb574f
-proposal_count=20
-deduplicated_count=20
+code_sha=c7ff71b
+config_sha256=f617ef440f4a8a09862c47d2c4184f396bfd6fede07fed6939014c7001bacd42
+proposal_count=8
+deduplicated_count=8
 duplicate_identity_count=0
 ```
 
 ## Limitation
 
 This packet validates the tooling path only. It does not establish Alpha, IC, return, Development, or live-trading evidence.
+
