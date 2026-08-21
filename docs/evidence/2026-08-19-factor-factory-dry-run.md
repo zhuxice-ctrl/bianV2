@@ -5,7 +5,7 @@ This note records the Task 7 verification pass for the factor-factory proposal p
 ## Run identity
 
 ```text
-command: uv run python scripts/run_factor_factory.py --config configs/factors/proposal_factory.yaml --output-root var/artifacts/factor-factory-dry-run --code-sha bfb2b0b
+command: uv run python scripts/run_factor_factory.py --config configs/factors/proposal_factory.yaml --output-root var/artifacts/factor-factory-dry-run --code-sha c7ff71b
 code SHA: c7ff71b
 config SHA-256: f617ef440f4a8a09862c47d2c4184f396bfd6fede07fed6939014c7001bacd42
 run ID: proposal-factory-f617ef440f4a-c7ff71b
