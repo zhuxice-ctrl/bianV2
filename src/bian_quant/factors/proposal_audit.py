@@ -151,6 +151,11 @@ def audit_proposal(
         reason_codes.append("INVALID_NEXT_CONTINUOUS_BAR_OPEN")
         checks[2] = "entry_execution_wording:fail"
 
+    signal_time = str(payload.get("signal_time", "")).strip().lower()
+    if signal_time not in {"close_time", "bar_close"}:
+        reason_codes.append("SIGNAL_NOT_CLOSED_BAR")
+        checks[1] = "causal_timing:fail"
+
     empirical_reason = _empirical_metric_reason(payload)
     if empirical_reason is not None:
         reason_codes.append(empirical_reason)
@@ -321,6 +326,7 @@ def _verdict_for_reasons(reason_codes: tuple[str, ...]) -> AuditVerdict:
         "AVAILABLE_TIME_AFTER_DECISION_TIME",
         "MISSING_AVAILABLE_TIME_DEFINITION",
         "UNKNOWN_AVAILABLE_TIME_ORDER",
+        "SIGNAL_NOT_CLOSED_BAR",
     }
     rejected_reasons = set(_EXECUTION_FIELD_REASONS.values()) | {
         "EMPIRICAL_METRIC_PRESENT",

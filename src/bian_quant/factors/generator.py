@@ -228,9 +228,13 @@ def generate_proposals(
         raise ValueError("generate_proposals requires mode=proposal_only")
 
     windows = [int(window) for window in config.get("windows", [6, 12, 24, 48, 168])]
+    max_per_family = int(config.get("max_proposals_per_family", 4))
+    if max_per_family <= 0:
+        raise ValueError("max_proposals_per_family must be positive")
     template_hashes = {node.expression_hash for _, node in _build_templates(windows)}
 
     proposals: list[FactorProposal] = []
+    family_counts: dict[str, int] = {}
     for generation_rank, candidate in enumerate(
         generate_candidates(config_path, code_sha=code_sha)
     ):
@@ -258,9 +262,13 @@ def generate_proposals(
             "proposal_status": "proposal_only",
         }
         proposal = FactorProposal.model_validate(payload)
+        family = proposal.research_family
+        if family_counts.get(family, 0) >= max_per_family:
+            continue
         if generation_rank >= 20:
             raise ValueError("proposal generation exceeded hard cap")
         proposals.append(proposal)
+        family_counts[family] = family_counts.get(family, 0) + 1
 
     return proposals
 

@@ -289,6 +289,14 @@ allowed_binary: []
 
         assert [item.identity_sha256 for item in first] == [item.identity_sha256 for item in second]
 
+    def test_proposals_respect_family_cap(self) -> None:
+        proposals = generate_proposals(PROPOSAL_FACTORY, code_sha="abc")
+        counts: dict[str, int] = {}
+        for proposal in proposals:
+            counts[proposal.research_family] = counts.get(proposal.research_family, 0) + 1
+        assert counts
+        assert max(counts.values()) <= 4
+
 
 def test_nested_temporal_lookback_is_additive() -> None:
     tree = zscore(percent_change(column("close"), 24), 168)

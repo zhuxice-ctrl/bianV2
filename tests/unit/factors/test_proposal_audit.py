@@ -69,6 +69,18 @@ def test_missing_exit_rule_is_rejected() -> None:
     assert "MISSING_EXIT_RULE" in result.reason_codes
 
 
+def test_open_time_signal_is_rejected() -> None:
+    payload = proposal_payload()
+    payload["signal_time"] = "open_time"
+    result = audit_proposal(
+        payload,
+        available_time_definition="close_time",
+        forbidden_factors_path=FORBIDDEN_FACTORS,
+    )
+    assert result.verdict == "BLOCKED"
+    assert "SIGNAL_NOT_CLOSED_BAR" in result.reason_codes
+
+
 @pytest.mark.parametrize(
     ("field_name", "field_value"),
     (

@@ -1,6 +1,7 @@
 mode: proposal_only
 seed: 7
 max_candidates: 20
+max_proposals_per_family: 4
 max_review_queue: 5
 max_rounds: 4
 max_tree_depth: 3
