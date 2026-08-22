@@ -2,8 +2,18 @@ type: object
 additionalProperties: false
 required:
   - proposal_identity_sha256
+  - factor_id
+  - factor_version
+  - research_family
+  - economic_hypothesis
+  - formula
+  - direction
+  - signal_time
+  - decision_time
+  - entry_price
   - q_nominal
   - holding_bars
+  - missing_policy
   - cost_assumption
   - development_sample_definition
   - evaluation_horizon
@@ -57,30 +67,25 @@ properties:
     const: next_continuous_bar_open
   holding_bars:
     type: integer
-    minimum: 1
+    const: 4
   missing_policy:
     type: string
     const: preserve_missing_and_exclude
   q_nominal:
     type: number
-    exclusiveMinimum: 0.0
-    maximum: 1.0
+    const: 0.2
   cost_assumption:
     type: string
     minLength: 1
-    const: declare_before_development
   development_sample_definition:
     type: string
     minLength: 1
-    const: declare_before_development
   evaluation_horizon:
     type: string
     minLength: 1
-    const: 4_bars
   falsification_criteria:
     type: string
     minLength: 1
-    const: declare_before_development
   status:
     type: string
     const: preregistration_only

@@ -96,12 +96,28 @@ def test_skill_package_includes_preregistration_contract() -> None:
     preregistration = yaml.safe_load(PREREGISTRATION_SCHEMA.read_text(encoding="utf-8"))
     assert preregistration["required"] == [
         "proposal_identity_sha256",
+        "factor_id",
+        "factor_version",
+        "research_family",
+        "economic_hypothesis",
+        "formula",
+        "direction",
+        "signal_time",
+        "decision_time",
+        "entry_price",
         "q_nominal",
         "holding_bars",
+        "missing_policy",
         "cost_assumption",
         "development_sample_definition",
         "evaluation_horizon",
         "falsification_criteria",
         "status",
     ]
+    properties = preregistration["properties"]
+    assert properties["entry_price"]["const"] == "next_continuous_bar_open"
+    assert properties["holding_bars"]["const"] == 4
+    assert properties["missing_policy"]["const"] == "preserve_missing_and_exclude"
+    assert properties["q_nominal"]["const"] == 0.2
+    assert properties["status"]["const"] == "preregistration_only"
     assert "preregistration_only" in SKILL_FILE.read_text(encoding="utf-8")
