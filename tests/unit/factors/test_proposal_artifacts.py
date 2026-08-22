@@ -148,7 +148,7 @@ def test_positional_audits_stay_paired_with_unsorted_proposals(tmp_path: Path) -
     assert registry_payload["proposals"][1]["audit_reason_codes"] == ["ZETA_ONLY"]
 
 
-def test_decision_queue_caps_at_five_unique_identities(tmp_path: Path) -> None:
+def test_decision_queue_caps_at_max_review_queue(tmp_path: Path) -> None:
     unique_proposals = [
         valid_proposal(factor_id=f"factor_{index}", research_family="price_dynamics")
         for index in range(6)
@@ -168,6 +168,7 @@ def test_decision_queue_caps_at_five_unique_identities(tmp_path: Path) -> None:
         proposals=inputs,
         run_id="run-1",
         code_sha="abc",
+        max_review_queue=5,
     )
 
     registry_payload = json.loads(
@@ -185,6 +186,32 @@ def test_decision_queue_caps_at_five_unique_identities(tmp_path: Path) -> None:
         "factor_4",
     ]
     assert len({row[4] for row in queue_rows}) == 5
+
+
+def test_decision_queue_shows_all_when_no_cap(tmp_path: Path) -> None:
+    unique_proposals = [
+        valid_proposal(factor_id=f"factor_{index}", research_family="price_dynamics")
+        for index in range(6)
+    ]
+
+    result = write_proposal_run(
+        tmp_path,
+        proposals=unique_proposals,
+        run_id="run-1",
+        code_sha="abc",
+    )
+
+    queue_rows = _markdown_table_rows(result.paths["decision_queue.md"])
+
+    assert len(queue_rows) == 6
+    assert [row[2] for row in queue_rows] == [
+        "factor_0",
+        "factor_1",
+        "factor_2",
+        "factor_3",
+        "factor_4",
+        "factor_5",
+    ]
 
 
 def test_deduplication_report_can_record_original_input_counts(tmp_path: Path) -> None:

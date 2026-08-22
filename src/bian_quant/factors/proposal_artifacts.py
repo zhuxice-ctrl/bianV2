@@ -61,6 +61,7 @@ def write_proposal_run(
     audits: Mapping[str, ProposalAuditResult | Mapping[str, Any]]
     | Sequence[ProposalAuditResult | Mapping[str, Any]]
     | None = None,
+    max_review_queue: int | None = None,
 ) -> ProposalRunArtifacts:
     """Write one append-only proposal run without touching data or networks."""
 
@@ -117,7 +118,10 @@ def write_proposal_run(
             input_count=input_count,
             duplicate_count=duplicate_count,
         ),
-        "decision_queue.md": _render_decision_queue(ordered_records),
+        "decision_queue.md": _render_decision_queue(
+            ordered_records,
+            max_queue_size=max_review_queue,
+        ),
     }
 
     manifest_payload = {
@@ -295,6 +299,8 @@ def _render_deduplication_report(
 
 def _render_decision_queue(
     records: Sequence[_AuditedProposal],
+    *,
+    max_queue_size: int | None = None,
 ) -> bytes:
     lines = [
         "# Decision Queue",
@@ -310,7 +316,7 @@ def _render_decision_queue(
             continue
         seen_identities.add(identity_sha256)
         queue_records.append(record)
-        if len(queue_records) == 5:
+        if max_queue_size is not None and len(queue_records) >= max_queue_size:
             break
     for rank, record in enumerate(queue_records, start=1):
         verdict = record.audit.verdict if record.audit is not None else "PASS"

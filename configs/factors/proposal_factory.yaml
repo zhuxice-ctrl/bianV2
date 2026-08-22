@@ -2,7 +2,7 @@ mode: proposal_only
 seed: 7
 max_candidates: 20
 max_proposals_per_family: 4
-max_review_queue: 5
+max_review_queue: 20
 max_rounds: 4
 max_tree_depth: 3
 forbidden_archive_path: configs/factors/forbidden_factors.yaml
@@ -16,5 +16,8 @@ base_factors:
   - derivatives.oi_change
 windows: [6, 12, 24, 48, 168]
 allowed_columns: [close, open, high, low, volume, funding_rate, open_interest]
+# 注意：allowed_unary / allowed_binary 仅约束语法采样路径（seeded_grammar）。
+# 注册模板（registered_template）使用 primitives.py 中的固定算子集，不受这两项约束；
+# 当模板数量占满 max_candidates 名额时，语法采样不会产生提案，本两项实际不生效。
 allowed_unary: [lag, delta, zscore, rolling_rank]
 allowed_binary: [add, subtract, multiply, safe_ratio]

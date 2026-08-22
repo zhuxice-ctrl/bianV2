@@ -87,6 +87,8 @@ def run_factory(
 
     deduplicated_proposals = _deduplicate_proposals(proposals)
     run_id = _allocate_run_id(resolved_output_root, base_run_id)
+    max_review_queue_raw = factory_config.get("max_review_queue")
+    max_review_queue = int(max_review_queue_raw) if max_review_queue_raw is not None else None
     artifacts = write_proposal_run(
         resolved_output_root,
         proposals=deduplicated_proposals,
@@ -96,6 +98,7 @@ def run_factory(
         original_input_count=len(proposals),
         duplicate_identity_count=len(proposals) - len(deduplicated_proposals),
         audits=audits_by_identity,
+        max_review_queue=max_review_queue,
     )
 
     return _build_result(
