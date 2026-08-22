@@ -5,17 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Final, Literal, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bian_quant.factors.proposals import FactorProposal
 
-_CLOSED_BAR_TIMES = {"close_time", "bar_close", "available_time", "decision_time"}
-_ENTRY_PRICE = "next_continuous_bar_open"
-_MISSING_POLICY = "preserve_missing_and_exclude"
-_STATUS = "preregistration_only"
+_CLOSED_BAR_TIMES: Final[set[str]] = {"close_time", "bar_close", "available_time", "decision_time"}
+_ENTRY_PRICE: Final[Literal["next_continuous_bar_open"]] = "next_continuous_bar_open"
+_MISSING_POLICY: Final[Literal["preserve_missing_and_exclude"]] = "preserve_missing_and_exclude"
+_STATUS: Final[Literal["preregistration_only"]] = "preregistration_only"
 _RESEARCH_DECLARATION_FIELDS = (
     "cost_assumption",
     "development_sample_definition",
@@ -87,9 +87,12 @@ class ProposalPreregistration(BaseModel):
             direction=normalized.direction,
             signal_time=normalized.signal_time,
             decision_time=normalized.decision_time,
-            entry_price=normalized.entry_price,
+            entry_price=cast(Literal["next_continuous_bar_open"], normalized.entry_price),
             holding_bars=holding_bars,
-            missing_policy=normalized.missing_policy,
+            missing_policy=cast(
+                Literal["preserve_missing_and_exclude"],
+                normalized.missing_policy,
+            ),
             q_nominal=q_nominal,
             cost_assumption=cost_assumption,
             development_sample_definition=development_sample_definition,

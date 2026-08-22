@@ -148,9 +148,78 @@ def test_positional_audits_stay_paired_with_unsorted_proposals(tmp_path: Path) -
     assert registry_payload["proposals"][1]["audit_reason_codes"] == ["ZETA_ONLY"]
 
 
+def test_selection_writes_only_selected_preregistration_and_registry_metadata(
+    tmp_path: Path,
+) -> None:
+    selected = valid_proposal(
+        factor_id="alpha_volume",
+        research_family="volume_liquidity",
+        formula="rolling_mean(volume, 6)",
+        required_columns=["open_time", "volume", "available_time"],
+    )
+    same_mechanism = valid_proposal(
+        factor_id="beta_volume",
+        research_family="volume_liquidity",
+        formula="rolling_mean(volume, 12)",
+        required_columns=["open_time", "volume", "available_time"],
+    )
+    blocked = valid_proposal(
+        factor_id="gamma_price",
+        research_family="price_dynamics",
+        formula="rolling_std(close, 24)",
+        required_columns=["open_time", "close", "available_time"],
+    )
+
+    result = write_proposal_run(
+        tmp_path,
+        proposals=[same_mechanism, blocked, selected],
+        run_id="run-1",
+        code_sha="abc",
+        audits=[
+            ProposalAuditResult(verdict="PASS"),
+            ProposalAuditResult(verdict="BLOCKED", reason_codes=("NO_TIMING",)),
+            ProposalAuditResult(verdict="PASS"),
+        ],
+        max_proposals_per_family=4,
+    )
+
+    preregistration_paths = sorted((result.run_directory / "preregistration").glob("*.yaml"))
+    registry_payload = json.loads(
+        result.paths["candidate_registry.json"].read_text(encoding="utf-8")
+    )
+    queue_rows = _markdown_table_rows(result.paths["decision_queue.md"])
+    proposals_by_id = {
+        proposal["factor_id"]: proposal for proposal in registry_payload["proposals"]
+    }
+    selected_path = preregistration_paths[0].relative_to(result.run_directory).as_posix()
+
+    assert len(preregistration_paths) == 1
+    assert proposals_by_id["alpha_volume"]["selection_reason"] == "SELECTED"
+    assert proposals_by_id["alpha_volume"]["preregistration_path"] == selected_path
+    assert proposals_by_id["beta_volume"]["selection_reason"] == "DIVERSITY_MECHANISM_DUPLICATE"
+    assert proposals_by_id["beta_volume"]["preregistration_path"] is None
+    assert proposals_by_id["gamma_price"]["selection_reason"] == "AUDIT_NOT_PASS"
+    assert proposals_by_id["gamma_price"]["preregistration_path"] is None
+    assert queue_rows == [
+        [
+            "1",
+            "volume_liquidity",
+            "alpha_volume",
+            "PASS",
+            "SELECTED",
+            proposals_by_id["alpha_volume"]["identity_sha256"],
+            selected_path,
+        ]
+    ]
+
+
 def test_decision_queue_caps_at_max_review_queue(tmp_path: Path) -> None:
     unique_proposals = [
-        valid_proposal(factor_id=f"factor_{index}", research_family="price_dynamics")
+        valid_proposal(
+            factor_id=f"factor_{index}",
+            research_family="price_dynamics",
+            formula=f"signal_{index}(volume, 24)",
+        )
         for index in range(6)
     ]
     inputs = [
@@ -185,12 +254,16 @@ def test_decision_queue_caps_at_max_review_queue(tmp_path: Path) -> None:
         "factor_3",
         "factor_4",
     ]
-    assert len({row[4] for row in queue_rows}) == 5
+    assert len({row[5] for row in queue_rows}) == 5
 
 
 def test_decision_queue_shows_all_when_no_cap(tmp_path: Path) -> None:
     unique_proposals = [
-        valid_proposal(factor_id=f"factor_{index}", research_family="price_dynamics")
+        valid_proposal(
+            factor_id=f"factor_{index}",
+            research_family="price_dynamics",
+            formula=f"signal_{index}(volume, 24)",
+        )
         for index in range(6)
     ]
 

@@ -6,6 +6,13 @@ max_review_queue: 20
 max_rounds: 4
 max_tree_depth: 3
 forbidden_archive_path: configs/factors/forbidden_factors.yaml
+preregistration:
+  q_nominal: 0.2
+  holding_bars: 4
+  cost_assumption: declare_before_development
+  development_sample_definition: declare_before_development
+  evaluation_horizon: 4_bars
+  falsification_criteria: declare_before_development
 base_factors:
   - price.momentum
   - price.reversal

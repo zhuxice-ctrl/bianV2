@@ -14,7 +14,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from bian_quant.factors.preregistration import ProposalPreregistration, canonical_yaml_bytes
 from bian_quant.factors.proposal_audit import ProposalAuditResult
+from bian_quant.factors.proposal_selection import SelectionRecord, select_first_round
 from bian_quant.factors.proposals import FactorProposal
 
 _ARTIFACT_FILENAMES = (
@@ -49,6 +51,14 @@ class _AuditedProposal:
     audit: ProposalAuditResult | None
 
 
+@dataclass(frozen=True)
+class _PreregistrationArtifact:
+    proposal_identity_sha256: str
+    preregistration_identity_sha256: str
+    path: str
+    payload: bytes
+
+
 def write_proposal_run(
     root: Path | str,
     *,
@@ -62,6 +72,13 @@ def write_proposal_run(
     | Sequence[ProposalAuditResult | Mapping[str, Any]]
     | None = None,
     max_review_queue: int | None = None,
+    max_proposals_per_family: int | None = None,
+    q_nominal: float = 0.2,
+    holding_bars: int = 4,
+    cost_assumption: str = "declare_before_development",
+    development_sample_definition: str = "declare_before_development",
+    evaluation_horizon: str = "4_bars",
+    falsification_criteria: str = "declare_before_development",
 ) -> ProposalRunArtifacts:
     """Write one append-only proposal run without touching data or networks."""
 
@@ -82,6 +99,34 @@ def write_proposal_run(
         )
     )
     ordered_proposals = tuple(record.proposal for record in ordered_records)
+    selection = select_first_round(
+        [
+            (
+                record.proposal,
+                record.audit if record.audit is not None else ProposalAuditResult(verdict="PASS"),
+            )
+            for record in ordered_records
+        ],
+        max_per_family=_resolved_max_proposals_per_family(
+            max_proposals_per_family,
+            proposal_count=len(ordered_records),
+        ),
+    )
+    preregistration_artifacts = _build_preregistration_artifacts(
+        selection.selected,
+        q_nominal=q_nominal,
+        holding_bars=holding_bars,
+        cost_assumption=cost_assumption,
+        development_sample_definition=development_sample_definition,
+        evaluation_horizon=evaluation_horizon,
+        falsification_criteria=falsification_criteria,
+    )
+    preregistration_paths_by_identity = {
+        artifact.proposal_identity_sha256: artifact.path for artifact in preregistration_artifacts
+    }
+    selected_proposal_identities = {
+        record.proposal.identity_sha256 for record in selection.selected
+    }
     deduplicated_count = len(ordered_proposals)
     input_count = deduplicated_count if original_input_count is None else original_input_count
     duplicate_count = (
@@ -103,6 +148,15 @@ def write_proposal_run(
                 else [],
                 "audit_verdict": record.audit.verdict if record.audit is not None else "NOT_RUN",
                 "identity_sha256": record.proposal.identity_sha256,
+                "preregistration_path": preregistration_paths_by_identity.get(
+                    record.proposal.identity_sha256
+                ),
+                "selection_reason": selection.exclusions.get(
+                    record.proposal.identity_sha256,
+                    "SELECTED"
+                    if record.proposal.identity_sha256 in selected_proposal_identities
+                    else None,
+                ),
             }
             for record in ordered_records
         ],
@@ -119,7 +173,8 @@ def write_proposal_run(
             duplicate_count=duplicate_count,
         ),
         "decision_queue.md": _render_decision_queue(
-            ordered_records,
+            selection.selected,
+            preregistration_paths_by_identity=preregistration_paths_by_identity,
             max_queue_size=max_review_queue,
         ),
     }
@@ -143,12 +198,29 @@ def write_proposal_run(
         "mode": "proposal_only",
         "proposal_count": deduplicated_count,
         "proposal_identities": [proposal.identity_sha256 for proposal in ordered_proposals],
+        "preregistrations": {
+            artifact.preregistration_identity_sha256: {
+                "bytes": len(artifact.payload),
+                "path": artifact.path,
+                "sha256": _sha256_bytes(artifact.payload),
+            }
+            for artifact in preregistration_artifacts
+        },
         "run_id": run_id,
+        "selection": {
+            "excluded_count": len(ordered_records) - len(selection.selected),
+            "selected_count": len(selection.selected),
+        },
     }
     artifact_bytes["run_manifest.json"] = _canonical_json_bytes(manifest_payload)
 
     artifact_paths: dict[str, Path] = {}
     artifact_sha256: dict[str, str] = {}
+    preregistration_directory = run_directory / "preregistration"
+    if preregistration_artifacts:
+        preregistration_directory.mkdir(parents=False, exist_ok=False)
+        for artifact in preregistration_artifacts:
+            _atomic_write(run_directory / artifact.path, artifact.payload)
     for artifact_name in _ARTIFACT_FILENAMES:
         target = run_directory / artifact_name
         payload = artifact_bytes[artifact_name]
@@ -298,33 +370,72 @@ def _render_deduplication_report(
 
 
 def _render_decision_queue(
-    records: Sequence[_AuditedProposal],
+    records: Sequence[Any],
     *,
+    preregistration_paths_by_identity: Mapping[str, str],
     max_queue_size: int | None = None,
 ) -> bytes:
     lines = [
         "# Decision Queue",
         "",
-        "| Queue Rank | Research Family | Factor | Verdict | Identity SHA-256 |",
-        "| --- | --- | --- | --- | --- |",
+        (
+            "| Queue Rank | Research Family | Factor | Verdict | Selection | "
+            "Identity SHA-256 | Preregistration |"
+        ),
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
-    seen_identities: set[str] = set()
-    queue_records: list[_AuditedProposal] = []
-    for record in records:
-        identity_sha256 = record.proposal.identity_sha256
-        if identity_sha256 in seen_identities:
-            continue
-        seen_identities.add(identity_sha256)
-        queue_records.append(record)
-        if max_queue_size is not None and len(queue_records) >= max_queue_size:
-            break
+    queue_records = list(records[:max_queue_size] if max_queue_size is not None else records)
     for rank, record in enumerate(queue_records, start=1):
         verdict = record.audit.verdict if record.audit is not None else "PASS"
         lines.append(
             f"| {rank} | {record.proposal.research_family} | {record.proposal.factor_id} | "
-            f"{verdict} | {record.proposal.identity_sha256} |"
+            f"{verdict} | SELECTED | {record.proposal.identity_sha256} | "
+            f"{preregistration_paths_by_identity[record.proposal.identity_sha256]} |"
         )
     return _markdown_bytes(lines)
+
+
+def _resolved_max_proposals_per_family(
+    max_proposals_per_family: int | None, *, proposal_count: int
+) -> int:
+    if max_proposals_per_family is not None:
+        return max_proposals_per_family
+    return max(1, proposal_count)
+
+
+def _build_preregistration_artifacts(
+    selected_records: Sequence[SelectionRecord],
+    *,
+    q_nominal: float,
+    holding_bars: int,
+    cost_assumption: str,
+    development_sample_definition: str,
+    evaluation_horizon: str,
+    falsification_criteria: str,
+) -> tuple[_PreregistrationArtifact, ...]:
+    artifacts: list[_PreregistrationArtifact] = []
+    for record in selected_records:
+        preregistration = ProposalPreregistration.from_proposal(
+            record.proposal,
+            q_nominal=q_nominal,
+            holding_bars=holding_bars,
+            cost_assumption=cost_assumption,
+            development_sample_definition=development_sample_definition,
+            evaluation_horizon=evaluation_horizon,
+            falsification_criteria=falsification_criteria,
+        )
+        relative_path = (
+            Path("preregistration") / f"{preregistration.proposal_identity_sha256}.yaml"
+        ).as_posix()
+        artifacts.append(
+            _PreregistrationArtifact(
+                proposal_identity_sha256=record.proposal.identity_sha256,
+                preregistration_identity_sha256=preregistration.proposal_identity_sha256,
+                path=relative_path,
+                payload=canonical_yaml_bytes(preregistration),
+            )
+        )
+    return tuple(artifacts)
 
 
 def _canonical_json_bytes(payload: Mapping[str, Any]) -> bytes:

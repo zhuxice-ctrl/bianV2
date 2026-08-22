@@ -89,6 +89,11 @@ def run_factory(
     run_id = _allocate_run_id(resolved_output_root, base_run_id)
     max_review_queue_raw = factory_config.get("max_review_queue")
     max_review_queue = int(max_review_queue_raw) if max_review_queue_raw is not None else None
+    max_proposals_per_family_raw = factory_config.get("max_proposals_per_family")
+    max_proposals_per_family = (
+        int(max_proposals_per_family_raw) if max_proposals_per_family_raw is not None else None
+    )
+    preregistration_config = _preregistration_config(factory_config)
     artifacts = write_proposal_run(
         resolved_output_root,
         proposals=deduplicated_proposals,
@@ -99,6 +104,25 @@ def run_factory(
         duplicate_identity_count=len(proposals) - len(deduplicated_proposals),
         audits=audits_by_identity,
         max_review_queue=max_review_queue,
+        max_proposals_per_family=max_proposals_per_family,
+        q_nominal=float(preregistration_config.get("q_nominal", 0.2)),
+        holding_bars=int(preregistration_config.get("holding_bars", 4)),
+        cost_assumption=str(
+            preregistration_config.get("cost_assumption", "declare_before_development")
+        ),
+        development_sample_definition=str(
+            preregistration_config.get(
+                "development_sample_definition",
+                "declare_before_development",
+            )
+        ),
+        evaluation_horizon=str(preregistration_config.get("evaluation_horizon", "4_bars")),
+        falsification_criteria=str(
+            preregistration_config.get(
+                "falsification_criteria",
+                "declare_before_development",
+            )
+        ),
     )
 
     return _build_result(
@@ -140,6 +164,15 @@ def _forbidden_factors_path(factory_config: Mapping[str, Any]) -> Path:
     if not raw_path:
         return DEFAULT_FORBIDDEN_FACTORS_PATH
     return _resolve_repo_path(raw_path)
+
+
+def _preregistration_config(factory_config: Mapping[str, Any]) -> dict[str, Any]:
+    raw_config = factory_config.get("preregistration")
+    if raw_config is None:
+        return {}
+    if not isinstance(raw_config, Mapping):
+        raise ValueError("preregistration config must be a mapping")
+    return {str(key): value for key, value in raw_config.items()}
 
 
 def _deduplicate_proposals(proposals: list[FactorProposal]) -> list[FactorProposal]:

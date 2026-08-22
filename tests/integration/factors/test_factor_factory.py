@@ -117,6 +117,33 @@ def test_factory_run_is_proposal_only_and_has_no_registry_or_data_access(
     assert not list(tmp_path.glob("**/*.sqlite"))
 
 
+def test_run_writes_only_passed_preregistrations_and_manifest_hashes(tmp_path: Path) -> None:
+    with _forbidden_import_guard():
+        module = _load_runner_module()
+        result = module.run_factory(config_path=CONFIG, output_root=tmp_path, code_sha="abc")
+
+    preregistration_dir = result.run_directory / "preregistration"
+    preregistration_paths = sorted(preregistration_dir.glob("*.yaml"))
+    manifest = json.loads(result.artifact_paths["run_manifest.json"].read_text(encoding="utf-8"))
+
+    assert preregistration_paths
+    assert len(preregistration_paths) == manifest["selection"]["selected_count"]
+    assert manifest["preregistrations"]
+    assert all(item["sha256"] for item in manifest["preregistrations"].values())
+
+
+def test_factory_rejects_non_mapping_preregistration_config(tmp_path: Path) -> None:
+    invalid_config = tmp_path / "invalid_proposal_factory.yaml"
+    config_payload = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    config_payload["preregistration"] = ["not", "a", "mapping"]
+    invalid_config.write_text(yaml.safe_dump(config_payload, sort_keys=False), encoding="utf-8")
+
+    with _forbidden_import_guard():
+        module = _load_runner_module()
+        with pytest.raises(ValueError, match="preregistration config must be a mapping"):
+            module.run_factory(config_path=invalid_config, output_root=tmp_path, code_sha="abc")
+
+
 def test_cli_repeated_runs_append_new_run_directories(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
