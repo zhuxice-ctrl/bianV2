@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bian_quant.factors.proposals import FactorProposal
 
@@ -19,6 +21,18 @@ _RESEARCH_DECLARATION_FIELDS = (
     "development_sample_definition",
     "evaluation_horizon",
     "falsification_criteria",
+)
+_BOUND_PROPOSAL_FIELDS = (
+    "factor_id",
+    "factor_version",
+    "research_family",
+    "economic_hypothesis",
+    "formula",
+    "direction",
+    "signal_time",
+    "decision_time",
+    "entry_price",
+    "missing_policy",
 )
 
 
@@ -64,7 +78,7 @@ class ProposalPreregistration(BaseModel):
             else FactorProposal.model_validate(proposal)
         )
         return cls(
-            proposal_identity_sha256=normalized.identity_sha256,
+            proposal_identity_sha256=_proposal_binding_sha256(normalized),
             factor_id=normalized.factor_id,
             factor_version=normalized.factor_version,
             research_family=normalized.research_family,
@@ -121,6 +135,15 @@ class ProposalPreregistration(BaseModel):
             raise ValueError("timing must be declared at a closed-bar boundary")
         return value
 
+    @model_validator(mode="after")
+    def _require_identity_binding(self) -> ProposalPreregistration:
+        expected_identity = _proposal_binding_sha256(self)
+        if self.proposal_identity_sha256 != expected_identity:
+            raise ValueError(
+                "proposal_identity_sha256 must match the preregistered proposal fields"
+            )
+        return self
+
 
 class _NoAliasSafeDumper(yaml.SafeDumper):
     def ignore_aliases(self, data: Any) -> bool:  # noqa: ANN401
@@ -139,3 +162,22 @@ def canonical_yaml_bytes(record: ProposalPreregistration) -> bytes:
         sort_keys=True,
     )
     return rendered.encode("utf-8")
+
+
+def _proposal_binding_payload(
+    record: FactorProposal | ProposalPreregistration,
+) -> dict[str, Any]:
+    payload = record.model_dump(mode="json")
+    return {field_name: payload[field_name] for field_name in _BOUND_PROPOSAL_FIELDS}
+
+
+def _proposal_binding_sha256(
+    record: FactorProposal | ProposalPreregistration,
+) -> str:
+    canonical = json.dumps(
+        _proposal_binding_payload(record),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

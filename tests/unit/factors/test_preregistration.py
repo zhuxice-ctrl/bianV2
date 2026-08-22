@@ -33,6 +33,13 @@ def test_blank_falsification_criterion_is_rejected() -> None:
         ).validated()
 
 
+def test_mutating_copied_proposal_field_breaks_identity_binding() -> None:
+    with pytest.raises(ValidationError):
+        ProposalPreregistration.from_proposal(valid_proposal()).model_copy(
+            update={"factor_id": "other_factor"}
+        ).validated()
+
+
 def test_invalid_q_nominal_is_rejected() -> None:
     with pytest.raises(ValidationError):
         ProposalPreregistration.from_proposal(valid_proposal(), q_nominal=0.0)
