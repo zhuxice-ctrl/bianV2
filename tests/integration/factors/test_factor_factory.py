@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 import yaml
 
+from bian_quant.factors.preregistration import ProposalPreregistration
+
 CONFIG = Path(__file__).resolve().parents[3] / "configs" / "factors" / "proposal_factory.yaml"
 RUNNER_PATH = Path(__file__).resolve().parents[3] / "scripts" / "run_factor_factory.py"
 
@@ -125,11 +127,35 @@ def test_run_writes_only_passed_preregistrations_and_manifest_hashes(tmp_path: P
     preregistration_dir = result.run_directory / "preregistration"
     preregistration_paths = sorted(preregistration_dir.glob("*.yaml"))
     manifest = json.loads(result.artifact_paths["run_manifest.json"].read_text(encoding="utf-8"))
+    registry = json.loads(
+        result.artifact_paths["candidate_registry.json"].read_text(encoding="utf-8")
+    )
+    selected_registry_identities = {
+        proposal["identity_sha256"]
+        for proposal in registry["proposals"]
+        if proposal["selection_reason"] == "SELECTED"
+    }
+    loaded_preregistrations = {
+        path.stem: ProposalPreregistration.model_validate(
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        ).validated()
+        for path in preregistration_paths
+    }
 
     assert preregistration_paths
     assert len(preregistration_paths) == manifest["selection"]["selected_count"]
     assert manifest["preregistrations"]
+    assert {path.stem for path in preregistration_paths} == selected_registry_identities
+    assert set(manifest["preregistrations"]) == selected_registry_identities
     assert all(item["sha256"] for item in manifest["preregistrations"].values())
+    assert all(
+        manifest["preregistrations"][path.stem]["path"].endswith(f"{path.stem}.yaml")
+        for path in preregistration_paths
+    )
+    assert all(
+        record.proposal_identity_sha256 != proposal_identity
+        for proposal_identity, record in loaded_preregistrations.items()
+    )
 
 
 def test_factory_rejects_non_mapping_preregistration_config(tmp_path: Path) -> None:

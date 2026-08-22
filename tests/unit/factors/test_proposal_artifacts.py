@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
+from bian_quant.factors.preregistration import ProposalPreregistration
 from bian_quant.factors.proposal_artifacts import write_proposal_run
 from bian_quant.factors.proposal_audit import ProposalAuditResult
 from bian_quant.factors.proposals import FactorProposal
@@ -192,14 +194,23 @@ def test_selection_writes_only_selected_preregistration_and_registry_metadata(
         proposal["factor_id"]: proposal for proposal in registry_payload["proposals"]
     }
     selected_path = preregistration_paths[0].relative_to(result.run_directory).as_posix()
+    loaded_preregistration = ProposalPreregistration.model_validate(
+        yaml.safe_load(preregistration_paths[0].read_text(encoding="utf-8"))
+    ).validated()
+    selected_registry_identity = proposals_by_id["alpha_volume"]["identity_sha256"]
+    manifest = json.loads(result.paths["run_manifest.json"].read_text(encoding="utf-8"))
 
     assert len(preregistration_paths) == 1
+    assert preregistration_paths[0].stem == selected_registry_identity
     assert proposals_by_id["alpha_volume"]["selection_reason"] == "SELECTED"
     assert proposals_by_id["alpha_volume"]["preregistration_path"] == selected_path
     assert proposals_by_id["beta_volume"]["selection_reason"] == "DIVERSITY_MECHANISM_DUPLICATE"
     assert proposals_by_id["beta_volume"]["preregistration_path"] is None
     assert proposals_by_id["gamma_price"]["selection_reason"] == "AUDIT_NOT_PASS"
     assert proposals_by_id["gamma_price"]["preregistration_path"] is None
+    assert selected_registry_identity in manifest["preregistrations"]
+    assert manifest["preregistrations"][selected_registry_identity]["path"] == selected_path
+    assert loaded_preregistration.proposal_identity_sha256 != selected_registry_identity
     assert queue_rows == [
         [
             "1",
@@ -207,7 +218,7 @@ def test_selection_writes_only_selected_preregistration_and_registry_metadata(
             "alpha_volume",
             "PASS",
             "SELECTED",
-            proposals_by_id["alpha_volume"]["identity_sha256"],
+            selected_registry_identity,
             selected_path,
         ]
     ]

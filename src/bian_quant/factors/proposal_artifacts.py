@@ -54,7 +54,6 @@ class _AuditedProposal:
 @dataclass(frozen=True)
 class _PreregistrationArtifact:
     proposal_identity_sha256: str
-    preregistration_identity_sha256: str
     path: str
     payload: bytes
 
@@ -199,7 +198,7 @@ def write_proposal_run(
         "proposal_count": deduplicated_count,
         "proposal_identities": [proposal.identity_sha256 for proposal in ordered_proposals],
         "preregistrations": {
-            artifact.preregistration_identity_sha256: {
+            artifact.proposal_identity_sha256: {
                 "bytes": len(artifact.payload),
                 "path": artifact.path,
                 "sha256": _sha256_bytes(artifact.payload),
@@ -425,12 +424,11 @@ def _build_preregistration_artifacts(
             falsification_criteria=falsification_criteria,
         )
         relative_path = (
-            Path("preregistration") / f"{preregistration.proposal_identity_sha256}.yaml"
+            Path("preregistration") / f"{record.proposal.identity_sha256}.yaml"
         ).as_posix()
         artifacts.append(
             _PreregistrationArtifact(
                 proposal_identity_sha256=record.proposal.identity_sha256,
-                preregistration_identity_sha256=preregistration.proposal_identity_sha256,
                 path=relative_path,
                 payload=canonical_yaml_bytes(preregistration),
             )
