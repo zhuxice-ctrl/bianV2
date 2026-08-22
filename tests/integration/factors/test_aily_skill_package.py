@@ -9,6 +9,7 @@ from bian_quant.factors.proposals import FactorProposal
 SKILL_ROOT = Path(__file__).resolve().parents[3] / "skills" / "quant-factor-research-factory"
 SKILL_FILE = SKILL_ROOT / "SKILL.md"
 SCHEMA_FILE = SKILL_ROOT / "schemas" / "factor_proposal.yaml"
+PREREGISTRATION_SCHEMA = SKILL_ROOT / "schemas" / "preregistration.yaml"
 AUDIT_RULES_FILE = SKILL_ROOT / "configs" / "audit_rules.yaml"
 STOP_CONDITIONS_FILE = SKILL_ROOT / "configs" / "stop_conditions.yaml"
 
@@ -89,3 +90,18 @@ def test_aily_skill_package_fixture_is_consistent() -> None:
     proposal = FactorProposal.model_validate(payload)
     assert set(payload) == expected_required_fields
     assert proposal.proposal_status == "proposal_only"
+
+
+def test_skill_package_includes_preregistration_contract() -> None:
+    preregistration = yaml.safe_load(PREREGISTRATION_SCHEMA.read_text(encoding="utf-8"))
+    assert preregistration["required"] == [
+        "proposal_identity_sha256",
+        "q_nominal",
+        "holding_bars",
+        "cost_assumption",
+        "development_sample_definition",
+        "evaluation_horizon",
+        "falsification_criteria",
+        "status",
+    ]
+    assert "preregistration_only" in SKILL_FILE.read_text(encoding="utf-8")

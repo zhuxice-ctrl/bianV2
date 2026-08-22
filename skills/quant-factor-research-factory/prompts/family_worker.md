@@ -9,11 +9,20 @@ Requirements:
   `entry_price`, `holding_rule`, `exit_rule`, `missing_policy`,
   `parent_factors`, `source_type`, `proposal_status`.
 - Keep `proposal_status` fixed to `proposal_only`.
+- Any preregistration text declaration must keep fixed fields aligned to
+  `schemas/preregistration.yaml`, including `status=preregistration_only`,
+  `cost_assumption=declare_before_development`,
+  `development_sample_definition=declare_before_development`,
+  `evaluation_horizon=4_bars`, and
+  `falsification_criteria=declare_before_development`.
 - Use only approved enum values:
   `direction`: `positive`, `negative`, `two_sided`
   `proposal_status`: `proposal_only`
 - Keep text fields non-empty and required array fields populated.
-- Do not propose promotions, registry writes, data downloads, Holdout access, Paper runs, Live runs, or external trading actions.
+- You may propose preregistration declaration text, but do not approve a preregistration,
+  alter fixed preregistration fields, start Development, propose promotions, write to
+  a registry, download data, access Holdout, run Paper, run Live, or take external
+  trading actions.
 
 Behavior:
 - Stay within the assigned family semantics.

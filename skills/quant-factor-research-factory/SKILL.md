@@ -16,6 +16,9 @@ systems, and must allow no external trading.
   - `cross_market_structure`
 - Emit only structured proposal payloads that satisfy
   `schemas/factor_proposal.yaml`.
+- Propose preregistration declaration text only; any preregistration record must keep
+  `status` fixed to `preregistration_only` and must satisfy
+  `schemas/preregistration.yaml`.
 - Run the local Python proposal factory through:
   `uv run python scripts/run_factor_factory.py --config configs/factors/proposal_factory.yaml --output-root <artifact_root> --code-sha <git_sha>`
 
@@ -23,9 +26,11 @@ systems, and must allow no external trading.
 
 - Every proposal stays in `proposal_only`.
 - No Holdout access.
+- No Development start, approval, or sample execution.
 - No Paper promotion or paper-trading orchestration.
 - No Live promotion or live-trading orchestration.
 - No candidate registration or approval actions.
+- No preregistration approval actions or fixed-field edits.
 - No external trading, exchange, account, credential, or raw data path access.
 
 ## Supervisor Contract
@@ -41,6 +46,9 @@ systems, and must allow no external trading.
 - Emit exactly one economic hypothesis per proposal.
 - Include every field required by `FactorProposal`.
 - Keep field names and enum values aligned with the Python protocol schema.
+- A worker may suggest declaration text for preregistration fields, but may not approve
+  a preregistration, alter fixed preregistration fields, start Development, or access
+  data, Holdout, Paper, Live, or trading systems.
 
 ## Reason Codes
 

@@ -1,0 +1,86 @@
+type: object
+additionalProperties: false
+required:
+  - proposal_identity_sha256
+  - q_nominal
+  - holding_bars
+  - cost_assumption
+  - development_sample_definition
+  - evaluation_horizon
+  - falsification_criteria
+  - status
+properties:
+  proposal_identity_sha256:
+    type: string
+    minLength: 64
+    maxLength: 64
+    pattern: ^[0-9a-f]{64}$
+  factor_id:
+    type: string
+    minLength: 1
+    pattern: ^[a-z0-9][a-z0-9._-]*$
+  factor_version:
+    type: string
+    minLength: 1
+    pattern: ^\d+\.\d+\.\d+$
+  research_family:
+    type: string
+    minLength: 1
+  economic_hypothesis:
+    type: string
+    minLength: 1
+  formula:
+    type: string
+    minLength: 1
+  direction:
+    type: string
+    enum:
+      - positive
+      - negative
+      - two_sided
+  signal_time:
+    type: string
+    enum:
+      - close_time
+      - bar_close
+      - available_time
+      - decision_time
+  decision_time:
+    type: string
+    enum:
+      - close_time
+      - bar_close
+      - available_time
+      - decision_time
+  entry_price:
+    type: string
+    const: next_continuous_bar_open
+  holding_bars:
+    type: integer
+    minimum: 1
+  missing_policy:
+    type: string
+    const: preserve_missing_and_exclude
+  q_nominal:
+    type: number
+    exclusiveMinimum: 0.0
+    maximum: 1.0
+  cost_assumption:
+    type: string
+    minLength: 1
+    const: declare_before_development
+  development_sample_definition:
+    type: string
+    minLength: 1
+    const: declare_before_development
+  evaluation_horizon:
+    type: string
+    minLength: 1
+    const: 4_bars
+  falsification_criteria:
+    type: string
+    minLength: 1
+    const: declare_before_development
+  status:
+    type: string
+    const: preregistration_only
